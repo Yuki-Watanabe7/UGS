@@ -50,11 +50,11 @@ function addMemberToCandidate(candidate: GroupCandidate, agentId: string): void 
 }
 
 /** 解散中・解散済み・期限切れの候補は接近/合流対象として扱わない */
-function isJoinable(candidate: GroupCandidate): boolean {
+export function isJoinable(candidate: GroupCandidate): boolean {
   return candidate.status === "forming" || candidate.status === "confirmed";
 }
 
-function nearestCandidate(
+export function nearestCandidate(
   agent: Agent,
   candidates: GroupCandidate[],
 ): GroupCandidate | undefined {
@@ -72,7 +72,7 @@ function nearestCandidate(
 }
 
 /** そのグループ候補で最も多いcliqueIdとその占有率を返す(既存関係性がない/バラバラな場合はundefined) */
-function dominantClique(
+export function dominantClique(
   candidate: GroupCandidate,
   agents: Agent[],
 ): { cliqueId: number; ratio: number } | undefined {
@@ -93,7 +93,7 @@ function dominantClique(
   return bestId === undefined ? undefined : { cliqueId: bestId, ratio: bestCount / candidate.memberIds.length };
 }
 
-function attractiveness(
+export function attractiveness(
   agent: Agent,
   candidate: GroupCandidate,
   agents: Agent[],
