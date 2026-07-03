@@ -6,6 +6,7 @@ import { EventLog } from "./components/EventLog";
 import { AgentLegend } from "./components/AgentLegend";
 import { SimulationCanvas } from "./components/SimulationCanvas";
 import { ObserverJoinerInspector } from "./components/ObserverJoinerInspector";
+import { SimulationSummaryPanel } from "./components/SimulationSummaryPanel";
 import { createInitialState, stepSimulation } from "./simulation/engine";
 import { SeededRandom } from "./simulation/random";
 import { getPresetById, PRESETS } from "./simulation/presets";
@@ -127,6 +128,7 @@ function App() {
 
         <aside className="sidebar-right">
           <ObserverJoinerInspector state={simState} params={params} />
+          <SimulationSummaryPanel state={simState} />
           <EventLog log={simState.log} />
         </aside>
       </main>
