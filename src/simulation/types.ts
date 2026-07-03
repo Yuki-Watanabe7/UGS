@@ -77,10 +77,42 @@ export type LogTag =
   | "groupLifecycle"
   | "simulation";
 
+/**
+ * 集計(終了サマリー/Monte Carlo)向けのイベント種別。
+ * 表示用の`message`文言を文字列解析せずに、主要イベントの発生をtickとひも付けて判定できるようにする。
+ */
+export type SimulationEventType =
+  | "simulationStarted"
+  | "nucleusCreated"
+  | "observerApproached"
+  | "observerJoinedForming"
+  | "observerJoinedConfirmed"
+  | "observerLeaveStarted"
+  | "observerLeft"
+  | "groupConfirmed"
+  | "groupDissolved"
+  | "groupExpired"
+  | "simulationFinished";
+
+/** `eventType`ごとに必要な範囲で付与される集計用の補助情報。全フィールド任意 */
+export type SimulationEventMetadata = {
+  agentId?: string;
+  agentLabel?: string;
+  groupId?: string;
+  groupStatus?: GroupCandidateStatus;
+  memberCount?: number;
+  /** 合流/参加時点でのGroupCandidateStatus (forming = 未確定の輪への合流, confirmed = 成立済みグループへの参加) */
+  joinedGroupStatus?: GroupCandidateStatus;
+};
+
 export type LogEntry = {
   tick: number;
   message: string;
   tags: LogTag[];
+  /** 集計用の構造化イベント種別。既存の表示・フィルタリングには影響しない任意フィールド */
+  eventType?: SimulationEventType;
+  /** eventTypeに応じた集計用の補助情報。任意フィールド */
+  metadata?: SimulationEventMetadata;
 };
 
 export type SimParams = {

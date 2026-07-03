@@ -1,4 +1,13 @@
-import type { Agent, GroupCandidate, LogEntry, LogTag, SimParams, SimulationState } from "./types";
+import type {
+  Agent,
+  GroupCandidate,
+  LogEntry,
+  LogTag,
+  SimParams,
+  SimulationEventMetadata,
+  SimulationEventType,
+  SimulationState,
+} from "./types";
 import { SeededRandom } from "./random";
 import { WORLD_WIDTH, WORLD_HEIGHT, clamp, distance, createInitialAgents } from "./model";
 
@@ -29,6 +38,7 @@ export function createInitialState(seed: number, params: SimParams): SimulationS
         tick: 0,
         message: "参加者が集まり始めた。まだ誰も二次会に行くかは決めていない。",
         tags: ["simulation"],
+        eventType: "simulationStarted",
       },
     ],
     width: WORLD_WIDTH,
@@ -44,8 +54,15 @@ function fmtTick(tick: number): string {
   return `${mm}:${ss}`;
 }
 
-function pushLog(log: LogEntry[], tick: number, message: string, tags: LogTag[] = []): void {
-  log.push({ tick, message: `${fmtTick(tick)} ${message}`, tags });
+function pushLog(
+  log: LogEntry[],
+  tick: number,
+  message: string,
+  tags: LogTag[] = [],
+  eventType?: SimulationEventType,
+  metadata?: SimulationEventMetadata,
+): void {
+  log.push({ tick, message: `${fmtTick(tick)} ${message}`, tags, eventType, metadata });
 }
 
 /** candidate.memberIdsへの追加は必ずこの関数を通し、同一agentの重複登録を防ぐ */
@@ -190,7 +207,14 @@ export function stepSimulation(
         };
         addMemberToCandidate(candidate, agent.id);
         candidates.push(candidate);
-        pushLog(log, tick, `${agent.label}さんが「もう一軒行く?」と発言し、核を作り始めた`, ["nucleus"]);
+        pushLog(
+          log,
+          tick,
+          `${agent.label}さんが「もう一軒行く?」と発言し、核を作り始めた`,
+          ["nucleus"],
+          "nucleusCreated",
+          { agentId: agent.id, agentLabel: agent.label, groupId: candidate.id },
+        );
       }
     }
   }
@@ -214,6 +238,8 @@ export function stepSimulation(
           tick,
           `observerJoinerが${candidate.status === "confirmed" ? "成立済みグループ" : "できかけの輪"}に近づき始めた`,
           ["observerJoiner"],
+          "observerApproached",
+          { agentId: agent.id, agentLabel: agent.label, groupId: candidate.id, groupStatus: candidate.status },
         );
       } else {
         pushLog(log, tick, `${agent.label}さんが輪の近くに移動`);
@@ -246,6 +272,8 @@ export function stepSimulation(
             ? `observerJoinerが成立済みグループに参加`
             : `observerJoinerが未確定の輪に合流`,
           ["observerJoiner"],
+          candidate.status === "confirmed" ? "observerJoinedConfirmed" : "observerJoinedForming",
+          { agentId: agent.id, agentLabel: agent.label, groupId: candidate.id, joinedGroupStatus: candidate.status },
         );
       } else {
         pushLog(
@@ -318,7 +346,14 @@ export function stepSimulation(
     if (agent.stress > agent.leaveThreshold) {
       agent.state = "leaving";
       if (agent.isObserverJoiner) {
-        pushLog(log, tick, `observerJoinerは曖昧な時間に耐えられず帰宅方向へ`, ["observerJoiner", "leave"]);
+        pushLog(
+          log,
+          tick,
+          `observerJoinerは曖昧な時間に耐えられず帰宅方向へ`,
+          ["observerJoiner", "leave"],
+          "observerLeaveStarted",
+          { agentId: agent.id, agentLabel: agent.label },
+        );
       } else {
         pushLog(log, tick, `${agent.label}さんが帰宅方向へ移動`, ["leave"]);
       }
@@ -332,6 +367,12 @@ export function stepSimulation(
     stepAgentMotion(agent, target, APPROACH_SPEED * 1.2);
     if (agent.y >= WORLD_HEIGHT - 6) {
       agent.state = "left";
+      if (agent.isObserverJoiner) {
+        pushLog(log, tick, `observerJoinerが画面外へ退出した`, ["observerJoiner", "leave"], "observerLeft", {
+          agentId: agent.id,
+          agentLabel: agent.label,
+        });
+      }
     }
   }
 
@@ -359,7 +400,10 @@ export function stepSimulation(
 
     if (nearbyCount >= params.groupConfirmSize) {
       candidate.status = "confirmed";
-      pushLog(log, tick, `${nearbyCount}人が集まり二次会グループが成立`, ["groupConfirmed"]);
+      pushLog(log, tick, `${nearbyCount}人が集まり二次会グループが成立`, ["groupConfirmed"], "groupConfirmed", {
+        groupId: candidate.id,
+        memberCount: nearbyCount,
+      });
       for (const agent of agents) {
         if (candidate.memberIds.includes(agent.id) && agent.state === "forming") {
           agent.state = "joined";
@@ -375,13 +419,25 @@ export function stepSimulation(
     if (candidate.memberIds.length < 2 && candidate.age >= CANDIDATE_WEAK_RESPONSE_AGE) {
       candidate.status = "dissolving";
       candidate.age = 0;
-      pushLog(log, tick, `できかけの輪への反応が薄く、そのまま自然消滅した`, ["groupLifecycle"]);
+      pushLog(
+        log,
+        tick,
+        `できかけの輪への反応が薄く、そのまま自然消滅した`,
+        ["groupLifecycle"],
+        "groupDissolved",
+        { groupId: candidate.id, memberCount: candidate.memberIds.length },
+      );
     } else if (candidate.age >= CANDIDATE_MAX_AGE) {
       candidate.status = "expired";
       candidate.age = 0;
-      pushLog(log, tick, `輪(${candidate.memberIds.length}人)は二次会成立に至らないまま時間切れになった`, [
-        "groupLifecycle",
-      ]);
+      pushLog(
+        log,
+        tick,
+        `輪(${candidate.memberIds.length}人)は二次会成立に至らないまま時間切れになった`,
+        ["groupLifecycle"],
+        "groupExpired",
+        { groupId: candidate.id, memberCount: candidate.memberIds.length },
+      );
     }
   }
 
@@ -409,7 +465,13 @@ export function stepSimulation(
   if (finished && !state.finished) {
     const joinedCount = agents.filter((a) => a.state === "joined").length;
     const leftCount = agents.filter((a) => a.state === "left").length;
-    pushLog(log, tick, `シミュレーション終了: 参加${joinedCount}人 / 帰宅${leftCount}人`, ["simulation"]);
+    pushLog(
+      log,
+      tick,
+      `シミュレーション終了: 参加${joinedCount}人 / 帰宅${leftCount}人`,
+      ["simulation"],
+      "simulationFinished",
+    );
   }
 
   return {
