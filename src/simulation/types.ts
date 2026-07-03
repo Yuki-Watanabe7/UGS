@@ -228,3 +228,53 @@ export type SimulationSummary = {
   /** グループ成立イベントが一度もない場合にtrue */
   groupFailure: boolean;
 };
+
+/** `runSimulationToEnd`/`runMonteCarlo`の安全上限tick数などの実行オプション */
+export type MonteCarloRunOptions = {
+  /**
+   * 1runあたりの最大tick数(無限ループ防止用の安全上限)。
+   * engine.ts側の内部上限(tick >= 400)とは独立に、Monte Carlo層としても明示的に持つ。
+   * 省略時は`DEFAULT_MAX_TICKS`(monteCarlo.ts参照)。
+   */
+  maxTicks?: number;
+};
+
+/** Monte Carlo実行全体の設定。`runs`回、`baseSeed + index`をseedとして実行する */
+export type MonteCarloConfig = {
+  baseSeed: number;
+  runs: number;
+  params: SimParams;
+  maxTicks?: number;
+};
+
+/** 単一seed分のMonte Carlo実行結果 */
+export type MonteCarloRunResult = {
+  seed: number;
+  summary: SimulationSummary;
+  /** 実行が終了したtick(安全上限に達して打ち切られた場合はその上限tick) */
+  finishedTick: number;
+};
+
+/** 複数run分の集計値 */
+export type MonteCarloSummary = {
+  runs: number;
+  /** observerJoinerが最終的に"joined"になったrunの割合(0〜1)。複数observerJoinerがいるrunは、いずれか1人でも該当すれば成功とみなす */
+  observerJoinerJoinRate: number;
+  /** observerJoinerがleaveStartedTickまたはleftTickを持つrunの割合(0〜1)。複数observerJoinerがいるrunは、いずれか1人でも該当すれば該当とみなす */
+  observerJoinerLeaveRate: number;
+  /** confirmedGroupCount === 0 のrunの割合(0〜1) */
+  groupFailureRate: number;
+  /** グループ成立が発生したrunのみを母数にした平均firstGroupConfirmedTick。全runで未成立ならundefined */
+  averageFirstGroupConfirmedTick?: number;
+  /** observerJoinerのlateJoinSucceeded === trueであるrunの割合(0〜1)。複数observerJoinerがいるrunは、いずれか1人でも該当すれば成功とみなす */
+  lateJoinSuccessRate: number;
+  averageJoinedCount: number;
+  averageLeftCount: number;
+};
+
+/** `runMonteCarlo`の戻り値。個別run結果と集計値の両方を保持する */
+export type MonteCarloResult = {
+  config: MonteCarloConfig;
+  runs: MonteCarloRunResult[];
+  summary: MonteCarloSummary;
+};
