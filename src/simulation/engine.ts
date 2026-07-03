@@ -11,6 +11,12 @@ const CANDIDATE_MERGE_RADIUS = 40;
 // (速すぎると誰も離脱せず、遅すぎると誰も輪にたどり着く前に離脱してしまう)。
 const BASE_STRESS_RATE = 0.007;
 const OBSERVER_EXTRA_STRESS_RATE = 0.0035;
+// forming候補が成立しないまま存続できる最大tick数。これを超えたら期限切れ(expired)にする
+const CANDIDATE_MAX_AGE = 40;
+// このtick数までに founder 以外が誰も加わらない(反応が薄い)場合は解散(dissolving)にする
+const CANDIDATE_WEAK_RESPONSE_AGE = 15;
+// dissolving/dissolved/expired が画面上に留まる(フェードアウト表現用の)tick数。これを超えたら配列から除去する
+const CANDIDATE_LINGER_TICKS = 4;
 
 export function createInitialState(seed: number, params: SimParams): SimulationState {
   const agents = createInitialAgents(seed, params);
@@ -43,6 +49,11 @@ function addMemberToCandidate(candidate: GroupCandidate, agentId: string): void 
   }
 }
 
+/** 解散中・解散済み・期限切れの候補は接近/合流対象として扱わない */
+function isJoinable(candidate: GroupCandidate): boolean {
+  return candidate.status === "forming" || candidate.status === "confirmed";
+}
+
 function nearestCandidate(
   agent: Agent,
   candidates: GroupCandidate[],
@@ -50,6 +61,7 @@ function nearestCandidate(
   let best: GroupCandidate | undefined;
   let bestDist = Infinity;
   for (const c of candidates) {
+    if (!isJoinable(c)) continue;
     const d = distance(agent.x, agent.y, c.x, c.y);
     if (d < bestDist) {
       bestDist = d;
@@ -96,7 +108,7 @@ function attractiveness(
   const cliqueTieBonus = isDominantMember ? params.existingTieStrength * 0.5 : 0;
   const outsiderPenalty = isDominantMember ? 0 : params.existingTieStrength * dominanceBeyondHalf * 0.75;
 
-  if (candidate.confirmed) {
+  if (candidate.status === "confirmed") {
     const base = agent.willingness * (0.5 + 0.5 * agent.conformity);
     const lateJoinBonus = params.lateJoinEase * 0.4;
     return clamp(base + lateJoinBonus + cliqueTieBonus - outsiderPenalty, 0, 1.5);
@@ -157,7 +169,7 @@ export function stepSimulation(
     if (rng.chance(formingProbability)) {
       agent.state = "forming";
       const nearbyCandidate = candidates.find(
-        (c) => distance(agent.x, agent.y, c.x, c.y) < CANDIDATE_MERGE_RADIUS,
+        (c) => c.status === "forming" && distance(agent.x, agent.y, c.x, c.y) < CANDIDATE_MERGE_RADIUS,
       );
       if (nearbyCandidate) {
         addMemberToCandidate(nearbyCandidate, agent.id);
@@ -167,7 +179,7 @@ export function stepSimulation(
           x: agent.x,
           y: agent.y,
           memberIds: [],
-          confirmed: false,
+          status: "forming",
           age: 0,
         };
         addMemberToCandidate(candidate, agent.id);
@@ -194,7 +206,7 @@ export function stepSimulation(
         pushLog(
           log,
           tick,
-          `observerJoinerが${candidate.confirmed ? "成立済みグループ" : "できかけの輪"}に近づき始めた`,
+          `observerJoinerが${candidate.status === "confirmed" ? "成立済みグループ" : "できかけの輪"}に近づき始めた`,
         );
       } else {
         pushLog(log, tick, `${agent.label}さんが輪の近くに移動`);
@@ -208,7 +220,8 @@ export function stepSimulation(
   for (const agent of agents) {
     if (agent.state !== "approaching") continue;
     const candidate = candidates.find((c) => c.id === agent.joinedGroupId);
-    if (!candidate) {
+    // 接近先の輪が解散/期限切れになっていたら、目的地を失ったものとしてundecidedに戻す
+    if (!candidate || !isJoinable(candidate)) {
       agent.state = "undecided";
       agent.joinedGroupId = undefined;
       continue;
@@ -222,7 +235,7 @@ export function stepSimulation(
         pushLog(
           log,
           tick,
-          candidate.confirmed
+          candidate.status === "confirmed"
             ? `observerJoinerが成立済みグループに参加`
             : `observerJoinerが未確定の輪に合流`,
         );
@@ -230,7 +243,7 @@ export function stepSimulation(
         pushLog(
           log,
           tick,
-          candidate.confirmed
+          candidate.status === "confirmed"
             ? `${agent.label}さんが成立済みグループに参加`
             : `${agent.label}さんが輪に合流`,
         );
@@ -241,7 +254,7 @@ export function stepSimulation(
   // 4. forming な人も自分の候補地点に留まりつつ位置を微調整
   for (const agent of agents) {
     if (agent.state !== "forming") continue;
-    const candidate = candidates.find((c) => c.memberIds.includes(agent.id));
+    const candidate = candidates.find((c) => c.status === "forming" && c.memberIds.includes(agent.id));
     if (candidate) {
       candidate.x = clamp(candidate.x + rng.range(-2, 2), 20, WORLD_WIDTH - 20);
       candidate.y = clamp(candidate.y + rng.range(-2, 2), 20, WORLD_HEIGHT - 20);
@@ -278,7 +291,7 @@ export function stepSimulation(
     // 既にできあがっている輪が、既存の仲良しグループに占められていて
     // 自分には実質入りにくい場合は「行き場がない」ことに変わりないため考慮しない
     const hasWelcomingConfirmedGroup = candidates.some((c) => {
-      if (!c.confirmed) return false;
+      if (c.status !== "confirmed") return false;
       const dominant = dominantClique(c, agents);
       return !(dominant && dominant.ratio > 0.5 && dominant.cliqueId !== agent.cliqueId);
     });
@@ -314,16 +327,30 @@ export function stepSimulation(
     }
   }
 
-  // 9. グループ成立判定
+  // 9. グループ成立判定 / 未成立候補の解散・期限切れ判定
   for (const candidate of candidates) {
-    if (candidate.confirmed) continue;
+    if (candidate.status === "confirmed") continue;
+
+    // dissolving/dissolved/expiredは既に決着済み。フェードアウト表現用にageだけ進める
+    if (candidate.status === "dissolving") {
+      candidate.status = "dissolved";
+      candidate.age += 1;
+      continue;
+    }
+    if (candidate.status === "dissolved" || candidate.status === "expired") {
+      candidate.age += 1;
+      continue;
+    }
+
+    // status === "forming"
     const nearbyCount = agents.filter(
       (a) =>
         (a.state === "forming" || a.state === "joined" || a.state === "approaching") &&
         (candidate.memberIds.includes(a.id) || distance(a.x, a.y, candidate.x, candidate.y) < GROUP_GATHER_RADIUS),
     ).length;
+
     if (nearbyCount >= params.groupConfirmSize) {
-      candidate.confirmed = true;
+      candidate.status = "confirmed";
       pushLog(log, tick, `${nearbyCount}人が集まり二次会グループが成立`);
       for (const agent of agents) {
         if (candidate.memberIds.includes(agent.id) && agent.state === "forming") {
@@ -331,12 +358,40 @@ export function stepSimulation(
           agent.joinedGroupId = candidate.id;
         }
       }
+      continue;
     }
+
     candidate.age += 1;
+
+    // founder以外誰も加わらないまま反応が薄ければ、時間切れを待たずに解散する
+    if (candidate.memberIds.length < 2 && candidate.age >= CANDIDATE_WEAK_RESPONSE_AGE) {
+      candidate.status = "dissolving";
+      candidate.age = 0;
+      pushLog(log, tick, `できかけの輪への反応が薄く、そのまま自然消滅した`);
+    } else if (candidate.age >= CANDIDATE_MAX_AGE) {
+      candidate.status = "expired";
+      candidate.age = 0;
+      pushLog(log, tick, `輪(${candidate.memberIds.length}人)は二次会成立に至らないまま時間切れになった`);
+    }
   }
 
-  // 期限切れの未確定候補は掃除する(誰も残っていない場合)
-  candidates = candidates.filter((c) => c.confirmed || c.memberIds.length > 0 || c.age < 40);
+  // forming状態のまま、所属していた候補が解散/期限切れになったエージェントはundecidedに戻す
+  // (輪自体が消えたので、意思決定をやり直す)
+  for (const agent of agents) {
+    if (agent.state !== "forming") continue;
+    const stillForming = candidates.some((c) => c.status === "forming" && c.memberIds.includes(agent.id));
+    if (!stillForming) {
+      agent.state = "undecided";
+    }
+  }
+
+  // 解散/期限切れ候補は、フェードアウト表現用の猶予tickを過ぎたら配列から取り除く
+  candidates = candidates.filter((c) => {
+    if (c.status === "dissolved" || c.status === "expired") {
+      return c.age < CANDIDATE_LINGER_TICKS;
+    }
+    return true;
+  });
 
   const allSettled = agents.every((a) => a.state === "joined" || a.state === "left");
   const finished = allSettled || tick >= 400;

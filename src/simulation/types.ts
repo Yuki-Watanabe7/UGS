@@ -4,8 +4,8 @@ export type AgentState =
   | "approaching"
   /**
    * 輪(GroupCandidate)に合流済み。未確定の「形成中の輪」への合流と、
-   * 成立済み(confirmed)二次会グループへの参加の両方を指す。
-   * どちらかは joinedGroupId が指す GroupCandidate.confirmed を見て判別する
+   * 成立済み二次会グループへの参加の両方を指す。
+   * どちらかは joinedGroupId が指す GroupCandidate.status を見て判別する
    * (ログ文言はこの区別に基づいて分けている。engine.ts参照)。
    */
   | "joined"
@@ -41,13 +41,27 @@ export type Agent = {
   cliqueId?: number;
 };
 
+/**
+ * GroupCandidateのライフサイクル状態。
+ * forming: 未確定の輪として形成中。
+ * confirmed: 成立済み二次会グループ(終端状態)。
+ * dissolving: 反応が薄い/時間切れ等の理由で解散が決まり、視覚的にフェードアウトしている途中(終端手前)。
+ * dissolved: 反応が薄いまま消えた(終端状態)。
+ * expired: 成立に至らないまま期限切れになった(終端状態)。
+ */
+export type GroupCandidateStatus = "forming" | "confirmed" | "dissolving" | "dissolved" | "expired";
+
 export type GroupCandidate = {
   id: string;
   x: number;
   y: number;
   memberIds: string[];
-  confirmed: boolean;
-  /** 何tick存在しているか (演出・ログ用) */
+  status: GroupCandidateStatus;
+  /**
+   * 何tick存在しているか(演出・ログ用)。
+   * dissolving/dissolved/expiredに遷移した時点でリセットされ、
+   * そこからは終端状態での経過tick(掃除タイミング制御用)として使う。
+   */
   age: number;
 };
 
