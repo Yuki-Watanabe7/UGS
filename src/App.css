@@ -372,14 +372,23 @@
 
 .event-log-filters {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  align-items: center;
   gap: 6px;
   margin-bottom: 10px;
 }
 
-.event-log-filter-btn {
-  padding: 4px 10px;
-  border-radius: 999px;
+.event-log-filter-label {
+  font-size: 11.5px;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+
+.event-log-filter-select {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 6px;
   border: 1px solid #3f4250;
   background: #232634;
   color: #cbd5e1;
@@ -387,14 +396,13 @@
   cursor: pointer;
 }
 
-.event-log-filter-btn:hover {
+.event-log-filter-select:hover {
   background: #2b2f40;
 }
 
-.event-log-filter-btn.active {
-  background: #1d4ed8;
-  border-color: #1d4ed8;
-  color: #fff;
+.event-log-filter-select:focus-visible {
+  outline: 2px solid #1d4ed8;
+  outline-offset: 1px;
 }
 
 .event-log-list {

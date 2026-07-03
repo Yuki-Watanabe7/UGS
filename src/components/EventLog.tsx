@@ -34,16 +34,21 @@ export function EventLog({ log }: Props) {
     <div className="panel event-log">
       <h2>状態ログ</h2>
       <div className="event-log-filters">
-        {FILTERS.map((f) => (
-          <button
-            key={f.key}
-            type="button"
-            className={`event-log-filter-btn${filter === f.key ? " active" : ""}`}
-            onClick={() => setFilter(f.key)}
-          >
-            {f.label}
-          </button>
-        ))}
+        <label className="event-log-filter-label" htmlFor="event-log-filter-select">
+          表示:
+        </label>
+        <select
+          id="event-log-filter-select"
+          className="event-log-filter-select"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value as FilterKey)}
+        >
+          {FILTERS.map((f) => (
+            <option key={f.key} value={f.key}>
+              {f.label}
+            </option>
+          ))}
+        </select>
       </div>
       <div className="event-log-list">
         {filteredLog.length === 0 && (
