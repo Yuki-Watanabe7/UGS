@@ -108,3 +108,27 @@ export type SimulationState = {
   height: number;
   finished: boolean;
 };
+
+/**
+ * observerJoiner一人分の観察用データ。UI(inspector表示)から安全に参照できるよう、
+ * engine.ts内部のロジック結果を読み取り専用の形にまとめたもの。
+ * 最寄りの合流可能な輪(joinableなGroupCandidate)が存在しない場合、
+ * nearestGroup*系とattractivenessScoreはundefinedになる。
+ */
+export type ObserverJoinerInspection = {
+  agentId: string;
+  label: string;
+  state: AgentState;
+  stress: number;
+  willingness: number;
+  ambiguityTolerance: number;
+  influenceAvoidance: number;
+  leaveThreshold: number;
+  /** leaveThreshold - stress。0以下ならleaving判定まであとわずか(またはleaving済み) */
+  leaveMargin: number;
+  nearestGroupId?: string;
+  nearestGroupStatus?: GroupCandidateStatus;
+  nearestGroupMemberCount?: number;
+  nearestGroupDistance?: number;
+  attractivenessScore?: number;
+};
