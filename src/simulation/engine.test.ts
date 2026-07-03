@@ -230,6 +230,99 @@ describe("stepSimulation: observerJoiner approach behavior", () => {
   });
 });
 
+describe("stepSimulation: memberIds integrity", () => {
+  it("does not duplicate an agent's id when joining a confirmed candidate it already belongs to", () => {
+    const candidate: GroupCandidate = {
+      id: "group-1",
+      x: 400,
+      y: 260,
+      memberIds: ["agent-0"],
+      confirmed: true,
+      age: 10,
+    };
+    const agent = makeAgent({
+      id: "agent-0",
+      state: "approaching",
+      x: 395,
+      y: 258,
+      joinedGroupId: "group-1",
+    });
+    const state: SimulationState = {
+      tick: 5,
+      agents: [agent],
+      groupCandidates: [candidate],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const next = runTicks(state);
+    const updated = next.groupCandidates.find((c) => c.id === "group-1")!;
+    expect(updated.memberIds.filter((id) => id === "agent-0")).toHaveLength(1);
+  });
+});
+
+describe("stepSimulation: observerJoiner arrival logging", () => {
+  it("distinguishes joining an unconfirmed candidate from joining a confirmed group", () => {
+    const unconfirmedCandidate: GroupCandidate = {
+      id: "group-1",
+      x: 400,
+      y: 260,
+      memberIds: ["leader"],
+      confirmed: false,
+      age: 10,
+    };
+    const observerA = makeAgent({
+      id: "observer-a",
+      isObserverJoiner: true,
+      state: "approaching",
+      x: 395,
+      y: 258,
+      joinedGroupId: "group-1",
+    });
+    const stateA: SimulationState = {
+      tick: 5,
+      agents: [observerA],
+      groupCandidates: [unconfirmedCandidate],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+    const nextA = runTicks(stateA);
+    expect(nextA.log.some((e) => e.message.includes("observerJoinerが未確定の輪に合流"))).toBe(true);
+
+    const confirmedCandidate: GroupCandidate = {
+      id: "group-2",
+      x: 400,
+      y: 260,
+      memberIds: ["leader"],
+      confirmed: true,
+      age: 10,
+    };
+    const observerB = makeAgent({
+      id: "observer-b",
+      isObserverJoiner: true,
+      state: "approaching",
+      x: 395,
+      y: 258,
+      joinedGroupId: "group-2",
+    });
+    const stateB: SimulationState = {
+      tick: 5,
+      agents: [observerB],
+      groupCandidates: [confirmedCandidate],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+    const nextB = runTicks(stateB);
+    expect(nextB.log.some((e) => e.message.includes("observerJoinerが成立済みグループに参加"))).toBe(true);
+  });
+});
+
 describe("preset behavior", () => {
   it("leader-heavy presets form group candidates sooner than the ambiguous-dissolve preset", () => {
     const firstCandidateTick = (presetId: string, seed: number): number => {
