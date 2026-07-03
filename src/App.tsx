@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 import { ControlPanel } from "./components/ControlPanel";
+import { RESET_REQUIRED_PARAM_KEYS } from "./components/sliderConfig";
 import { EventLog } from "./components/EventLog";
 import { AgentLegend } from "./components/AgentLegend";
 import { SimulationCanvas } from "./components/SimulationCanvas";
@@ -20,14 +21,22 @@ function App() {
   const [simState, setSimState] = useState<SimulationState>(() =>
     createInitialState(INITIAL_SEED, PRESETS[0].params),
   );
+  // 現在のsimStateの生成に実際に使われたparams。Reset必須パラメータが
+  // これとparamsとで食い違っている間は、変更がまだ反映されていないとみなす。
+  const [appliedParams, setAppliedParams] = useState<SimParams>(PRESETS[0].params);
 
   const rngRef = useRef(new SeededRandom(seed));
 
   const resetSimulation = useCallback((nextSeed: number, nextParams: SimParams) => {
     rngRef.current = new SeededRandom(nextSeed);
     setSimState(createInitialState(nextSeed, nextParams));
+    setAppliedParams(nextParams);
     setRunning(false);
   }, []);
+
+  const hasPendingResetChanges = RESET_REQUIRED_PARAM_KEYS.some(
+    (key) => params[key] !== appliedParams[key],
+  );
 
   const handleStep = useCallback(() => {
     setSimState((prev) => stepSimulation(prev, params, rngRef.current));
@@ -101,6 +110,7 @@ function App() {
             onSeedChange={handleSeedChange}
             onPresetChange={handlePresetChange}
             onParamsChange={setParams}
+            hasPendingResetChanges={hasPendingResetChanges}
           />
           <AgentLegend />
         </aside>
