@@ -5,6 +5,7 @@ import { RESET_REQUIRED_PARAM_KEYS } from "./components/sliderConfig";
 import { EventLog } from "./components/EventLog";
 import { AgentLegend } from "./components/AgentLegend";
 import { SimulationCanvas } from "./components/SimulationCanvas";
+import { ObserverJoinerInspector } from "./components/ObserverJoinerInspector";
 import { createInitialState, stepSimulation } from "./simulation/engine";
 import { SeededRandom } from "./simulation/random";
 import { getPresetById, PRESETS } from "./simulation/presets";
@@ -125,6 +126,7 @@ function App() {
         </section>
 
         <aside className="sidebar-right">
+          <ObserverJoinerInspector state={simState} params={params} />
           <EventLog log={simState.log} />
         </aside>
       </main>
