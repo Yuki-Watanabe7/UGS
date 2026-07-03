@@ -41,7 +41,7 @@ describe("stepSimulation: group confirmation", () => {
       x: 400,
       y: 260,
       memberIds: ["agent-0", "agent-1"],
-      confirmed: false,
+      status: "forming",
       age: 5,
     };
     const agents: Agent[] = [
@@ -62,7 +62,7 @@ describe("stepSimulation: group confirmation", () => {
     const params = { ...DEFAULT_PARAMS, groupConfirmSize: 3 };
     const next = runTicks(state, params);
 
-    expect(next.groupCandidates[0].confirmed).toBe(true);
+    expect(next.groupCandidates[0].status).toBe("confirmed");
     expect(next.log.some((e) => e.message.includes("成立"))).toBe(true);
   });
 
@@ -72,7 +72,7 @@ describe("stepSimulation: group confirmation", () => {
       x: 400,
       y: 260,
       memberIds: ["agent-0"],
-      confirmed: false,
+      status: "forming",
       age: 5,
     };
     const agents: Agent[] = [makeAgent({ id: "agent-0", state: "forming", x: 400, y: 260 })];
@@ -89,7 +89,129 @@ describe("stepSimulation: group confirmation", () => {
     const params = { ...DEFAULT_PARAMS, groupConfirmSize: 3 };
     const next = runTicks(state, params);
 
-    expect(next.groupCandidates[0].confirmed).toBe(false);
+    expect(next.groupCandidates[0].status).toBe("forming");
+  });
+});
+
+describe("stepSimulation: unconfirmed candidate lifecycle (dissolve/expire)", () => {
+  it("dissolves a forming candidate that only the founder ever joined, after the weak-response window", () => {
+    const candidate: GroupCandidate = {
+      id: "group-1",
+      x: 400,
+      y: 260,
+      memberIds: ["agent-0"],
+      status: "forming",
+      age: 14, // 次tickでweak-response期限(15)に到達する
+    };
+    const agents: Agent[] = [makeAgent({ id: "agent-0", state: "forming", x: 400, y: 260 })];
+    const state: SimulationState = {
+      tick: 14,
+      agents,
+      groupCandidates: [candidate],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const next = runTicks(state);
+
+    expect(next.groupCandidates[0].status).toBe("dissolving");
+    expect(next.log.some((e) => e.message.includes("自然消滅"))).toBe(true);
+    // 輪を失ったfounderはundecidedに戻り、意思決定をやり直せる
+    expect(next.agents[0].state).toBe("undecided");
+  });
+
+  it("expires a forming candidate that never reaches groupConfirmSize within the max age", () => {
+    const candidate: GroupCandidate = {
+      id: "group-1",
+      x: 400,
+      y: 260,
+      memberIds: ["agent-0", "agent-1"],
+      status: "forming",
+      age: 39, // 次tickでmax age(40)に到達する
+    };
+    const agents: Agent[] = [
+      makeAgent({ id: "agent-0", state: "forming", x: 400, y: 260 }),
+      makeAgent({ id: "agent-1", state: "forming", x: 405, y: 262 }),
+    ];
+    const state: SimulationState = {
+      tick: 39,
+      agents,
+      groupCandidates: [candidate],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const params = { ...DEFAULT_PARAMS, groupConfirmSize: 5 };
+    const next = runTicks(state, params);
+
+    expect(next.groupCandidates[0].status).toBe("expired");
+    expect(next.log.some((e) => e.message.includes("時間切れ"))).toBe(true);
+  });
+
+  it("removes a dissolving/expired candidate from the array after it lingers past the fade-out window", () => {
+    const candidate: GroupCandidate = {
+      id: "group-1",
+      x: 400,
+      y: 260,
+      memberIds: ["agent-0"],
+      status: "dissolved",
+      age: 3, // 猶予tick数(4)を次tickで超える
+    };
+    const state: SimulationState = {
+      tick: 20,
+      agents: [],
+      groupCandidates: [candidate],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const next = runTicks(state);
+
+    expect(next.groupCandidates).toHaveLength(0);
+  });
+
+  it("does not let undecided agents approach a dissolving/expired/dissolved candidate", () => {
+    const params = DEFAULT_PARAMS;
+    const statuses: GroupCandidate["status"][] = ["dissolving", "dissolved", "expired"];
+
+    for (const status of statuses) {
+      const candidate: GroupCandidate = {
+        id: "group-1",
+        x: 105,
+        y: 260,
+        memberIds: ["leader"],
+        status,
+        age: 1,
+      };
+      const observer = makeAgent({
+        id: "agent-x",
+        x: 100,
+        y: 260,
+        willingness: 1,
+        conformity: 1,
+        influenceAvoidance: 0,
+      });
+      const state: SimulationState = {
+        tick: 1,
+        agents: [observer],
+        groupCandidates: [candidate],
+        log: [],
+        width: 800,
+        height: 520,
+        finished: false,
+      };
+
+      for (let seed = 0; seed < 20; seed++) {
+        const next = runTicks(state, params, seed, 1);
+        expect(next.agents[0].state).toBe("undecided");
+      }
+    }
   });
 });
 
@@ -200,7 +322,7 @@ describe("stepSimulation: observerJoiner approach behavior", () => {
           x: 500,
           y: 260,
           memberIds: ["leader"],
-          confirmed,
+          status: confirmed ? "confirmed" : "forming",
           age: 10,
         };
         const state: SimulationState = {
@@ -237,7 +359,7 @@ describe("stepSimulation: memberIds integrity", () => {
       x: 400,
       y: 260,
       memberIds: ["agent-0"],
-      confirmed: true,
+      status: "confirmed",
       age: 10,
     };
     const agent = makeAgent({
@@ -270,7 +392,7 @@ describe("stepSimulation: observerJoiner arrival logging", () => {
       x: 400,
       y: 260,
       memberIds: ["leader"],
-      confirmed: false,
+      status: "forming",
       age: 10,
     };
     const observerA = makeAgent({
@@ -298,7 +420,7 @@ describe("stepSimulation: observerJoiner arrival logging", () => {
       x: 400,
       y: 260,
       memberIds: ["leader"],
-      confirmed: true,
+      status: "confirmed",
       age: 10,
     };
     const observerB = makeAgent({
