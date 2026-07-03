@@ -28,11 +28,12 @@ export function runSimulationToEnd(
   options?: MonteCarloRunOptions,
 ): { summary: SimulationSummary; finishedTick: number } {
   const maxTicks = options?.maxTicks ?? DEFAULT_MAX_TICKS;
+  const intervention = options?.intervention;
   const rng = new SeededRandom(seed);
 
-  let state = createInitialState(seed, params);
+  let state = createInitialState(seed, params, intervention);
   while (!state.finished && state.tick < maxTicks) {
-    state = stepSimulation(state, params, rng);
+    state = stepSimulation(state, params, rng, intervention);
   }
 
   const summary = buildSimulationSummary(state);
@@ -85,12 +86,12 @@ function summarizeRuns(runs: MonteCarloRunResult[]): MonteCarloSummary {
  * 個別run結果と集計値の両方を返す。`config.params`はmutationしない。
  */
 export function runMonteCarlo(config: MonteCarloConfig): MonteCarloResult {
-  const { baseSeed, runs: runCount, params, maxTicks } = config;
+  const { baseSeed, runs: runCount, params, maxTicks, intervention } = config;
 
   const runs: MonteCarloRunResult[] = [];
   for (let index = 0; index < runCount; index++) {
     const seed = baseSeed + index;
-    const { summary, finishedTick } = runSimulationToEnd(seed, params, { maxTicks });
+    const { summary, finishedTick } = runSimulationToEnd(seed, params, { maxTicks, intervention });
     runs.push({ seed, summary, finishedTick });
   }
 

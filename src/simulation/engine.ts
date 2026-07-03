@@ -8,6 +8,8 @@ import type {
   SimulationEventType,
   SimulationState,
 } from "./types";
+import type { InterventionRuntimeOptions } from "./interventions";
+import { resolveEffectiveParams, resolveInterventionScenario } from "./interventions";
 import { SeededRandom } from "./random";
 import { WORLD_WIDTH, WORLD_HEIGHT, clamp, distance, createInitialAgents } from "./model";
 
@@ -27,23 +29,40 @@ const CANDIDATE_WEAK_RESPONSE_AGE = 15;
 // dissolving/dissolved/expired が画面上に留まる(フェードアウト表現用の)tick数。これを超えたら配列から除去する
 const CANDIDATE_LINGER_TICKS = 4;
 
-export function createInitialState(seed: number, params: SimParams): SimulationState {
-  const agents = createInitialAgents(seed, params);
+export function createInitialState(
+  seed: number,
+  params: SimParams,
+  intervention?: InterventionRuntimeOptions,
+): SimulationState {
+  const scenario = resolveInterventionScenario(intervention);
+  const effectiveParams = resolveEffectiveParams(params, intervention);
+  const agents = createInitialAgents(seed, effectiveParams);
+  const log: LogEntry[] = [
+    {
+      tick: 0,
+      message: "参加者が集まり始めた。まだ誰も二次会に行くかは決めていない。",
+      tags: ["simulation"],
+      eventType: "simulationStarted",
+    },
+  ];
+  if (scenario.id !== "none") {
+    log.push({
+      tick: 0,
+      message: `${fmtTick(0)} 介入シナリオ「${scenario.name}」が適用された`,
+      tags: ["intervention"],
+      eventType: "interventionApplied",
+      metadata: { interventionId: scenario.id },
+    });
+  }
   return {
     tick: 0,
     agents,
     groupCandidates: [],
-    log: [
-      {
-        tick: 0,
-        message: "参加者が集まり始めた。まだ誰も二次会に行くかは決めていない。",
-        tags: ["simulation"],
-        eventType: "simulationStarted",
-      },
-    ],
+    log,
     width: WORLD_WIDTH,
     height: WORLD_HEIGHT,
     finished: false,
+    interventionId: scenario.id,
   };
 }
 
@@ -156,8 +175,16 @@ export function stepSimulation(
   state: SimulationState,
   params: SimParams,
   rng: SeededRandom,
+  intervention?: InterventionRuntimeOptions,
 ): SimulationState {
   if (state.finished) return state;
+
+  // 呼び出し側がこのtickでinterventionを渡し忘れても、createInitialStateから続く
+  // 介入設定が消えないよう、未指定時は直前のstateに記録済みのシナリオへfall backする。
+  const resolvedIntervention: InterventionRuntimeOptions | undefined =
+    intervention ?? (state.interventionId ? { interventionId: state.interventionId } : undefined);
+  const effectiveParams = resolveEffectiveParams(params, resolvedIntervention);
+  const interventionId = resolveInterventionScenario(resolvedIntervention).id;
 
   const tick = state.tick + 1;
   const agents = state.agents.map((a) => ({ ...a }));
@@ -174,7 +201,7 @@ export function stepSimulation(
     const hasInitiative = agent.initiative >= 0.5;
     const cliqueReady =
       agent.cliqueId !== undefined &&
-      params.existingTieStrength > 0.5 &&
+      effectiveParams.existingTieStrength > 0.5 &&
       agents.filter(
         (other) =>
           other.id !== agent.id &&
@@ -186,8 +213,8 @@ export function stepSimulation(
     if (!hasInitiative && !cliqueReady) continue;
 
     const formingProbability = hasInitiative
-      ? agent.willingness * agent.initiative * 0.08 * (1 + params.numLeaders * 0.15)
-      : params.existingTieStrength * 0.1;
+      ? agent.willingness * agent.initiative * 0.08 * (1 + effectiveParams.numLeaders * 0.15)
+      : effectiveParams.existingTieStrength * 0.1;
 
     if (rng.chance(formingProbability)) {
       agent.state = "forming";
@@ -226,7 +253,7 @@ export function stepSimulation(
     const candidate = nearestCandidate(agent, candidates);
     if (!candidate) continue;
 
-    const score = attractiveness(agent, candidate, agents, params);
+    const score = attractiveness(agent, candidate, agents, effectiveParams);
     const approachProbability = clamp(score * 0.35, 0, 0.9);
 
     if (rng.chance(approachProbability)) {
@@ -333,12 +360,12 @@ export function stepSimulation(
     });
     let increment =
       (agent.willingness * (1 - agent.ambiguityTolerance) * BASE_STRESS_RATE) /
-      Math.max(0.2, params.ambiguityDuration);
+      Math.max(0.2, effectiveParams.ambiguityDuration);
 
     if (agent.isObserverJoiner && !hasWelcomingConfirmedGroup) {
       increment +=
         (agent.willingness * agent.influenceAvoidance * OBSERVER_EXTRA_STRESS_RATE) /
-        Math.max(0.2, params.ambiguityDuration);
+        Math.max(0.2, effectiveParams.ambiguityDuration);
     }
 
     agent.stress = clamp(agent.stress + increment, 0, 1);
@@ -398,7 +425,7 @@ export function stepSimulation(
         (candidate.memberIds.includes(a.id) || distance(a.x, a.y, candidate.x, candidate.y) < GROUP_GATHER_RADIUS),
     ).length;
 
-    if (nearbyCount >= params.groupConfirmSize) {
+    if (nearbyCount >= effectiveParams.groupConfirmSize) {
       candidate.status = "confirmed";
       pushLog(log, tick, `${nearbyCount}人が集まり二次会グループが成立`, ["groupConfirmed"], "groupConfirmed", {
         groupId: candidate.id,
@@ -482,5 +509,6 @@ export function stepSimulation(
     width: state.width,
     height: state.height,
     finished,
+    interventionId,
   };
 }

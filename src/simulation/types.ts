@@ -1,3 +1,5 @@
+import type { InterventionRuntimeOptions, InterventionScenarioId } from "./interventions";
+
 export type AgentState =
   | "undecided"
   | "forming"
@@ -75,7 +77,8 @@ export type LogTag =
   | "groupConfirmed"
   | "leave"
   | "groupLifecycle"
-  | "simulation";
+  | "simulation"
+  | "intervention";
 
 /**
  * 集計(終了サマリー/Monte Carlo)向けのイベント種別。
@@ -83,6 +86,7 @@ export type LogTag =
  */
 export type SimulationEventType =
   | "simulationStarted"
+  | "interventionApplied"
   | "nucleusCreated"
   | "observerApproached"
   | "observerJoinedForming"
@@ -103,6 +107,8 @@ export type SimulationEventMetadata = {
   memberCount?: number;
   /** 合流/参加時点でのGroupCandidateStatus (forming = 未確定の輪への合流, confirmed = 成立済みグループへの参加) */
   joinedGroupStatus?: GroupCandidateStatus;
+  /** eventType: "interventionApplied" 用。適用された介入シナリオのID */
+  interventionId?: InterventionScenarioId;
 };
 
 export type LogEntry = {
@@ -152,6 +158,11 @@ export type SimulationState = {
   width: number;
   height: number;
   finished: boolean;
+  /**
+   * このstateの生成(`createInitialState`)/更新(`stepSimulation`)に使われた介入シナリオID。
+   * 介入なしの場合は"none"。UI表示・集計向けの最小限の保持であり、既存の状態遷移ロジックには影響しない。
+   */
+  interventionId?: InterventionScenarioId;
 };
 
 /**
@@ -237,6 +248,8 @@ export type MonteCarloRunOptions = {
    * 省略時は`DEFAULT_MAX_TICKS`(monteCarlo.ts参照)。
    */
   maxTicks?: number;
+  /** 単発実行/Monte Carloの各runに適用する介入シナリオ。省略時は介入なし */
+  intervention?: InterventionRuntimeOptions;
 };
 
 /** Monte Carlo実行全体の設定。`runs`回、`baseSeed + index`をseedとして実行する */
@@ -245,6 +258,8 @@ export type MonteCarloConfig = {
   runs: number;
   params: SimParams;
   maxTicks?: number;
+  /** 全runに共通で適用する介入シナリオ。省略時は介入なし(単発実行と同じ介入設定を使うことを想定) */
+  intervention?: InterventionRuntimeOptions;
 };
 
 /** 単一seed分のMonte Carlo実行結果 */

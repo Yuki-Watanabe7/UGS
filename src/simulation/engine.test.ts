@@ -799,3 +799,84 @@ describe("preset behavior", () => {
     expect(avg(naturalTicks)).toBeLessThan(avg(ambiguousTicks));
   });
 });
+
+describe("createInitialState/stepSimulation: intervention passthrough", () => {
+  it("defaults to 'none' and keeps existing behavior when no intervention is given", () => {
+    const state = createInitialState(1, DEFAULT_PARAMS);
+
+    expect(state.interventionId).toBe("none");
+    expect(state.log).toHaveLength(1);
+    expect(state.log[0].eventType).toBe("simulationStarted");
+
+    const next = stepSimulation(state, DEFAULT_PARAMS, new SeededRandom(1));
+    expect(next.interventionId).toBe("none");
+  });
+
+  it("applies paramAdjustments to initial agent creation when an intervention is given", () => {
+    const withIntervention = createInitialState(1, DEFAULT_PARAMS, {
+      interventionId: "light-observer-invitation",
+    });
+    const withoutIntervention = createInitialState(1, DEFAULT_PARAMS);
+
+    const observerWith = withIntervention.agents.find((a) => a.isObserverJoiner)!;
+    const observerWithout = withoutIntervention.agents.find((a) => a.isObserverJoiner)!;
+
+    expect(observerWith.influenceAvoidance).toBeLessThan(observerWithout.influenceAvoidance);
+    expect(withIntervention.interventionId).toBe("light-observer-invitation");
+  });
+
+  it("logs an interventionApplied entry with the scenario id when a non-none intervention is used", () => {
+    const state = createInitialState(1, DEFAULT_PARAMS, { interventionId: "late-join-ok" });
+
+    const entry = state.log.find((e) => e.eventType === "interventionApplied");
+    expect(entry).toBeDefined();
+    expect(entry?.tags).toContain("intervention");
+    expect(entry?.metadata?.interventionId).toBe("late-join-ok");
+  });
+
+  it("does not log an interventionApplied entry for 'none'", () => {
+    const state = createInitialState(1, DEFAULT_PARAMS, { interventionId: "none" });
+    expect(state.log.some((e) => e.eventType === "interventionApplied")).toBe(false);
+  });
+
+  it("carries the intervention forward across ticks even if stepSimulation isn't re-passed it", () => {
+    let state = createInitialState(1, DEFAULT_PARAMS, { interventionId: "short-ambiguity-window" });
+    const rng = new SeededRandom(1);
+
+    for (let i = 0; i < 10; i++) {
+      state = stepSimulation(state, DEFAULT_PARAMS, rng);
+    }
+
+    expect(state.interventionId).toBe("short-ambiguity-window");
+  });
+
+  it("applies the same paramAdjustments in stepSimulation as in createInitialState (fewer stress increments with a longer ambiguity window)", () => {
+    const observer = makeAgent({
+      id: "observer",
+      isObserverJoiner: true,
+      willingness: 0.9,
+      ambiguityTolerance: 0.3,
+      influenceAvoidance: 0.5,
+      leaveThreshold: 0.95,
+    });
+    const baseState: SimulationState = {
+      tick: 0,
+      agents: [observer],
+      groupCandidates: [],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const withoutIntervention = stepSimulation(baseState, DEFAULT_PARAMS, new SeededRandom(1));
+    const withIntervention = stepSimulation(baseState, DEFAULT_PARAMS, new SeededRandom(1), {
+      interventionId: "short-ambiguity-window",
+    });
+
+    const stressWithout = withoutIntervention.agents[0].stress;
+    const stressWith = withIntervention.agents[0].stress;
+
+    expect(stressWith).toBeLessThan(stressWithout);
+  });
+});
