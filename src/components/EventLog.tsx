@@ -1,23 +1,57 @@
-import { useEffect, useRef } from "react";
-import type { LogEntry } from "../simulation/types";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { LogEntry, LogTag } from "../simulation/types";
+
+type FilterKey = "all" | "observerJoiner" | "nucleus" | "groupConfirmed" | "leave";
+
+const FILTERS: Array<{ key: FilterKey; label: string; tag?: LogTag }> = [
+  { key: "all", label: "全ログ" },
+  { key: "observerJoiner", label: "observerJoinerのみ", tag: "observerJoiner" },
+  { key: "nucleus", label: "核形成イベントのみ", tag: "nucleus" },
+  { key: "groupConfirmed", label: "グループ成立イベントのみ", tag: "groupConfirmed" },
+  { key: "leave", label: "離脱イベントのみ", tag: "leave" },
+];
 
 type Props = {
   log: LogEntry[];
 };
 
 export function EventLog({ log }: Props) {
+  const [filter, setFilter] = useState<FilterKey>("all");
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  const activeTag = FILTERS.find((f) => f.key === filter)?.tag;
+  const filteredLog = useMemo(
+    () => (activeTag ? log.filter((entry) => entry.tags.includes(activeTag)) : log),
+    [log, activeTag],
+  );
+
+  // フィルタ変更・ログ追加のいずれでも、表示中のリスト末尾に追従させる
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [log.length]);
+  }, [filteredLog.length, filter]);
 
   return (
     <div className="panel event-log">
       <h2>状態ログ</h2>
+      <div className="event-log-filters">
+        {FILTERS.map((f) => (
+          <button
+            key={f.key}
+            type="button"
+            className={`event-log-filter-btn${filter === f.key ? " active" : ""}`}
+            onClick={() => setFilter(f.key)}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
       <div className="event-log-list">
-        {log.length === 0 && <p className="event-log-empty">まだイベントはありません。</p>}
-        {log.map((entry, i) => (
+        {filteredLog.length === 0 && (
+          <p className="event-log-empty">
+            {log.length === 0 ? "まだイベントはありません。" : "該当するログはありません。"}
+          </p>
+        )}
+        {filteredLog.map((entry, i) => (
           <div key={`${entry.tick}-${i}`} className="event-log-entry">
             {entry.message}
           </div>

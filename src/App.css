@@ -370,6 +370,33 @@
   overflow: hidden;
 }
 
+.event-log-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.event-log-filter-btn {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid #3f4250;
+  background: #232634;
+  color: #cbd5e1;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.event-log-filter-btn:hover {
+  background: #2b2f40;
+}
+
+.event-log-filter-btn.active {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+  color: #fff;
+}
+
 .event-log-list {
   flex: 1;
   min-height: 0;
