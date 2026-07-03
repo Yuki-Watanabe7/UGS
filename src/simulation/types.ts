@@ -2,6 +2,12 @@ export type AgentState =
   | "undecided"
   | "forming"
   | "approaching"
+  /**
+   * 輪(GroupCandidate)に合流済み。未確定の「形成中の輪」への合流と、
+   * 成立済み(confirmed)二次会グループへの参加の両方を指す。
+   * どちらかは joinedGroupId が指す GroupCandidate.confirmed を見て判別する
+   * (ログ文言はこの区別に基づいて分けている。engine.ts参照)。
+   */
   | "joined"
   | "leaving"
   | "left";

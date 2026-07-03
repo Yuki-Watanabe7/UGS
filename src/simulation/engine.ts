@@ -36,6 +36,13 @@ function pushLog(log: LogEntry[], tick: number, message: string): void {
   log.push({ tick, message: `${fmtTick(tick)} ${message}` });
 }
 
+/** candidate.memberIdsへの追加は必ずこの関数を通し、同一agentの重複登録を防ぐ */
+function addMemberToCandidate(candidate: GroupCandidate, agentId: string): void {
+  if (!candidate.memberIds.includes(agentId)) {
+    candidate.memberIds.push(agentId);
+  }
+}
+
 function nearestCandidate(
   agent: Agent,
   candidates: GroupCandidate[],
@@ -153,18 +160,17 @@ export function stepSimulation(
         (c) => distance(agent.x, agent.y, c.x, c.y) < CANDIDATE_MERGE_RADIUS,
       );
       if (nearbyCandidate) {
-        if (!nearbyCandidate.memberIds.includes(agent.id)) {
-          nearbyCandidate.memberIds.push(agent.id);
-        }
+        addMemberToCandidate(nearbyCandidate, agent.id);
       } else {
         const candidate: GroupCandidate = {
           id: `group-${tick}-${agent.id}`,
           x: agent.x,
           y: agent.y,
-          memberIds: [agent.id],
+          memberIds: [],
           confirmed: false,
           age: 0,
         };
+        addMemberToCandidate(candidate, agent.id);
         candidates.push(candidate);
         pushLog(log, tick, `${agent.label}さんが「もう一軒行く?」と発言し、核を作り始めた`);
       }
@@ -210,14 +216,24 @@ export function stepSimulation(
     stepAgentMotion(agent, candidate);
     const d = distance(agent.x, agent.y, candidate.x, candidate.y);
     if (d < JOIN_DISTANCE) {
-      if (candidate.confirmed || !candidate.memberIds.includes(agent.id)) {
-        candidate.memberIds.push(agent.id);
-      }
+      addMemberToCandidate(candidate, agent.id);
       agent.state = "joined";
       if (agent.isObserverJoiner) {
-        pushLog(log, tick, `observerJoinerが成立済みグループに参加`);
+        pushLog(
+          log,
+          tick,
+          candidate.confirmed
+            ? `observerJoinerが成立済みグループに参加`
+            : `observerJoinerが未確定の輪に合流`,
+        );
       } else {
-        pushLog(log, tick, `${agent.label}さんがグループに合流`);
+        pushLog(
+          log,
+          tick,
+          candidate.confirmed
+            ? `${agent.label}さんが成立済みグループに参加`
+            : `${agent.label}さんが輪に合流`,
+        );
       }
     }
   }
