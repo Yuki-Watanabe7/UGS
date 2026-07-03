@@ -565,6 +565,218 @@ describe("stepSimulation: log tags", () => {
   });
 });
 
+describe("stepSimulation: structured event metadata", () => {
+  it("attaches simulationStarted to the initial log entry", () => {
+    const state = createInitialState(1, DEFAULT_PARAMS);
+    expect(state.log[0].eventType).toBe("simulationStarted");
+  });
+
+  it("attaches nucleusCreated with groupId/agentId to a nucleus-formation log", () => {
+    const founder = makeAgent({ id: "founder", initiative: 1, willingness: 1, x: 400, y: 260 });
+    const state: SimulationState = {
+      tick: 0,
+      agents: [founder],
+      groupCandidates: [],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const next = runTicks(state, DEFAULT_PARAMS, 42, 100);
+
+    const nucleusEntry = next.log.find((e) => e.eventType === "nucleusCreated");
+    expect(nucleusEntry).toBeDefined();
+    expect(nucleusEntry?.metadata?.agentId).toBe("founder");
+    expect(nucleusEntry?.metadata?.groupId).toBeDefined();
+  });
+
+  it("attaches groupConfirmed with memberCount to a group-confirmation log", () => {
+    const candidate: GroupCandidate = {
+      id: "group-1",
+      x: 400,
+      y: 260,
+      memberIds: ["agent-0", "agent-1"],
+      status: "forming",
+      age: 5,
+    };
+    const agents: Agent[] = [
+      makeAgent({ id: "agent-0", state: "forming", x: 400, y: 260 }),
+      makeAgent({ id: "agent-1", state: "joined", x: 410, y: 260, joinedGroupId: "group-1" }),
+      makeAgent({ id: "agent-2", state: "approaching", x: 395, y: 265, joinedGroupId: "group-1" }),
+    ];
+    const state: SimulationState = {
+      tick: 5,
+      agents,
+      groupCandidates: [candidate],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const params = { ...DEFAULT_PARAMS, groupConfirmSize: 3 };
+    const next = runTicks(state, params);
+
+    const confirmedEntry = next.log.find((e) => e.eventType === "groupConfirmed");
+    expect(confirmedEntry).toBeDefined();
+    expect(confirmedEntry?.metadata?.groupId).toBe("group-1");
+    expect(confirmedEntry?.metadata?.memberCount).toBe(3);
+  });
+
+  it("records observerJoinedForming when an observerJoiner joins an unconfirmed candidate", () => {
+    const unconfirmedCandidate: GroupCandidate = {
+      id: "group-1",
+      x: 400,
+      y: 260,
+      memberIds: ["leader"],
+      status: "forming",
+      age: 10,
+    };
+    const observer = makeAgent({
+      id: "observer-a",
+      isObserverJoiner: true,
+      state: "approaching",
+      x: 395,
+      y: 258,
+      joinedGroupId: "group-1",
+    });
+    const state: SimulationState = {
+      tick: 5,
+      agents: [observer],
+      groupCandidates: [unconfirmedCandidate],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const next = runTicks(state);
+    const entry = next.log.find((e) => e.eventType === "observerJoinedForming");
+    expect(entry).toBeDefined();
+    expect(entry?.metadata?.agentId).toBe("observer-a");
+    expect(entry?.metadata?.joinedGroupStatus).toBe("forming");
+  });
+
+  it("records observerJoinedConfirmed when an observerJoiner joins a confirmed group", () => {
+    const confirmedCandidate: GroupCandidate = {
+      id: "group-2",
+      x: 400,
+      y: 260,
+      memberIds: ["leader"],
+      status: "confirmed",
+      age: 10,
+    };
+    const observer = makeAgent({
+      id: "observer-b",
+      isObserverJoiner: true,
+      state: "approaching",
+      x: 395,
+      y: 258,
+      joinedGroupId: "group-2",
+    });
+    const state: SimulationState = {
+      tick: 5,
+      agents: [observer],
+      groupCandidates: [confirmedCandidate],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const next = runTicks(state);
+    const entry = next.log.find((e) => e.eventType === "observerJoinedConfirmed");
+    expect(entry).toBeDefined();
+    expect(entry?.metadata?.agentId).toBe("observer-b");
+    expect(entry?.metadata?.joinedGroupStatus).toBe("confirmed");
+  });
+
+  it("records observerLeaveStarted when an observerJoiner gives up, distinct from observerLeft", () => {
+    const observer = makeAgent({
+      id: "observer",
+      isObserverJoiner: true,
+      willingness: 0.9,
+      ambiguityTolerance: 0.05,
+      influenceAvoidance: 0.9,
+      leaveThreshold: 0.05,
+    });
+    const state: SimulationState = {
+      tick: 0,
+      agents: [observer],
+      groupCandidates: [],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const params = { ...DEFAULT_PARAMS, ambiguityDuration: 1 };
+    const next = runTicks(state, params, 1, 50);
+
+    const leaveStartedEntry = next.log.find((e) => e.eventType === "observerLeaveStarted");
+    expect(leaveStartedEntry).toBeDefined();
+    expect(leaveStartedEntry?.metadata?.agentId).toBe("observer");
+    expect(leaveStartedEntry?.tick).toBeLessThan(
+      next.log.find((e) => e.eventType === "observerLeft")?.tick ?? Infinity,
+    );
+  });
+
+  it("records observerLeft once the observerJoiner reaches the bottom edge (left state)", () => {
+    const observer = makeAgent({
+      id: "observer",
+      isObserverJoiner: true,
+      state: "leaving",
+      x: 400,
+      y: 520 - 10,
+    });
+    const state: SimulationState = {
+      tick: 0,
+      agents: [observer],
+      groupCandidates: [],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const next = runTicks(state);
+    expect(next.agents[0].state).toBe("left");
+    const entry = next.log.find((e) => e.eventType === "observerLeft");
+    expect(entry).toBeDefined();
+    expect(entry?.metadata?.agentId).toBe("observer");
+  });
+
+  it("does not break existing tag-based EventLog filtering when eventType/metadata are present", () => {
+    const observer = makeAgent({
+      id: "observer",
+      isObserverJoiner: true,
+      willingness: 0.9,
+      ambiguityTolerance: 0.05,
+      influenceAvoidance: 0.9,
+      leaveThreshold: 0.05,
+    });
+    const state: SimulationState = {
+      tick: 0,
+      agents: [observer],
+      groupCandidates: [],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const params = { ...DEFAULT_PARAMS, ambiguityDuration: 1 };
+    const next = runTicks(state, params, 1, 50);
+
+    const observerTagged = next.log.filter((e) => e.tags.includes("observerJoiner"));
+    expect(observerTagged.length).toBeGreaterThan(0);
+    for (const entry of observerTagged) {
+      expect(Array.isArray(entry.tags)).toBe(true);
+    }
+  });
+});
+
 describe("preset behavior", () => {
   it("leader-heavy presets form group candidates sooner than the ambiguous-dissolve preset", () => {
     const firstCandidateTick = (presetId: string, seed: number): number => {
