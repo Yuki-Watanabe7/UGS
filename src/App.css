@@ -1,10 +1,12 @@
 .app-root {
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
 
 .app-header {
+  flex-shrink: 0;
   padding: 20px 24px 12px;
   border-bottom: 1px solid #2e303a;
 }
@@ -32,14 +34,47 @@
   flex: 1;
   display: grid;
   grid-template-columns: 300px 1fr 300px;
+  grid-template-rows: minmax(0, 1fr);
   gap: 16px;
   padding: 16px 24px 24px;
-  align-items: start;
+  align-items: stretch;
+  min-height: 0;
+  overflow: hidden;
 }
 
 @media (max-width: 1100px) {
+  .app-root {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
   .app-main {
     grid-template-columns: 1fr;
+    grid-template-rows: none;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .sidebar-left,
+  .center-stage,
+  .sidebar-right {
+    overflow: visible;
+  }
+
+  .observer-inspector {
+    flex-shrink: 0;
+    max-height: none;
+    overflow-y: visible;
+  }
+
+  .event-log {
+    flex: none;
+  }
+
+  .event-log-list {
+    flex: none;
+    max-height: 50vh;
   }
 }
 
@@ -62,6 +97,8 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .control-buttons {
@@ -192,6 +229,8 @@
 
 .center-stage {
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .canvas-panel {
@@ -252,12 +291,17 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .observer-inspector {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  flex-shrink: 0;
+  max-height: 45%;
+  overflow-y: auto;
 }
 
 .observer-inspector-empty {
@@ -321,10 +365,14 @@
 .event-log {
   display: flex;
   flex-direction: column;
-  max-height: 80vh;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .event-log-list {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
