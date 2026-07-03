@@ -1,0 +1,22 @@
+:root {
+  color-scheme: light dark;
+  font: 15px/1.5 system-ui, "Segoe UI", Roboto, "Hiragino Kaku Gothic ProN", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #0f1115;
+  color: #e5e7eb;
+}
+
+h1, h2, h3, p, ul, ol {
+  margin: 0;
+}
+
+button {
+  font: inherit;
+}
