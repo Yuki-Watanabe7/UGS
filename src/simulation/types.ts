@@ -177,3 +177,54 @@ export type ObserverJoinerInspection = {
   nearestGroupDistance?: number;
   attractivenessScore?: number;
 };
+
+/**
+ * observerJoiner一人分の、シミュレーション終了(または途中経過)サマリー。
+ * `state.log`の構造化イベント(`eventType`/`metadata`)から抽出した、tickに紐づく意思決定の推移。
+ */
+export type ObserverJoinerRunSummary = {
+  agentId: string;
+  label: string;
+  /** サマリー導出時点でのstate.agentsの状態(finished: falseの場合は暫定値) */
+  finalState: AgentState;
+  joinedGroupId?: string;
+  /** 輪/成立済みグループへの接近を開始したtick("observerApproached"、複数回接近し直した場合は直近のもの) */
+  approachedTick?: number;
+  /** 輪への合流、または成立済みグループへの参加が完了したtick */
+  joinedTick?: number;
+  /** 参加時点でのGroupCandidateStatus (forming = 未確定の輪への合流, confirmed = 成立済みグループへの参加) */
+  joinedGroupStatus?: GroupCandidateStatus;
+  leaveStartedTick?: number;
+  leftTick?: number;
+  /**
+   * 後乗り参加が成立したとみなす条件(いずれかを満たせばtrue、finalStateが"joined"でなければ常にfalse):
+   * (a) 参加した輪が参加時点で既に"confirmed"だった(joinedGroupStatus === "confirmed")、または
+   * (b) シミュレーション全体で最初にグループが成立したtick(firstGroupConfirmedTick)より後に参加した
+   *     (自分の輪が後から成立したケースも含め、既に何らかのグループが成立済みの状況下での参加は後乗りとみなす)
+   */
+  lateJoinSucceeded: boolean;
+};
+
+/**
+ * シミュレーションの終了(または途中経過)サマリー。表示文言の文字列解析に依存せず、
+ * `state.log`の構造化イベントと`state.agents`から導出する。`SimulationState`をmutationしない。
+ * `finished: false`の状態でも呼び出し可能で、その時点までの暫定値を返す
+ * (UI側で「終了前の暫定サマリー」として表示することを想定)。
+ */
+export type SimulationSummary = {
+  finished: boolean;
+  /** 終了tick。finished: falseの場合はundefined */
+  finishedTick?: number;
+  joinedCount: number;
+  leftCount: number;
+  stateCounts: Record<AgentState, number>;
+  observerJoiners: ObserverJoinerRunSummary[];
+  /** 最初に核(forming候補)が形成されたtick。一度も形成されていなければundefined */
+  firstNucleusTick?: number;
+  /** 最初にグループが成立したtick。一度も成立していなければundefined */
+  firstGroupConfirmedTick?: number;
+  /** 成立した(confirmedになった)グループの総数 */
+  confirmedGroupCount: number;
+  /** グループ成立イベントが一度もない場合にtrue */
+  groupFailure: boolean;
+};
