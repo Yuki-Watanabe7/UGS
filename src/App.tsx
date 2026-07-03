@@ -4,6 +4,7 @@ import { ControlPanel } from "./components/ControlPanel";
 import { RESET_REQUIRED_PARAM_KEYS } from "./components/sliderConfig";
 import { EventLog } from "./components/EventLog";
 import { AgentLegend } from "./components/AgentLegend";
+import { MonteCarloPanel } from "./components/MonteCarloPanel";
 import { SimulationCanvas } from "./components/SimulationCanvas";
 import { ObserverJoinerInspector } from "./components/ObserverJoinerInspector";
 import { SimulationSummaryPanel } from "./components/SimulationSummaryPanel";
@@ -63,6 +64,10 @@ function App() {
     setRunning((r) => !r);
   }, [simState.finished]);
 
+  const handlePauseForMonteCarlo = useCallback(() => {
+    setRunning(false);
+  }, []);
+
   const handleReset = useCallback(() => {
     resetSimulation(seed, params);
   }, [resetSimulation, seed, params]);
@@ -115,6 +120,13 @@ function App() {
             hasPendingResetChanges={hasPendingResetChanges}
           />
           <AgentLegend />
+          <MonteCarloPanel
+            presetId={presetId}
+            params={params}
+            seed={seed}
+            singleSimRunning={running}
+            onBeforeRun={handlePauseForMonteCarlo}
+          />
         </aside>
 
         <section className="center-stage">
