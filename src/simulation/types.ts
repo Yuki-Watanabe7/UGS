@@ -65,9 +65,22 @@ export type GroupCandidate = {
   age: number;
 };
 
+/**
+ * ログの分類タグ。1エントリに複数付与できる(単一カテゴリではなくタグ方式)。
+ * observerJoinerの離脱は observerJoiner と leave の両方を持つ、といった重複を許容する。
+ */
+export type LogTag =
+  | "observerJoiner"
+  | "nucleus"
+  | "groupConfirmed"
+  | "leave"
+  | "groupLifecycle"
+  | "simulation";
+
 export type LogEntry = {
   tick: number;
   message: string;
+  tags: LogTag[];
 };
 
 export type SimParams = {

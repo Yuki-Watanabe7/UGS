@@ -64,6 +64,7 @@ describe("stepSimulation: group confirmation", () => {
 
     expect(next.groupCandidates[0].status).toBe("confirmed");
     expect(next.log.some((e) => e.message.includes("成立"))).toBe(true);
+    expect(next.log.some((e) => e.tags.includes("groupConfirmed"))).toBe(true);
   });
 
   it("does not confirm when fewer members than groupConfirmSize are nearby", () => {
@@ -118,6 +119,7 @@ describe("stepSimulation: unconfirmed candidate lifecycle (dissolve/expire)", ()
 
     expect(next.groupCandidates[0].status).toBe("dissolving");
     expect(next.log.some((e) => e.message.includes("自然消滅"))).toBe(true);
+    expect(next.log.some((e) => e.tags.includes("groupLifecycle"))).toBe(true);
     // 輪を失ったfounderはundecidedに戻り、意思決定をやり直せる
     expect(next.agents[0].state).toBe("undecided");
   });
@@ -150,6 +152,7 @@ describe("stepSimulation: unconfirmed candidate lifecycle (dissolve/expire)", ()
 
     expect(next.groupCandidates[0].status).toBe("expired");
     expect(next.log.some((e) => e.message.includes("時間切れ"))).toBe(true);
+    expect(next.log.some((e) => e.tags.includes("groupLifecycle"))).toBe(true);
   });
 
   it("removes a dissolving/expired candidate from the array after it lingers past the fade-out window", () => {
@@ -414,6 +417,11 @@ describe("stepSimulation: observerJoiner arrival logging", () => {
     };
     const nextA = runTicks(stateA);
     expect(nextA.log.some((e) => e.message.includes("observerJoinerが未確定の輪に合流"))).toBe(true);
+    expect(
+      nextA.log.some(
+        (e) => e.message.includes("observerJoinerが未確定の輪に合流") && e.tags.includes("observerJoiner"),
+      ),
+    ).toBe(true);
 
     const confirmedCandidate: GroupCandidate = {
       id: "group-2",
@@ -442,6 +450,118 @@ describe("stepSimulation: observerJoiner arrival logging", () => {
     };
     const nextB = runTicks(stateB);
     expect(nextB.log.some((e) => e.message.includes("observerJoinerが成立済みグループに参加"))).toBe(true);
+    expect(
+      nextB.log.some(
+        (e) => e.message.includes("observerJoinerが成立済みグループに参加") && e.tags.includes("observerJoiner"),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("stepSimulation: log tags", () => {
+  it("tags the initial log entry as simulation", () => {
+    const state = createInitialState(1, DEFAULT_PARAMS);
+    expect(state.log[0].tags).toContain("simulation");
+  });
+
+  it("tags a nucleus-formation log with nucleus", () => {
+    const founder = makeAgent({ id: "founder", initiative: 1, willingness: 1, x: 400, y: 260 });
+    const state: SimulationState = {
+      tick: 0,
+      agents: [founder],
+      groupCandidates: [],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const next = runTicks(state, DEFAULT_PARAMS, 42, 100);
+
+    expect(next.log.some((e) => e.tags.includes("nucleus"))).toBe(true);
+  });
+
+  it("tags both observerJoiner and leave when an observerJoiner gives up and leaves", () => {
+    const observer = makeAgent({
+      id: "observer",
+      isObserverJoiner: true,
+      willingness: 0.9,
+      ambiguityTolerance: 0.05,
+      influenceAvoidance: 0.9,
+      leaveThreshold: 0.05,
+    });
+    const state: SimulationState = {
+      tick: 0,
+      agents: [observer],
+      groupCandidates: [],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const params = { ...DEFAULT_PARAMS, ambiguityDuration: 1 };
+    const next = runTicks(state, params, 1, 50);
+
+    const leaveEntry = next.log.find((e) => e.tags.includes("leave"));
+    expect(leaveEntry).toBeDefined();
+    expect(leaveEntry?.tags).toContain("observerJoiner");
+  });
+
+  it("tags a plain agent's leave log with leave only (not observerJoiner)", () => {
+    const plain = makeAgent({
+      id: "plain",
+      isObserverJoiner: false,
+      willingness: 0.9,
+      ambiguityTolerance: 0.05,
+      leaveThreshold: 0.05,
+    });
+    const state: SimulationState = {
+      tick: 0,
+      agents: [plain],
+      groupCandidates: [],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const params = { ...DEFAULT_PARAMS, ambiguityDuration: 1 };
+    const next = runTicks(state, params, 1, 50);
+
+    const leaveEntry = next.log.find((e) => e.tags.includes("leave"));
+    expect(leaveEntry).toBeDefined();
+    expect(leaveEntry?.tags).not.toContain("observerJoiner");
+  });
+
+  it("does not mutate the original log array when filtering by tag", () => {
+    const observer = makeAgent({
+      id: "observer",
+      isObserverJoiner: true,
+      willingness: 0.9,
+      ambiguityTolerance: 0.05,
+      influenceAvoidance: 0.9,
+      leaveThreshold: 0.05,
+    });
+    const state: SimulationState = {
+      tick: 0,
+      agents: [observer],
+      groupCandidates: [],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const params = { ...DEFAULT_PARAMS, ambiguityDuration: 1 };
+    const next = runTicks(state, params, 1, 50);
+    const originalLength = next.log.length;
+
+    const filtered = next.log.filter((e) => e.tags.includes("leave"));
+
+    expect(filtered.length).toBeLessThanOrEqual(originalLength);
+    expect(next.log.length).toBe(originalLength);
+    expect(filtered).not.toBe(next.log);
   });
 });
 
