@@ -1301,3 +1301,199 @@ describe("Phase C: anonymous-low-pressure-intent", () => {
     expect(defaultAdjusted).toBeGreaterThan(0);
   });
 });
+
+describe("Phase C: light-observer-invitation", () => {
+  it("does not log observerInvited without the intervention", () => {
+    const observer = makeAgent({ id: "observer", isObserverJoiner: true, stress: 0.3, leaveThreshold: 0.6 });
+    const helper = makeAgent({ id: "helper", label: "Helper", state: "joined", x: 410, y: 260 });
+    const state: SimulationState = {
+      tick: 5,
+      agents: [observer, helper],
+      groupCandidates: [],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const next = stepSimulation(state, DEFAULT_PARAMS, new SeededRandom(1));
+
+    expect(next.agents.find((a) => a.id === "observer")?.invitedAtTick).toBeUndefined();
+    expect(next.log.some((e) => e.eventType === "observerInvited")).toBe(false);
+  });
+
+  it("logs an observerInvited event naming the inviter once tick/stress conditions are met (seed-reproducible)", () => {
+    const observer = makeAgent({
+      id: "observer",
+      isObserverJoiner: true,
+      stress: 0.3,
+      leaveThreshold: 0.6,
+      x: 400,
+      y: 260,
+    });
+    const helper = makeAgent({ id: "helper", label: "Helper", state: "joined", x: 410, y: 260 });
+    const buildState = (): SimulationState => ({
+      tick: 5,
+      agents: [observer, helper],
+      groupCandidates: [],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    });
+
+    const run = () =>
+      stepSimulation(buildState(), DEFAULT_PARAMS, new SeededRandom(1), {
+        interventionId: "light-observer-invitation",
+      });
+
+    const first = run();
+    const second = run();
+
+    const invitedObserver = first.agents.find((a) => a.id === "observer");
+    expect(invitedObserver?.invitedAtTick).toBe(6);
+    expect(second.agents.find((a) => a.id === "observer")?.invitedAtTick).toBe(invitedObserver?.invitedAtTick);
+
+    const entry = first.log.find((e) => e.eventType === "observerInvited");
+    expect(entry).toBeDefined();
+    expect(entry?.tags).toEqual(expect.arrayContaining(["observerJoiner", "intervention"]));
+    expect(entry?.metadata?.agentId).toBe("observer");
+    expect(entry?.metadata?.inviterAgentId).toBe("helper");
+    expect(second.log.find((e) => e.eventType === "observerInvited")?.metadata?.inviterAgentId).toBe("helper");
+  });
+
+  it("only invites once, even if the observerJoiner remains undecided and stressed for more ticks", () => {
+    const observer = makeAgent({
+      id: "observer",
+      isObserverJoiner: true,
+      stress: 0.3,
+      leaveThreshold: 0.9,
+      ambiguityTolerance: 0.9,
+      x: 400,
+      y: 260,
+    });
+    const helper = makeAgent({ id: "helper", label: "Helper", state: "joined", x: 410, y: 260 });
+    const state: SimulationState = {
+      tick: 5,
+      agents: [observer, helper],
+      groupCandidates: [],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const next = runTicks(state, DEFAULT_PARAMS, 1, 3, { interventionId: "light-observer-invitation" });
+
+    const invitedEntries = next.log.filter((e) => e.eventType === "observerInvited");
+    expect(invitedEntries).toHaveLength(1);
+  });
+
+  it("falls back to the nearest non-observerJoiner agent as inviter when no one nearby is engaged", () => {
+    const observer = makeAgent({
+      id: "observer",
+      isObserverJoiner: true,
+      stress: 0.3,
+      leaveThreshold: 0.6,
+      x: 400,
+      y: 260,
+    });
+    const far = makeAgent({ id: "far", label: "Far", state: "undecided", x: 10, y: 10 });
+    const closer = makeAgent({ id: "closer", label: "Closer", state: "undecided", x: 450, y: 280 });
+    const state: SimulationState = {
+      tick: 5,
+      agents: [observer, far, closer],
+      groupCandidates: [],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const next = stepSimulation(state, DEFAULT_PARAMS, new SeededRandom(1), {
+      interventionId: "light-observer-invitation",
+    });
+
+    const entry = next.log.find((e) => e.eventType === "observerInvited");
+    expect(entry?.metadata?.inviterAgentId).toBe("closer");
+  });
+
+  it("increases approach probability toward a nearby candidate for an already-invited observerJoiner", () => {
+    const params = DEFAULT_PARAMS;
+
+    const countApproachOutcomes = (invited: boolean, trials: number): number => {
+      let approachCount = 0;
+      for (let seed = 0; seed < trials; seed++) {
+        const observer = makeAgent({
+          id: "observer",
+          isObserverJoiner: true,
+          willingness: 0.8,
+          influenceAvoidance: 0.6,
+          conformity: 0.6,
+          x: 100,
+          y: 260,
+          invitedAtTick: invited ? 0 : undefined,
+        });
+        const candidate: GroupCandidate = {
+          id: "group-1",
+          x: 500,
+          y: 260,
+          memberIds: ["leader"],
+          status: "forming",
+          age: 10,
+        };
+        const state: SimulationState = {
+          tick: 0,
+          agents: [observer],
+          groupCandidates: [candidate],
+          log: [],
+          width: 800,
+          height: 520,
+          finished: false,
+        };
+        const next = runTicks(state, params, seed + 500, 1, { interventionId: "light-observer-invitation" });
+        if (next.agents[0].state === "approaching" || next.agents[0].state === "joined") {
+          approachCount += 1;
+        }
+      }
+      return approachCount;
+    };
+
+    const trials = 300;
+    const withoutBoost = countApproachOutcomes(false, trials);
+    const withBoost = countApproachOutcomes(true, trials);
+
+    expect(withBoost).toBeGreaterThan(withoutBoost);
+  });
+
+  it("lowers the already-invited observerJoiner's no-destination extra stress rate", () => {
+    const observer = makeAgent({
+      id: "observer",
+      isObserverJoiner: true,
+      willingness: 0.9,
+      ambiguityTolerance: 0.3,
+      influenceAvoidance: 0.9,
+      leaveThreshold: 0.95,
+    });
+    const baseState: SimulationState = {
+      tick: 0,
+      agents: [observer],
+      groupCandidates: [],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const withoutIntervention = stepSimulation(baseState, DEFAULT_PARAMS, new SeededRandom(1));
+    const invitedState: SimulationState = {
+      ...baseState,
+      agents: [{ ...observer, invitedAtTick: 0 }],
+    };
+    const withIntervention = stepSimulation(invitedState, DEFAULT_PARAMS, new SeededRandom(1), {
+      interventionId: "light-observer-invitation",
+    });
+
+    expect(withIntervention.agents[0].stress).toBeLessThan(withoutIntervention.agents[0].stress);
+  });
+});

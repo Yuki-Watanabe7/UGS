@@ -1,5 +1,6 @@
-import type { SimParams } from "./types";
-import { clamp } from "./model";
+import type { Agent, SimParams } from "./types";
+import { clamp, distance } from "./model";
+import type { SeededRandom } from "./random";
 
 /**
  * 介入シナリオのカテゴリ。
@@ -117,9 +118,15 @@ export const INTERVENTION_SCENARIOS: InterventionScenario[] = [
       observerLeaveEase: -0.1,
     },
     engineLogicNotes:
-      "実際の効果は「特定の1人が特定のtickでobserverJoinerに声をかけ、approaching状態へ直接移行させる」" +
-      "といったピンポイントな1回限りのイベントであり、全体パラメータの一律補正では近似に留まる。" +
-      "engine側に専用の介入イベント処理を追加する必要がある。",
+      "engine.tsのstepSimulationで、observerJoinerが`undecided`のまま一定tick経過し、" +
+      "stressがleaveThresholdの一定割合以上・leaveThreshold未満のときに1回だけ" +
+      "shouldTriggerLightObserverInvitationが成立する。selectInvitationAgentが近傍の" +
+      "joined/forming/approachingなエージェント(いなければ最寄りの非observerJoiner)をrng経由で選び、" +
+      "observerInvitedイベントとしてログに残す(声をかけた側の情報も含む)。声かけ後は" +
+      "LIGHT_INVITATION_BOOST_WINDOWの間だけ、接近確率の倍率補正・influenceAvoidanceの壁の緩和" +
+      "(完全に消さず残す)・「行き場がない」ことに起因する追加ストレスの軽減、という一時的な" +
+      "後押しが働く。強制的にapproaching状態へ移行させることはせず、あくまで確率を動かすだけに" +
+      "留めることで、声かけがobserverJoinerの参加を保証しないようにしている。",
   },
   {
     id: "short-ambiguity-window",
@@ -212,4 +219,80 @@ export function applyInterventionParamAdjustments(
   }
 
   return result;
+}
+
+// --- light-observer-invitation ---------------------------------------------------------------
+// `light-observer-invitation`: 声かけが発生できるようになるまでの最低経過tick数
+// (曖昧フェーズが始まってすぐの声かけにならないようにする)
+export const LIGHT_INVITATION_MIN_TICK = 5;
+// `light-observer-invitation`: stressがleaveThresholdのこの割合以上でなければ声かけは発生しない
+// (「まだ全然困っていない」うちには声はかからない、という下限)
+export const LIGHT_INVITATION_STRESS_RATIO = 0.3;
+// `light-observer-invitation`: 声かけ相手を探す探索半径
+export const LIGHT_INVITATION_SEARCH_RADIUS = 160;
+// `light-observer-invitation`: 声かけの効果(接近確率上昇/ストレス軽減/影響回避緩和)が続くtick数
+export const LIGHT_INVITATION_BOOST_WINDOW = 25;
+// `light-observer-invitation`: 声かけ後の接近確率にかける倍率
+export const LIGHT_INVITATION_APPROACH_MULTIPLIER = 1.6;
+// `light-observer-invitation`: 声かけ後の「行き場がない」追加ストレスにかける倍率
+export const LIGHT_INVITATION_STRESS_MULTIPLIER = 0.35;
+// `light-observer-invitation`: 声かけ後、未確定の輪へのattractivenessでinfluenceAvoidanceの
+// 壁に残す割合(0にはしない=完全に影響を消さない、低圧な後押しとして表現する)
+export const LIGHT_INVITATION_INFLUENCE_AVOIDANCE_RESIDUAL = 0.5;
+
+/**
+ * `light-observer-invitation`: このtickでagentに声をかけるべきかどうかを判定する。
+ * observerJoinerが`undecided`のまま一定tick経過し、stressがleaveThresholdの一定割合以上
+ * (かつleaveThreshold未満、既に離脱寸前なら手遅れとして声はかけない)で、まだ一度も
+ * 声をかけられていない場合にのみtrueを返す(1エージェントにつき1回限り)。
+ */
+export function shouldTriggerLightObserverInvitation(agent: Agent, tick: number): boolean {
+  if (!agent.isObserverJoiner) return false;
+  if (agent.state !== "undecided") return false;
+  if (agent.invitedAtTick !== undefined) return false;
+  if (tick < LIGHT_INVITATION_MIN_TICK) return false;
+
+  const stressFloor = agent.leaveThreshold * LIGHT_INVITATION_STRESS_RATIO;
+  return agent.stress >= stressFloor && agent.stress < agent.leaveThreshold;
+}
+
+/**
+ * `light-observer-invitation`: `observer`に声をかける一般エージェントを選ぶ。
+ * 近く(`LIGHT_INVITATION_SEARCH_RADIUS`以内)にjoined/forming/approachingのエージェントがいれば
+ * その中からrng経由で1人選ぶ。いなければ、状態を問わず最も近い非observerJoinerにフォールバックする
+ * (`left`は既に画面外なので対象外)。声をかけられる相手が誰もいない場合はundefinedを返す。
+ */
+export function selectInvitationAgent(
+  observer: Agent,
+  agents: Agent[],
+  rng: SeededRandom,
+): Agent | undefined {
+  const engaged = agents.filter(
+    (a) =>
+      a.id !== observer.id &&
+      !a.isObserverJoiner &&
+      (a.state === "joined" || a.state === "forming" || a.state === "approaching"),
+  );
+  const nearby = engaged.filter((a) => distance(observer.x, observer.y, a.x, a.y) <= LIGHT_INVITATION_SEARCH_RADIUS);
+  if (nearby.length > 0) return rng.pick(nearby);
+
+  const others = agents.filter((a) => a.id !== observer.id && !a.isObserverJoiner && a.state !== "left");
+  if (others.length === 0) return undefined;
+
+  return others.reduce((closest, candidate) =>
+    distance(observer.x, observer.y, candidate.x, candidate.y) <
+    distance(observer.x, observer.y, closest.x, closest.y)
+      ? candidate
+      : closest,
+  );
+}
+
+/** `light-observer-invitation`: `agent`に対してtick時点で声かけが行われたことを記録する(mutation) */
+export function applyLightInvitationEffect(agent: Agent, tick: number): void {
+  agent.invitedAtTick = tick;
+}
+
+/** `light-observer-invitation`: `agent`が現在(`tick`時点で)声かけ後の一時的な後押し効果を受けているか */
+export function isUnderLightInvitationBoost(agent: Agent, tick: number): boolean {
+  return agent.invitedAtTick !== undefined && tick - agent.invitedAtTick < LIGHT_INVITATION_BOOST_WINDOW;
 }

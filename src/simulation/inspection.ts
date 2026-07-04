@@ -24,7 +24,7 @@ function buildInspection(
     nearestGroupMemberCount: candidate?.memberIds.length,
     nearestGroupDistance: candidate ? distance(agent.x, agent.y, candidate.x, candidate.y) : undefined,
     attractivenessScore: candidate
-      ? attractiveness(agent, candidate, state.agents, params, state.interventionId)
+      ? attractiveness(agent, candidate, state.agents, params, state.interventionId, state.tick)
       : undefined,
   };
 }
