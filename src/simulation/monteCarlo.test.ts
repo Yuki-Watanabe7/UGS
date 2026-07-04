@@ -111,4 +111,21 @@ describe("runMonteCarlo", () => {
       expect(run.summary.stateCounts.left).toBe(run.summary.leftCount);
     }
   });
+
+  it("passes the same intervention to every run, same as a single runSimulationToEnd call would use", () => {
+    const intervention = { interventionId: "late-join-ok" as const };
+
+    const { runs } = runMonteCarlo({ ...config, intervention });
+    const single = runSimulationToEnd(config.baseSeed, config.params, { intervention });
+
+    expect(runs[0]?.summary).toEqual(single.summary);
+  });
+
+  it("does not change results relative to omitting intervention when interventionId is 'none'", () => {
+    const withNone = runMonteCarlo({ ...config, intervention: { interventionId: "none" } });
+    const withoutField = runMonteCarlo(config);
+
+    expect(withNone.runs).toEqual(withoutField.runs);
+    expect(withNone.summary).toEqual(withoutField.summary);
+  });
 });

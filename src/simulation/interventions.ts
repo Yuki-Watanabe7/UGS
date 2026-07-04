@@ -168,6 +168,21 @@ export function getInterventionById(id: InterventionScenarioId): InterventionSce
   return INTERVENTION_SCENARIOS.find((scenario) => scenario.id === id) ?? NONE_INTERVENTION;
 }
 
+/** `intervention`(未指定なら介入なし)に対応する`InterventionScenario`を解決する */
+export function resolveInterventionScenario(intervention?: InterventionRuntimeOptions): InterventionScenario {
+  return getInterventionById(intervention?.interventionId ?? "none");
+}
+
+/**
+ * `intervention`のシナリオをparamsへ適用した実効paramsを返す。`params`はmutationしない。
+ * `createInitialState`/`stepSimulation`/Monte Carlo層のいずれもここを通すことで、
+ * 介入の適用点(paramAdjustmentsの反映)を一箇所に集約する。個別介入のengine側ロジックが
+ * 増えた場合も、まずここに反映点を追加できるようにする置き場所として想定している。
+ */
+export function resolveEffectiveParams(params: SimParams, intervention?: InterventionRuntimeOptions): SimParams {
+  return applyInterventionParamAdjustments(params, resolveInterventionScenario(intervention));
+}
+
 /**
  * `intervention.paramAdjustments`を`params`に加算した新しい`SimParams`を返す。`params`はmutationしない。
  * 0-1に正規化されたフィールドは加算後に[0, 1]へクランプする。
