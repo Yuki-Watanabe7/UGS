@@ -9,7 +9,17 @@ import type {
   SimulationState,
 } from "./types";
 import type { InterventionRuntimeOptions, InterventionScenarioId } from "./interventions";
-import { resolveEffectiveParams, resolveInterventionScenario } from "./interventions";
+import {
+  applyLightInvitationEffect,
+  isUnderLightInvitationBoost,
+  LIGHT_INVITATION_APPROACH_MULTIPLIER,
+  LIGHT_INVITATION_INFLUENCE_AVOIDANCE_RESIDUAL,
+  LIGHT_INVITATION_STRESS_MULTIPLIER,
+  resolveEffectiveParams,
+  resolveInterventionScenario,
+  selectInvitationAgent,
+  shouldTriggerLightObserverInvitation,
+} from "./interventions";
 import { SeededRandom } from "./random";
 import { WORLD_WIDTH, WORLD_HEIGHT, clamp, distance, createInitialAgents } from "./model";
 
@@ -210,6 +220,7 @@ export function attractiveness(
   agents: Agent[],
   params: SimParams,
   interventionId?: InterventionScenarioId,
+  tick?: number,
 ): number {
   const dominant = dominantClique(candidate, agents);
   const isDominantMember = dominant !== undefined && agent.cliqueId === dominant.cliqueId;
@@ -236,11 +247,15 @@ export function attractiveness(
     );
   }
 
+  // `light-observer-invitation`: 声をかけられた直後の一定期間は、他者からの後押しにより
+  // 「自分から場を動かす」ことへの抵抗が(完全にではなく)いくらか薄れる
+  const lightInvitationBoosted =
+    interventionId === "light-observer-invitation" && tick !== undefined && isUnderLightInvitationBoost(agent, tick);
   // `explicit-meeting-point`: 公開された集合場所へ向かうことは「自分が場を動かしてしまう」ことに
   // ならないため、influenceAvoidanceによる壁を薄くする
   const influenceAvoidanceFactor = candidate.isPublicMeetingPoint
     ? 1 - agent.influenceAvoidance * MEETING_POINT_INFLUENCE_AVOIDANCE_RESIDUAL
-    : 1 - agent.influenceAvoidance;
+    : 1 - agent.influenceAvoidance * (lightInvitationBoosted ? LIGHT_INVITATION_INFLUENCE_AVOIDANCE_RESIDUAL : 1);
   const base = agent.willingness * agent.conformity * influenceAvoidanceFactor;
   return clamp(base + cliqueTieBonus * 0.5 - outsiderPenalty * 0.5, 0, 1.5);
 }
@@ -337,6 +352,32 @@ export function stepSimulation(
     }
   }
 
+  // 1b. `light-observer-invitation`: observerJoinerがまだundecidedのうちに、
+  // 誰か1人が軽く声をかける(1エージェントにつき1回限り)
+  if (interventionId === "light-observer-invitation") {
+    for (const agent of agents) {
+      if (!shouldTriggerLightObserverInvitation(agent, tick)) continue;
+
+      const inviter = selectInvitationAgent(agent, agents, rng);
+      if (!inviter) continue;
+
+      applyLightInvitationEffect(agent, tick);
+      pushLog(
+        log,
+        tick,
+        `${inviter.label}さんがobserverJoinerに「よかったら一緒に行く?」と軽く声をかけた`,
+        ["observerJoiner", "intervention"],
+        "observerInvited",
+        {
+          agentId: agent.id,
+          agentLabel: agent.label,
+          inviterAgentId: inviter.id,
+          inviterAgentLabel: inviter.label,
+        },
+      );
+    }
+  }
+
   // 2. 接近: undecidedな人が近くの forming / confirmed group を観察して動く
   for (const agent of agents) {
     if (agent.state !== "undecided") continue;
@@ -344,14 +385,24 @@ export function stepSimulation(
     const candidate = nearestCandidate(agent, candidates);
     if (!candidate) continue;
 
-    const score = attractiveness(agent, candidate, agents, effectiveParams, interventionId);
+    const score = attractiveness(agent, candidate, agents, effectiveParams, interventionId, tick);
     // `anonymous-low-pressure-intent`: 参加意向を直接発言しなくてよいため、未確定の輪(forming)
     // へ近づくこと自体の抵抗が少し下がる。成立済みグループへの接近は対象外(late-join-ok側の役割)
     const anonymousIntentApproachMultiplier =
       interventionId === "anonymous-low-pressure-intent" && candidate.status !== "confirmed"
         ? ANONYMOUS_INTENT_APPROACH_MULTIPLIER
         : 1;
-    const approachProbability = clamp(score * 0.35 * anonymousIntentApproachMultiplier, 0, 0.9);
+    // `light-observer-invitation`: 声をかけられた直後の一定期間は、近くの輪(forming/confirmed
+    // 問わず)への接近確率が一時的に上がる
+    const lightInvitationApproachMultiplier =
+      interventionId === "light-observer-invitation" && isUnderLightInvitationBoost(agent, tick)
+        ? LIGHT_INVITATION_APPROACH_MULTIPLIER
+        : 1;
+    const approachProbability = clamp(
+      score * 0.35 * anonymousIntentApproachMultiplier * lightInvitationApproachMultiplier,
+      0,
+      0.9,
+    );
 
     if (rng.chance(approachProbability)) {
       agent.state = "approaching";
@@ -467,6 +518,8 @@ export function stepSimulation(
       // `predecided-venue`/`short-ambiguity-window`はどちらも「行き場・見通しの不確実性」を
       // 先に取り除く介入のため、行き場がないこと自体に起因する追加ストレスの蓄積率を下げる
       // (predecided-venueは行き先そのものが決まっている分、より強く効く)。
+      // `light-observer-invitation`: 声をかけられた直後の一定期間だけ、この人自身の
+      // 追加ストレス蓄積が軽減される(他の介入と異なり、全員一律ではなく本人限定)
       const noDestinationStressMultiplier =
         interventionId === "predecided-venue"
           ? PREDECIDED_VENUE_STRESS_MULTIPLIER
@@ -474,7 +527,9 @@ export function stepSimulation(
             ? SHORT_AMBIGUITY_WINDOW_STRESS_MULTIPLIER
             : interventionId === "anonymous-low-pressure-intent"
               ? ANONYMOUS_INTENT_STRESS_MULTIPLIER
-              : 1;
+              : interventionId === "light-observer-invitation" && isUnderLightInvitationBoost(agent, tick)
+                ? LIGHT_INVITATION_STRESS_MULTIPLIER
+                : 1;
       increment +=
         (agent.willingness * agent.influenceAvoidance * OBSERVER_EXTRA_STRESS_RATE * noDestinationStressMultiplier) /
         Math.max(0.2, effectiveParams.ambiguityDuration);

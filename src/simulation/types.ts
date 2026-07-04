@@ -41,6 +41,13 @@ export type Agent = {
   joinedGroupId?: string;
   /** 既存の仲良しグループID (既存関係性の強さパラメータに応じて割り当てられる) */
   cliqueId?: number;
+  /**
+   * `light-observer-invitation`介入で、他のエージェントから軽く声をかけられたtick。
+   * observerJoinerが`undecided`のうちに一度だけ設定され(以後は再度声をかけられない)、
+   * このtickから一定期間だけ接近確率の上昇・追加ストレスの軽減という一時的な後押しが働く
+   * (engine.ts参照)。observerJoiner以外には設定されない。
+   */
+  invitedAtTick?: number;
 };
 
 /**
@@ -97,6 +104,7 @@ export type SimulationEventType =
   | "publicMeetingPointEstablished"
   | "lateJoinPermissionAnnounced"
   | "anonymousIntentSignalAnnounced"
+  | "observerInvited"
   | "nucleusCreated"
   | "observerApproached"
   | "observerJoinedForming"
@@ -119,6 +127,9 @@ export type SimulationEventMetadata = {
   joinedGroupStatus?: GroupCandidateStatus;
   /** eventType: "interventionApplied" 用。適用された介入シナリオのID */
   interventionId?: InterventionScenarioId;
+  /** eventType: "observerInvited" 用。声をかけた側のエージェントID/表示名 */
+  inviterAgentId?: string;
+  inviterAgentLabel?: string;
 };
 
 export type LogEntry = {
