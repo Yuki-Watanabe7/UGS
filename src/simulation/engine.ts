@@ -40,6 +40,22 @@ const SHORT_AMBIGUITY_WINDOW_AGE_FACTOR = 0.5;
 // `explicit-meeting-point`: 集合場所でのattractivenessにおける影響回避の壁の残存率
 // (影響回避が高くても、公開済みの集合場所へ向かうこと自体は「場を動かす」ことにならないため壁が薄くなる)
 const MEETING_POINT_INFLUENCE_AVOIDANCE_RESIDUAL = 0.4;
+// `late-join-ok`: 成立済みグループへのattractivenessに加える固定ボーナス
+// (predecided-venueより小さい。「行き先」自体ではなく「後から入ってよいという許可」への反応のため)
+const LATE_JOIN_OK_CONFIRMED_BONUS = 0.15;
+// `late-join-ok`: hasWelcomingConfirmedGroup判定で「歓迎されていない」とみなす、
+// 単一cliqueによる占有率のしきい値(通常は0.5)。明示的な許可があるほど、
+// ある程度clique優勢な成立済みグループでも「行き場がない」とはみなされにくくする
+const LATE_JOIN_OK_WELCOMING_DOMINANCE_THRESHOLD = 0.85;
+// `anonymous-low-pressure-intent`: forming候補への接近確率にかける倍率
+// (「参加したい」と直接言わなくてよいため、輪に近づくこと自体の抵抗が少し下がる)
+const ANONYMOUS_INTENT_APPROACH_MULTIPLIER = 1.25;
+// `anonymous-low-pressure-intent`: 核形成確率にかける倍率
+// (匿名の合図により「参加したい人が一定数いる」ことが主導者/既存グループに伝わりやすくなるが、
+// 強い主導者を追加したような挙動にならないよう控えめな値に留める)
+const ANONYMOUS_INTENT_FORMING_PROBABILITY_MULTIPLIER = 1.2;
+// `anonymous-low-pressure-intent`: observerJoinerの「行き場がない」ことに起因する追加ストレスの倍率
+const ANONYMOUS_INTENT_STRESS_MULTIPLIER = 0.6;
 
 export function createInitialState(
   seed: number,
@@ -86,6 +102,24 @@ export function createInitialState(
       ["intervention"],
       "publicMeetingPointEstablished",
       { groupId: meetingPoint.id },
+    );
+  }
+  if (scenario.id === "late-join-ok") {
+    pushLog(
+      log,
+      0,
+      `誰かが「途中参加OK、後から合流してもいいよ」と明示した`,
+      ["intervention"],
+      "lateJoinPermissionAnnounced",
+    );
+  }
+  if (scenario.id === "anonymous-low-pressure-intent") {
+    pushLog(
+      log,
+      0,
+      `挙手ではなく紙に丸をつけるような、匿名・低圧に参加意向を示せる方法が用意された`,
+      ["intervention"],
+      "anonymousIntentSignalAnnounced",
     );
   }
 
@@ -192,7 +226,14 @@ export function attractiveness(
     // `predecided-venue`: 行き先の不確実性が先に取り除かれているため、成立済みグループへは
     // 素直に近づきやすくなる
     const predecidedVenueBonus = interventionId === "predecided-venue" ? PREDECIDED_VENUE_CONFIRMED_BONUS : 0;
-    return clamp(base + lateJoinBonus + predecidedVenueBonus + cliqueTieBonus - outsiderPenalty, 0, 1.5);
+    // `late-join-ok`: 「後から合流してよい」という明示的な許可により、成立済みグループへの
+    // 参加コストが下がる。未確定の輪(forming)へは影響しない
+    const lateJoinOkBonus = interventionId === "late-join-ok" ? LATE_JOIN_OK_CONFIRMED_BONUS : 0;
+    return clamp(
+      base + lateJoinBonus + predecidedVenueBonus + lateJoinOkBonus + cliqueTieBonus - outsiderPenalty,
+      0,
+      1.5,
+    );
   }
 
   // `explicit-meeting-point`: 公開された集合場所へ向かうことは「自分が場を動かしてしまう」ことに
@@ -256,9 +297,15 @@ export function stepSimulation(
 
     if (!hasInitiative && !cliqueReady) continue;
 
-    const formingProbability = hasInitiative
+    const baseFormingProbability = hasInitiative
       ? agent.willingness * agent.initiative * 0.08 * (1 + effectiveParams.numLeaders * 0.15)
       : effectiveParams.existingTieStrength * 0.1;
+    // `anonymous-low-pressure-intent`: 匿名の合図で「参加したい人が一定数いる」ことが伝わり、
+    // 主導者/既存グループが核を作り始めやすくなる(声かけの代わりに核形成側を後押しする)
+    const formingProbability =
+      interventionId === "anonymous-low-pressure-intent"
+        ? baseFormingProbability * ANONYMOUS_INTENT_FORMING_PROBABILITY_MULTIPLIER
+        : baseFormingProbability;
 
     if (rng.chance(formingProbability)) {
       agent.state = "forming";
@@ -298,7 +345,13 @@ export function stepSimulation(
     if (!candidate) continue;
 
     const score = attractiveness(agent, candidate, agents, effectiveParams, interventionId);
-    const approachProbability = clamp(score * 0.35, 0, 0.9);
+    // `anonymous-low-pressure-intent`: 参加意向を直接発言しなくてよいため、未確定の輪(forming)
+    // へ近づくこと自体の抵抗が少し下がる。成立済みグループへの接近は対象外(late-join-ok側の役割)
+    const anonymousIntentApproachMultiplier =
+      interventionId === "anonymous-low-pressure-intent" && candidate.status !== "confirmed"
+        ? ANONYMOUS_INTENT_APPROACH_MULTIPLIER
+        : 1;
+    const approachProbability = clamp(score * 0.35 * anonymousIntentApproachMultiplier, 0, 0.9);
 
     if (rng.chance(approachProbability)) {
       agent.state = "approaching";
@@ -396,11 +449,15 @@ export function stepSimulation(
     if (agent.state !== "undecided") continue;
 
     // 既にできあがっている輪が、既存の仲良しグループに占められていて
-    // 自分には実質入りにくい場合は「行き場がない」ことに変わりないため考慮しない
+    // 自分には実質入りにくい場合は「行き場がない」ことに変わりないため考慮しない。
+    // `late-join-ok`: 明示的な許可がある分、ある程度clique優勢な成立済みグループでも
+    // 「歓迎されていない」とはみなしにくくする(しきい値を引き上げる)
+    const welcomingDominanceThreshold =
+      interventionId === "late-join-ok" ? LATE_JOIN_OK_WELCOMING_DOMINANCE_THRESHOLD : 0.5;
     const hasWelcomingConfirmedGroup = candidates.some((c) => {
       if (c.status !== "confirmed") return false;
       const dominant = dominantClique(c, agents);
-      return !(dominant && dominant.ratio > 0.5 && dominant.cliqueId !== agent.cliqueId);
+      return !(dominant && dominant.ratio > welcomingDominanceThreshold && dominant.cliqueId !== agent.cliqueId);
     });
     let increment =
       (agent.willingness * (1 - agent.ambiguityTolerance) * BASE_STRESS_RATE) /
@@ -415,7 +472,9 @@ export function stepSimulation(
           ? PREDECIDED_VENUE_STRESS_MULTIPLIER
           : interventionId === "short-ambiguity-window"
             ? SHORT_AMBIGUITY_WINDOW_STRESS_MULTIPLIER
-            : 1;
+            : interventionId === "anonymous-low-pressure-intent"
+              ? ANONYMOUS_INTENT_STRESS_MULTIPLIER
+              : 1;
       increment +=
         (agent.willingness * agent.influenceAvoidance * OBSERVER_EXTRA_STRESS_RATE * noDestinationStressMultiplier) /
         Math.max(0.2, effectiveParams.ambiguityDuration);

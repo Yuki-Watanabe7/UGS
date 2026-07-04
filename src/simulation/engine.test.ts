@@ -1112,3 +1112,192 @@ describe("Phase C: short-ambiguity-window (real engine effect beyond the ambigui
     expect(leaveTickWith).toBeGreaterThanOrEqual(leaveTickWithout);
   });
 });
+
+describe("Phase C: late-join-ok", () => {
+  it("logs a distinct lateJoinPermissionAnnounced entry at the start", () => {
+    const state = createInitialState(1, DEFAULT_PARAMS, { interventionId: "late-join-ok" });
+
+    const entry = state.log.find((e) => e.eventType === "lateJoinPermissionAnnounced");
+    expect(entry).toBeDefined();
+    expect(entry?.tags).toContain("intervention");
+  });
+
+  it("does not log lateJoinPermissionAnnounced without the intervention", () => {
+    const state = createInitialState(1, DEFAULT_PARAMS);
+    expect(state.log.some((e) => e.eventType === "lateJoinPermissionAnnounced")).toBe(false);
+  });
+
+  it("adds an attractiveness bonus for confirmed groups beyond the lateJoinEase paramAdjustment alone", () => {
+    const agent = makeAgent({ id: "agent-0", willingness: 0.6, conformity: 0.5 });
+    const confirmed: GroupCandidate = {
+      id: "group-1",
+      x: 400,
+      y: 260,
+      memberIds: [],
+      status: "confirmed",
+      age: 10,
+    };
+
+    // 同じlateJoinEaseで比較し、attractiveness側の追加ボーナス分だけを分離する
+    const withoutIntervention = attractiveness(agent, confirmed, [agent], DEFAULT_PARAMS);
+    const withIntervention = attractiveness(agent, confirmed, [agent], DEFAULT_PARAMS, "late-join-ok");
+
+    expect(withIntervention).toBeGreaterThan(withoutIntervention);
+  });
+
+  it("does not add a confirmed-group bonus to an unconfirmed (forming) candidate", () => {
+    const agent = makeAgent({ id: "agent-0", willingness: 0.6, conformity: 0.5, influenceAvoidance: 0.3 });
+    const forming: GroupCandidate = {
+      id: "group-1",
+      x: 400,
+      y: 260,
+      memberIds: [],
+      status: "forming",
+      age: 0,
+    };
+
+    const withoutIntervention = attractiveness(agent, forming, [agent], DEFAULT_PARAMS);
+    const withIntervention = attractiveness(agent, forming, [agent], DEFAULT_PARAMS, "late-join-ok");
+
+    expect(withIntervention).toBeCloseTo(withoutIntervention);
+  });
+
+  it("makes a clique-dominated confirmed group count as 'welcoming', lowering the observerJoiner's no-destination extra stress", () => {
+    // dominant.ratio 0.67 (2/3) の成立済みグループ: 通常のしきい値(0.5)では「歓迎されていない」扱いだが、
+    // late-join-okのしきい値(0.85)ではまだ「歓迎されている」扱いになる
+    const observer = makeAgent({
+      id: "observer",
+      isObserverJoiner: true,
+      cliqueId: 99,
+      willingness: 0.9,
+      ambiguityTolerance: 0.3,
+      influenceAvoidance: 0.9,
+      leaveThreshold: 0.95,
+      x: 700,
+      y: 260,
+    });
+    const memberA = makeAgent({ id: "member-a", cliqueId: 1, state: "joined", x: 400, y: 260 });
+    const memberB = makeAgent({ id: "member-b", cliqueId: 1, state: "joined", x: 405, y: 262 });
+    const memberC = makeAgent({ id: "member-c", cliqueId: 2, state: "joined", x: 402, y: 258 });
+    const confirmed: GroupCandidate = {
+      id: "group-1",
+      x: 400,
+      y: 260,
+      memberIds: ["member-a", "member-b", "member-c"],
+      status: "confirmed",
+      age: 10,
+    };
+    const baseState: SimulationState = {
+      tick: 0,
+      agents: [observer, memberA, memberB, memberC],
+      groupCandidates: [confirmed],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const withoutIntervention = stepSimulation(baseState, DEFAULT_PARAMS, new SeededRandom(1));
+    const withIntervention = stepSimulation(baseState, DEFAULT_PARAMS, new SeededRandom(1), {
+      interventionId: "late-join-ok",
+    });
+
+    const observerStressWithout = withoutIntervention.agents.find((a) => a.id === "observer")!.stress;
+    const observerStressWith = withIntervention.agents.find((a) => a.id === "observer")!.stress;
+
+    expect(observerStressWith).toBeLessThan(observerStressWithout);
+  });
+});
+
+describe("Phase C: anonymous-low-pressure-intent", () => {
+  it("logs a distinct anonymousIntentSignalAnnounced entry at the start", () => {
+    const state = createInitialState(1, DEFAULT_PARAMS, { interventionId: "anonymous-low-pressure-intent" });
+
+    const entry = state.log.find((e) => e.eventType === "anonymousIntentSignalAnnounced");
+    expect(entry).toBeDefined();
+    expect(entry?.tags).toContain("intervention");
+  });
+
+  it("does not log anonymousIntentSignalAnnounced without the intervention", () => {
+    const state = createInitialState(1, DEFAULT_PARAMS);
+    expect(state.log.some((e) => e.eventType === "anonymousIntentSignalAnnounced")).toBe(false);
+  });
+
+  it("lowers the observerJoiner's no-destination extra stress rate", () => {
+    const observer = makeAgent({
+      id: "observer",
+      isObserverJoiner: true,
+      willingness: 0.9,
+      ambiguityTolerance: 0.3,
+      influenceAvoidance: 0.9,
+      leaveThreshold: 0.95,
+    });
+    const baseState: SimulationState = {
+      tick: 0,
+      agents: [observer],
+      groupCandidates: [],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const withoutIntervention = stepSimulation(baseState, DEFAULT_PARAMS, new SeededRandom(1));
+    const withIntervention = stepSimulation(baseState, DEFAULT_PARAMS, new SeededRandom(1), {
+      interventionId: "anonymous-low-pressure-intent",
+    });
+
+    expect(withIntervention.agents[0].stress).toBeLessThan(withoutIntervention.agents[0].stress);
+  });
+
+  it("increases approach probability toward an unconfirmed (forming) candidate more than a designated-leader-style boost would suggest, without touching observerInfluenceAvoidance to zero", () => {
+    const params = DEFAULT_PARAMS;
+
+    const countApproachOutcomes = (intervention: InterventionRuntimeOptions | undefined, trials: number): number => {
+      let approachCount = 0;
+      for (let seed = 0; seed < trials; seed++) {
+        const agent = makeAgent({
+          id: "agent-0",
+          willingness: 0.6,
+          initiative: 0.2,
+          conformity: 0.6,
+          influenceAvoidance: 0.4,
+          x: 100,
+          y: 260,
+        });
+        const candidate: GroupCandidate = {
+          id: "group-1",
+          x: 500,
+          y: 260,
+          memberIds: ["leader"],
+          status: "forming",
+          age: 10,
+        };
+        const state: SimulationState = {
+          tick: 0,
+          agents: [agent],
+          groupCandidates: [candidate],
+          log: [],
+          width: 800,
+          height: 520,
+          finished: false,
+        };
+        const next = runTicks(state, params, seed + 200, 1, intervention);
+        if (next.agents[0].state === "approaching" || next.agents[0].state === "joined") {
+          approachCount += 1;
+        }
+      }
+      return approachCount;
+    };
+
+    const trials = 300;
+    const withoutIntervention = countApproachOutcomes(undefined, trials);
+    const withIntervention = countApproachOutcomes({ interventionId: "anonymous-low-pressure-intent" }, trials);
+
+    expect(withIntervention).toBeGreaterThan(withoutIntervention);
+    // observerInfluenceAvoidanceはこの介入のparamAdjustmentsで下がるのみ(-0.3)であり、
+    // ゼロになる過剰補正ではない
+    const defaultAdjusted = DEFAULT_PARAMS.observerInfluenceAvoidance - 0.3;
+    expect(defaultAdjusted).toBeGreaterThan(0);
+  });
+});

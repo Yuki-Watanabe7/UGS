@@ -95,6 +95,8 @@ export type SimulationEventType =
   | "simulationStarted"
   | "interventionApplied"
   | "publicMeetingPointEstablished"
+  | "lateJoinPermissionAnnounced"
+  | "anonymousIntentSignalAnnounced"
   | "nucleusCreated"
   | "observerApproached"
   | "observerJoinedForming"
