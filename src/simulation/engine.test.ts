@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createInitialState, stepSimulation } from "./engine";
+import { attractiveness, createInitialState, stepSimulation } from "./engine";
 import { SeededRandom } from "./random";
 import { DEFAULT_PARAMS, getPresetById } from "./presets";
+import type { InterventionRuntimeOptions } from "./interventions";
 import type { Agent, GroupCandidate, SimulationState } from "./types";
 
 function makeAgent(overrides: Partial<Agent>): Agent {
@@ -25,11 +26,17 @@ function makeAgent(overrides: Partial<Agent>): Agent {
   };
 }
 
-function runTicks(state: SimulationState, params = DEFAULT_PARAMS, seed = 1, ticks = 1): SimulationState {
+function runTicks(
+  state: SimulationState,
+  params = DEFAULT_PARAMS,
+  seed = 1,
+  ticks = 1,
+  intervention?: InterventionRuntimeOptions,
+): SimulationState {
   const rng = new SeededRandom(seed);
   let s = state;
   for (let i = 0; i < ticks; i++) {
-    s = stepSimulation(s, params, rng);
+    s = stepSimulation(s, params, rng, intervention);
   }
   return s;
 }
@@ -878,5 +885,230 @@ describe("createInitialState/stepSimulation: intervention passthrough", () => {
     const stressWith = withIntervention.agents[0].stress;
 
     expect(stressWith).toBeLessThan(stressWithout);
+  });
+});
+
+describe("Phase C: explicit-meeting-point", () => {
+  it("places a founder-less public meeting point candidate in the initial state, logged distinctly from natural nucleus formation", () => {
+    const state = createInitialState(1, DEFAULT_PARAMS, { interventionId: "explicit-meeting-point" });
+
+    expect(state.groupCandidates).toHaveLength(1);
+    const meetingPoint = state.groupCandidates[0];
+    expect(meetingPoint.isPublicMeetingPoint).toBe(true);
+    expect(meetingPoint.status).toBe("forming");
+    expect(meetingPoint.memberIds).toHaveLength(0);
+
+    const entry = state.log.find((e) => e.eventType === "publicMeetingPointEstablished");
+    expect(entry).toBeDefined();
+    expect(entry?.tags).toContain("intervention");
+    expect(entry?.tags).not.toContain("nucleus");
+    expect(entry?.metadata?.groupId).toBe(meetingPoint.id);
+
+    // 自然発生の核形成イベントとは区別される
+    expect(state.log.some((e) => e.eventType === "nucleusCreated")).toBe(false);
+  });
+
+  it("does not place a meeting point candidate without the intervention", () => {
+    const state = createInitialState(1, DEFAULT_PARAMS);
+    expect(state.groupCandidates).toHaveLength(0);
+    expect(state.log.some((e) => e.eventType === "publicMeetingPointEstablished")).toBe(false);
+  });
+
+  it("lowers the influenceAvoidance barrier when scoring a public meeting point vs. an equivalent private core", () => {
+    const observer = makeAgent({
+      id: "observer",
+      isObserverJoiner: true,
+      willingness: 0.8,
+      influenceAvoidance: 0.9,
+      conformity: 0.5,
+    });
+    const privateCore: GroupCandidate = {
+      id: "group-1",
+      x: 400,
+      y: 260,
+      memberIds: [],
+      status: "forming",
+      age: 0,
+    };
+    const meetingPoint: GroupCandidate = { ...privateCore, id: "group-2", isPublicMeetingPoint: true };
+
+    const privateScore = attractiveness(observer, privateCore, [observer], DEFAULT_PARAMS);
+    const meetingPointScore = attractiveness(observer, meetingPoint, [observer], DEFAULT_PARAMS);
+
+    expect(meetingPointScore).toBeGreaterThan(privateScore);
+  });
+
+  it("exempts a public meeting point from the weak-response early dissolve, unlike an equivalent founder-less private core", () => {
+    const params = DEFAULT_PARAMS;
+
+    const buildState = (isPublicMeetingPoint: boolean): SimulationState => ({
+      tick: 14,
+      agents: [],
+      groupCandidates: [
+        {
+          id: "group-1",
+          x: 400,
+          y: 260,
+          memberIds: [],
+          status: "forming",
+          age: 14, // 次tickでweak-response期限(15)に到達する
+          isPublicMeetingPoint,
+        },
+      ],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    });
+
+    const nextPrivate = runTicks(buildState(false), params);
+    expect(nextPrivate.groupCandidates[0].status).toBe("dissolving");
+
+    const nextMeetingPoint = runTicks(buildState(true), params);
+    expect(nextMeetingPoint.groupCandidates[0].status).toBe("forming");
+  });
+});
+
+describe("Phase C: predecided-venue", () => {
+  it("adds an attractiveness bonus for confirmed groups, increasing post-formation approach likelihood", () => {
+    const agent = makeAgent({ id: "agent-0", willingness: 0.6, conformity: 0.5 });
+    const confirmed: GroupCandidate = {
+      id: "group-1",
+      x: 400,
+      y: 260,
+      memberIds: [],
+      status: "confirmed",
+      age: 10,
+    };
+
+    const withoutIntervention = attractiveness(agent, confirmed, [agent], DEFAULT_PARAMS);
+    const withIntervention = attractiveness(agent, confirmed, [agent], DEFAULT_PARAMS, "predecided-venue");
+
+    expect(withIntervention).toBeGreaterThan(withoutIntervention);
+  });
+
+  it("lowers the observerJoiner's no-destination extra stress rate, isolated from the ambiguityDuration paramAdjustment", () => {
+    const observer = makeAgent({
+      id: "observer",
+      isObserverJoiner: true,
+      willingness: 0.9,
+      ambiguityTolerance: 0.3,
+      influenceAvoidance: 0.9,
+      leaveThreshold: 0.95,
+    });
+    const baseState: SimulationState = {
+      tick: 0,
+      agents: [observer],
+      groupCandidates: [],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    // predecided-venueのparamAdjustmentsはlateJoinEaseのみ(ambiguityDuration非依存の
+    // stress式には影響しない)ため、介入なしとの比較でも新しいengineロジック分だけが差分になる
+    const withoutIntervention = stepSimulation(baseState, DEFAULT_PARAMS, new SeededRandom(1));
+    const withIntervention = stepSimulation(baseState, DEFAULT_PARAMS, new SeededRandom(1), {
+      interventionId: "predecided-venue",
+    });
+
+    expect(withIntervention.agents[0].stress).toBeLessThan(withoutIntervention.agents[0].stress);
+  });
+});
+
+describe("Phase C: short-ambiguity-window (real engine effect beyond the ambiguityDuration paramAdjustment)", () => {
+  it("dissolves a weak-response forming candidate earlier than without the intervention", () => {
+    const founder = makeAgent({ id: "founder", state: "forming", x: 400, y: 260 });
+    const buildState = (): SimulationState => ({
+      tick: 6,
+      agents: [founder],
+      groupCandidates: [
+        {
+          id: "group-1",
+          x: 400,
+          y: 260,
+          memberIds: ["founder"],
+          status: "forming",
+          age: 6,
+        },
+      ],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    });
+
+    // accelerated threshold = round(15 * 0.5) = 8; age 6 -> +1 tick to 7 -> +1 tick to 8
+    const withIntervention = runTicks(buildState(), DEFAULT_PARAMS, 1, 2, { interventionId: "short-ambiguity-window" });
+    expect(withIntervention.groupCandidates[0].status).toBe("dissolving");
+
+    const withoutIntervention = runTicks(buildState(), DEFAULT_PARAMS, 1, 2);
+    expect(withoutIntervention.groupCandidates[0].status).toBe("forming");
+  });
+
+  it("lowers the observerJoiner's no-destination extra stress rate, on top of (not instead of) the ambiguityDuration paramAdjustment", () => {
+    const observer = makeAgent({
+      id: "observer",
+      isObserverJoiner: true,
+      willingness: 0.9,
+      ambiguityTolerance: 0.3,
+      influenceAvoidance: 0.9,
+      leaveThreshold: 0.95,
+    });
+    const baseState: SimulationState = {
+      tick: 0,
+      agents: [observer],
+      groupCandidates: [],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    // ambiguityDurationのparamAdjustment(+0.2)を両条件で揃え、新しいストレス倍率分だけを分離して比較する
+    const equivalentParams = { ...DEFAULT_PARAMS, ambiguityDuration: DEFAULT_PARAMS.ambiguityDuration + 0.2 };
+    const withoutMultiplier = stepSimulation(baseState, equivalentParams, new SeededRandom(1));
+    const withIntervention = stepSimulation(baseState, DEFAULT_PARAMS, new SeededRandom(1), {
+      interventionId: "short-ambiguity-window",
+    });
+
+    expect(withIntervention.agents[0].stress).toBeLessThan(withoutMultiplier.agents[0].stress);
+  });
+
+  it("does not merely make the observerJoiner leave sooner: it delays (or does not accelerate) the leave tick vs. no intervention", () => {
+    const params = { ...DEFAULT_PARAMS, ambiguityDuration: 0.4 };
+    const observer = makeAgent({
+      id: "observer",
+      isObserverJoiner: true,
+      willingness: 0.9,
+      ambiguityTolerance: 0.2,
+      influenceAvoidance: 0.9,
+      leaveThreshold: 0.4,
+    });
+    const baseState: SimulationState = {
+      tick: 0,
+      agents: [observer],
+      groupCandidates: [],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const findLeaveTick = (intervention?: InterventionRuntimeOptions): number => {
+      const rng = new SeededRandom(1);
+      let state = baseState;
+      for (let i = 0; i < 100; i++) {
+        state = stepSimulation(state, params, rng, intervention);
+        if (state.agents[0].state === "leaving" || state.agents[0].state === "left") return i;
+      }
+      return Infinity;
+    };
+
+    const leaveTickWithout = findLeaveTick();
+    const leaveTickWith = findLeaveTick({ interventionId: "short-ambiguity-window" });
+
+    expect(leaveTickWith).toBeGreaterThanOrEqual(leaveTickWithout);
   });
 });

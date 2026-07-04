@@ -65,6 +65,13 @@ export type GroupCandidate = {
    * そこからは終端状態での経過tick(掃除タイミング制御用)として使う。
    */
   age: number;
+  /**
+   * `explicit-meeting-point`介入により、初期状態から用意された公開の集合場所であることを示す。
+   * 通常のforming候補と同じライフサイクルを辿るが、founder不在のため反応の薄さによる早期解散
+   * (弱反応解散)の対象からは除外され、attractivenessでも影響回避の壁を下げて評価される
+   * (engine.ts参照)。
+   */
+  isPublicMeetingPoint?: boolean;
 };
 
 /**
@@ -87,6 +94,7 @@ export type LogTag =
 export type SimulationEventType =
   | "simulationStarted"
   | "interventionApplied"
+  | "publicMeetingPointEstablished"
   | "nucleusCreated"
   | "observerApproached"
   | "observerJoinedForming"

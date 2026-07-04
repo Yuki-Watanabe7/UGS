@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { runMonteCarlo, runSimulationToEnd } from "./monteCarlo";
-import { DEFAULT_PARAMS } from "./presets";
+import { DEFAULT_PARAMS, getPresetById } from "./presets";
 import type { MonteCarloConfig, SimParams } from "./types";
 
 const SMALL_RUNS = 4;
@@ -127,5 +127,67 @@ describe("runMonteCarlo", () => {
 
     expect(withNone.runs).toEqual(withoutField.runs);
     expect(withNone.summary).toEqual(withoutField.summary);
+  });
+});
+
+describe("Phase C: public-coordination interventions show up in Monte Carlo aggregates", () => {
+  const RUNS = 30;
+
+  it("explicit-meeting-point turns near-total group failure into near-total success in a leaderless, ambiguous scenario", () => {
+    // ambiguous-dissolveはnumLeaders:0かつ既存関係性も弱いため、通常は誰も核を作らずグループが不成立になりやすい。
+    // 集合場所という「founderを必要としない」候補が1つあるだけで、この前提が覆ることを確認する。
+    const preset = getPresetById("ambiguous-dissolve");
+
+    const withIntervention = runMonteCarlo({
+      baseSeed: 3000,
+      runs: RUNS,
+      params: preset.params,
+      intervention: { interventionId: "explicit-meeting-point" },
+    });
+    const withoutIntervention = runMonteCarlo({ baseSeed: 3000, runs: RUNS, params: preset.params });
+
+    expect(withoutIntervention.summary.groupFailureRate).toBe(1);
+    expect(withIntervention.summary.groupFailureRate).toBe(0);
+    expect(withIntervention.summary.observerJoinerJoinRate).toBeGreaterThan(
+      withoutIntervention.summary.observerJoinerJoinRate,
+    );
+  });
+
+  it("predecided-venue raises the observerJoiner join rate in a clique-isolated scenario", () => {
+    const preset = getPresetById("leftover-free-grouping");
+
+    const withIntervention = runMonteCarlo({
+      baseSeed: 4000,
+      runs: RUNS,
+      params: preset.params,
+      intervention: { interventionId: "predecided-venue" },
+    });
+    const withoutIntervention = runMonteCarlo({ baseSeed: 4000, runs: RUNS, params: preset.params });
+
+    expect(withIntervention.summary.observerJoinerJoinRate).toBeGreaterThan(
+      withoutIntervention.summary.observerJoinerJoinRate,
+    );
+    expect(withIntervention.summary.observerJoinerLeaveRate).toBeLessThan(
+      withoutIntervention.summary.observerJoinerLeaveRate,
+    );
+  });
+
+  it("short-ambiguity-window raises the observerJoiner join rate rather than simply raising the leave rate, in a clique-isolated scenario", () => {
+    const preset = getPresetById("leftover-free-grouping");
+
+    const withIntervention = runMonteCarlo({
+      baseSeed: 5000,
+      runs: RUNS,
+      params: preset.params,
+      intervention: { interventionId: "short-ambiguity-window" },
+    });
+    const withoutIntervention = runMonteCarlo({ baseSeed: 5000, runs: RUNS, params: preset.params });
+
+    expect(withIntervention.summary.observerJoinerJoinRate).toBeGreaterThan(
+      withoutIntervention.summary.observerJoinerJoinRate,
+    );
+    expect(withIntervention.summary.observerJoinerLeaveRate).toBeLessThan(
+      withoutIntervention.summary.observerJoinerLeaveRate,
+    );
   });
 });
