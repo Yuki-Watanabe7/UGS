@@ -48,43 +48,6 @@
   overflow: hidden;
 }
 
-@media (max-width: 1100px) {
-  .app-root {
-    height: auto;
-    min-height: 100vh;
-    overflow: visible;
-  }
-
-  .app-main {
-    grid-template-columns: 1fr;
-    grid-template-rows: none;
-    min-height: 0;
-    overflow: visible;
-  }
-
-  .sidebar-left,
-  .center-stage,
-  .sidebar-right {
-    overflow: visible;
-  }
-
-  .observer-inspector,
-  .simulation-summary {
-    flex-shrink: 0;
-    max-height: none;
-    overflow-y: visible;
-  }
-
-  .event-log {
-    flex: none;
-  }
-
-  .event-log-list {
-    flex: none;
-    max-height: 50vh;
-  }
-}
-
 .panel {
   background: #171922;
   border: 1px solid #2e303a;
@@ -625,7 +588,7 @@
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-height: 0;
+  min-height: 160px;
   overflow: hidden;
 }
 
@@ -666,7 +629,7 @@
 
 .event-log-list {
   flex: 1;
-  min-height: 0;
+  min-height: 80px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -683,4 +646,50 @@
 
 .event-log-empty {
   color: #6b7280;
+}
+
+/*
+ * このメディアクエリは、上記の各セレクタ(.sidebar-right, .observer-inspector,
+ * .simulation-summary, .event-log, .event-log-list)に対するnarrow/mobile幅用の
+ * 上書きなので、対応するデフォルト(デスクトップ)側のルールより後ろに置く必要がある。
+ * 同一詳細度のルールはCSS上でファイル内の記述順(後着優先)で競合が解決されるため、
+ * これより前に置くとデスクトップ側のルールに常に負けて無効化されてしまう
+ * (Phase Cでこのブロックがファイル前方に残っていたことが原因で、narrow幅時の
+ * オーバーライドが機能しなくなっていた)。
+ */
+@media (max-width: 1100px) {
+  .app-root {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
+  .app-main {
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .sidebar-left,
+  .center-stage,
+  .sidebar-right {
+    overflow: visible;
+  }
+
+  .observer-inspector,
+  .simulation-summary {
+    flex-shrink: 0;
+    max-height: none;
+    overflow-y: visible;
+  }
+
+  .event-log {
+    flex: none;
+  }
+
+  .event-log-list {
+    flex: none;
+    max-height: 50vh;
+  }
 }
