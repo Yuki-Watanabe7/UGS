@@ -375,6 +375,39 @@
   padding-bottom: 4px;
 }
 
+.intervention-comparison-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.intervention-comparison-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  color: #cbd5e1;
+}
+
+.intervention-comparison-row span:first-child {
+  color: #8b93a5;
+}
+
+.intervention-comparison-header {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #8b93a5;
+  border-bottom: 1px solid #232634;
+  padding-bottom: 4px;
+  margin-bottom: 2px;
+}
+
+.intervention-comparison-header span:first-child {
+  color: #8b93a5;
+}
+
 .center-stage {
   min-width: 0;
   min-height: 0;

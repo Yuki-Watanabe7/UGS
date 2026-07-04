@@ -314,3 +314,35 @@ export type MonteCarloResult = {
   runs: MonteCarloRunResult[];
   summary: MonteCarloSummary;
 };
+
+/**
+ * baseline(介入なし)とintervention(選択中の介入)の間での、単一指標の比較値。
+ * `delta`は`intervention - baseline`(比率は0-1のまま、tickはtick差、人数は人数差)。
+ * `averageFirstGroupConfirmedTick`のように片方または両方が未成立(undefined)になり得る指標では
+ * `T`を`number | undefined`にして使う。
+ */
+export type MonteCarloMetricDelta<T = number> = {
+  baseline: T;
+  intervention: T;
+  delta: T;
+};
+
+/**
+ * `compareMonteCarloIntervention`の戻り値。同一`presetId`/`params`/`baseSeed`/`runs`/`maxTicks`で
+ * baseline(interventionId: "none")とintervention(選択中の介入)を実行した結果一式。
+ * `baseline`/`intervention`はそれぞれの`runMonteCarlo`の完全な結果(個別run一覧を含む)を保持し、
+ * `metrics`は`MonteCarloSummary`の主要指標をbaseline/intervention/deltaの形にまとめたもの。
+ */
+export type MonteCarloComparisonResult = {
+  baseline: MonteCarloResult;
+  intervention: MonteCarloResult;
+  metrics: {
+    observerJoinerJoinRate: MonteCarloMetricDelta;
+    observerJoinerLeaveRate: MonteCarloMetricDelta;
+    groupFailureRate: MonteCarloMetricDelta;
+    averageFirstGroupConfirmedTick: MonteCarloMetricDelta<number | undefined>;
+    lateJoinSuccessRate: MonteCarloMetricDelta;
+    averageJoinedCount: MonteCarloMetricDelta;
+    averageLeftCount: MonteCarloMetricDelta;
+  };
+};

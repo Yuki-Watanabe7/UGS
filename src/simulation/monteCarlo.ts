@@ -1,5 +1,7 @@
 import type {
+  MonteCarloComparisonResult,
   MonteCarloConfig,
+  MonteCarloMetricDelta,
   MonteCarloResult,
   MonteCarloRunOptions,
   MonteCarloRunResult,
@@ -99,5 +101,53 @@ export function runMonteCarlo(config: MonteCarloConfig): MonteCarloResult {
     config,
     runs,
     summary: summarizeRuns(runs),
+  };
+}
+
+function metricDelta(baseline: number, intervention: number): MonteCarloMetricDelta {
+  return { baseline, intervention, delta: intervention - baseline };
+}
+
+function optionalMetricDelta(
+  baseline: number | undefined,
+  intervention: number | undefined,
+): MonteCarloMetricDelta<number | undefined> {
+  const delta = baseline !== undefined && intervention !== undefined ? intervention - baseline : undefined;
+  return { baseline, intervention, delta };
+}
+
+/**
+ * 選択中の介入(`config.intervention`)と、介入なし(baseline)を、同一の`presetId`由来`params`・
+ * `baseSeed`・`runs`・`maxTicks`で比較実行する。`config.params`はmutationしない。
+ * baseline側は`config.intervention`を無視し、常に`interventionId: "none"`で実行する。
+ */
+export function compareMonteCarloIntervention(config: MonteCarloConfig): MonteCarloComparisonResult {
+  const baseline = runMonteCarlo({ ...config, intervention: { interventionId: "none" } });
+  const intervention = runMonteCarlo(config);
+
+  return {
+    baseline,
+    intervention,
+    metrics: {
+      observerJoinerJoinRate: metricDelta(
+        baseline.summary.observerJoinerJoinRate,
+        intervention.summary.observerJoinerJoinRate,
+      ),
+      observerJoinerLeaveRate: metricDelta(
+        baseline.summary.observerJoinerLeaveRate,
+        intervention.summary.observerJoinerLeaveRate,
+      ),
+      groupFailureRate: metricDelta(baseline.summary.groupFailureRate, intervention.summary.groupFailureRate),
+      averageFirstGroupConfirmedTick: optionalMetricDelta(
+        baseline.summary.averageFirstGroupConfirmedTick,
+        intervention.summary.averageFirstGroupConfirmedTick,
+      ),
+      lateJoinSuccessRate: metricDelta(
+        baseline.summary.lateJoinSuccessRate,
+        intervention.summary.lateJoinSuccessRate,
+      ),
+      averageJoinedCount: metricDelta(baseline.summary.averageJoinedCount, intervention.summary.averageJoinedCount),
+      averageLeftCount: metricDelta(baseline.summary.averageLeftCount, intervention.summary.averageLeftCount),
+    },
   };
 }

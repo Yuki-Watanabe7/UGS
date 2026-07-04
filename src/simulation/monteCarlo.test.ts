@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runMonteCarlo, runSimulationToEnd } from "./monteCarlo";
+import { compareMonteCarloIntervention, runMonteCarlo, runSimulationToEnd } from "./monteCarlo";
 import { DEFAULT_PARAMS, getPresetById } from "./presets";
 import type { MonteCarloConfig, SimParams } from "./types";
 
@@ -189,5 +189,96 @@ describe("Phase C: public-coordination interventions show up in Monte Carlo aggr
     expect(withIntervention.summary.observerJoinerLeaveRate).toBeLessThan(
       withoutIntervention.summary.observerJoinerLeaveRate,
     );
+  });
+});
+
+describe("compareMonteCarloIntervention", () => {
+  const config: MonteCarloConfig = {
+    baseSeed: 3000,
+    runs: SMALL_RUNS,
+    params: DEFAULT_PARAMS,
+    intervention: { interventionId: "late-join-ok" },
+  };
+
+  it("runs baseline and intervention with the same baseSeed/runs/params", () => {
+    const comparison = compareMonteCarloIntervention(config);
+
+    expect(comparison.baseline.config.baseSeed).toBe(config.baseSeed);
+    expect(comparison.baseline.config.runs).toBe(config.runs);
+    expect(comparison.baseline.config.params).toEqual(config.params);
+    expect(comparison.baseline.runs.map((r) => r.seed)).toEqual(comparison.intervention.runs.map((r) => r.seed));
+  });
+
+  it("always runs baseline with interventionId 'none', regardless of config.intervention", () => {
+    const comparison = compareMonteCarloIntervention(config);
+    const expectedBaseline = runMonteCarlo({ ...config, intervention: { interventionId: "none" } });
+
+    expect(comparison.baseline).toEqual(expectedBaseline);
+  });
+
+  it("computes delta as intervention - baseline for rate and count metrics", () => {
+    const comparison = compareMonteCarloIntervention(config);
+
+    expect(comparison.metrics.observerJoinerJoinRate.delta).toBeCloseTo(
+      comparison.intervention.summary.observerJoinerJoinRate - comparison.baseline.summary.observerJoinerJoinRate,
+    );
+    expect(comparison.metrics.groupFailureRate.delta).toBeCloseTo(
+      comparison.intervention.summary.groupFailureRate - comparison.baseline.summary.groupFailureRate,
+    );
+    expect(comparison.metrics.averageJoinedCount.delta).toBeCloseTo(
+      comparison.intervention.summary.averageJoinedCount - comparison.baseline.summary.averageJoinedCount,
+    );
+    expect(comparison.metrics.averageLeftCount.delta).toBeCloseTo(
+      comparison.intervention.summary.averageLeftCount - comparison.baseline.summary.averageLeftCount,
+    );
+  });
+
+  it("keeps averageFirstGroupConfirmedTick's delta undefined when either side never confirms a group", () => {
+    const impossibleParams: SimParams = {
+      ...DEFAULT_PARAMS,
+      populationSize: 5,
+      groupConfirmSize: 99,
+      numLeaders: 0,
+      existingTieStrength: 0,
+    };
+
+    const comparison = compareMonteCarloIntervention({
+      baseSeed: 1,
+      runs: SMALL_RUNS,
+      params: impossibleParams,
+      intervention: { interventionId: "late-join-ok" },
+    });
+
+    expect(comparison.baseline.summary.averageFirstGroupConfirmedTick).toBeUndefined();
+    expect(comparison.metrics.averageFirstGroupConfirmedTick.baseline).toBeUndefined();
+    expect(comparison.metrics.averageFirstGroupConfirmedTick.delta).toBeUndefined();
+  });
+
+  it("does not mutate config.params", () => {
+    const params: SimParams = { ...DEFAULT_PARAMS };
+    const snapshot = { ...params };
+
+    compareMonteCarloIntervention({
+      baseSeed: 5,
+      runs: SMALL_RUNS,
+      params,
+      intervention: { interventionId: "late-join-ok" },
+    });
+
+    expect(params).toEqual(snapshot);
+  });
+
+  it("shows an improved observerJoiner join/leave delta for predecided-venue in a clique-isolated scenario", () => {
+    const preset = getPresetById("leftover-free-grouping");
+
+    const comparison = compareMonteCarloIntervention({
+      baseSeed: 4000,
+      runs: 30,
+      params: preset.params,
+      intervention: { interventionId: "predecided-venue" },
+    });
+
+    expect(comparison.metrics.observerJoinerJoinRate.delta).toBeGreaterThan(0);
+    expect(comparison.metrics.observerJoinerLeaveRate.delta).toBeLessThan(0);
   });
 });
