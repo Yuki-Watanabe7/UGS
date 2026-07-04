@@ -84,8 +84,9 @@ export const INTERVENTION_SCENARIOS: InterventionScenario[] = [
       lateJoinEase: 0.1,
     },
     engineLogicNotes:
-      "「集合場所の一本化」は本来、複数箇所に独立して発生しうるforming候補を1箇所に収束させる効果に近い。" +
-      "現行engineは候補地点が自然発生的に分散しうる構造のため、正確に表現するにはengine側で候補地点を統合するロジックが必要。",
+      "engine.tsのcreateInitialStateで、founder不在の低圧なGroupCandidate(isPublicMeetingPoint)を" +
+      "初期状態に1つ配置する。通常のforming候補と同じ経路で合流・成立できるが、反応の薄さによる" +
+      "早期解散の対象からは除外され、attractivenessでも影響回避の壁を下げて評価される。",
   },
   {
     id: "late-join-ok",
@@ -127,9 +128,10 @@ export const INTERVENTION_SCENARIOS: InterventionScenario[] = [
       ambiguityDuration: 0.2,
     },
     engineLogicNotes:
-      "本来は核形成や輪の存続期間そのもの(engine.ts内のCANDIDATE_MAX_AGE/CANDIDATE_WEAK_RESPONSE_AGEといった" +
-      "固定tick数)を短縮する効果であり、SimParamsの補正だけでは近似に留まる。" +
-      "実際に時間短縮を反映するには、これらの閾値をパラメータ化してengine側に取り込む必要がある。",
+      "engine.tsのstepSimulationで、未成立候補の弱反応解散/期限切れの判定tick数(CANDIDATE_WEAK_RESPONSE_AGE/" +
+      "CANDIDATE_MAX_AGE)を短縮し、行き詰まった輪の解散/期限切れ判断を早める。あわせて" +
+      "observerJoinerの「行き場がない」ことに起因する追加ストレスの蓄積率も下げ、" +
+      "単純にambiguityDurationを下げた場合に起きる「短いほどストレスが増える」逆効果を避ける。",
   },
   {
     id: "predecided-venue",
@@ -142,9 +144,9 @@ export const INTERVENTION_SCENARIOS: InterventionScenario[] = [
       lateJoinEase: 0.15,
     },
     engineLogicNotes:
-      "「行き先だけ決まっている」状態は、forming候補が発生する前から合流先が1箇所に固定されていることに相当し、" +
-      "現行の核形成ロジック(誰かがforming候補を作るまで合流先が存在しない)とは前提が異なる。" +
-      "engine側に「初期状態から確定済みの合流地点を1つ用意する」ロジックが必要。",
+      "engine.tsのattractivenessで、成立済みグループへのスコアに直接ボーナスを加え、成立後の接近確率を上げる。" +
+      "あわせてobserverJoinerの「行き場がない」ことに起因する追加ストレスの蓄積率も下げ、" +
+      "行き先の不確実性だけを先に取り除く効果を表現する。",
   },
   {
     id: "anonymous-low-pressure-intent",

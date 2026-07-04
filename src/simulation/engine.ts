@@ -8,7 +8,7 @@ import type {
   SimulationEventType,
   SimulationState,
 } from "./types";
-import type { InterventionRuntimeOptions } from "./interventions";
+import type { InterventionRuntimeOptions, InterventionScenarioId } from "./interventions";
 import { resolveEffectiveParams, resolveInterventionScenario } from "./interventions";
 import { SeededRandom } from "./random";
 import { WORLD_WIDTH, WORLD_HEIGHT, clamp, distance, createInitialAgents } from "./model";
@@ -28,6 +28,18 @@ const CANDIDATE_MAX_AGE = 40;
 const CANDIDATE_WEAK_RESPONSE_AGE = 15;
 // dissolving/dissolved/expired が画面上に留まる(フェードアウト表現用の)tick数。これを超えたら配列から除去する
 const CANDIDATE_LINGER_TICKS = 4;
+
+// `predecided-venue`: 成立済みグループへのattractivenessに加える固定ボーナス
+const PREDECIDED_VENUE_CONFIRMED_BONUS = 0.25;
+// `predecided-venue`: observerJoinerの「行き場がない」ことに起因する追加ストレスの倍率
+const PREDECIDED_VENUE_STRESS_MULTIPLIER = 0.4;
+// `short-ambiguity-window`: 同じ追加ストレスに対する倍率(predecided-venueほど強くはない)
+const SHORT_AMBIGUITY_WINDOW_STRESS_MULTIPLIER = 0.5;
+// `short-ambiguity-window`: 未成立候補の弱反応解散/期限切れ判断を早めるための短縮率
+const SHORT_AMBIGUITY_WINDOW_AGE_FACTOR = 0.5;
+// `explicit-meeting-point`: 集合場所でのattractivenessにおける影響回避の壁の残存率
+// (影響回避が高くても、公開済みの集合場所へ向かうこと自体は「場を動かす」ことにならないため壁が薄くなる)
+const MEETING_POINT_INFLUENCE_AVOIDANCE_RESIDUAL = 0.4;
 
 export function createInitialState(
   seed: number,
@@ -54,10 +66,33 @@ export function createInitialState(
       metadata: { interventionId: scenario.id },
     });
   }
+
+  const groupCandidates: GroupCandidate[] = [];
+  if (scenario.id === "explicit-meeting-point") {
+    const meetingPoint: GroupCandidate = {
+      id: `group-0-meeting-point`,
+      x: WORLD_WIDTH / 2,
+      y: WORLD_HEIGHT / 2,
+      memberIds: [],
+      status: "forming",
+      age: 0,
+      isPublicMeetingPoint: true,
+    };
+    groupCandidates.push(meetingPoint);
+    pushLog(
+      log,
+      0,
+      `幹事が「行く人は店の前に集まりましょう」と集合場所を明示した`,
+      ["intervention"],
+      "publicMeetingPointEstablished",
+      { groupId: meetingPoint.id },
+    );
+  }
+
   return {
     tick: 0,
     agents,
-    groupCandidates: [],
+    groupCandidates,
     log,
     width: WORLD_WIDTH,
     height: WORLD_HEIGHT,
@@ -140,6 +175,7 @@ export function attractiveness(
   candidate: GroupCandidate,
   agents: Agent[],
   params: SimParams,
+  interventionId?: InterventionScenarioId,
 ): number {
   const dominant = dominantClique(candidate, agents);
   const isDominantMember = dominant !== undefined && agent.cliqueId === dominant.cliqueId;
@@ -153,10 +189,18 @@ export function attractiveness(
   if (candidate.status === "confirmed") {
     const base = agent.willingness * (0.5 + 0.5 * agent.conformity);
     const lateJoinBonus = params.lateJoinEase * 0.4;
-    return clamp(base + lateJoinBonus + cliqueTieBonus - outsiderPenalty, 0, 1.5);
+    // `predecided-venue`: 行き先の不確実性が先に取り除かれているため、成立済みグループへは
+    // 素直に近づきやすくなる
+    const predecidedVenueBonus = interventionId === "predecided-venue" ? PREDECIDED_VENUE_CONFIRMED_BONUS : 0;
+    return clamp(base + lateJoinBonus + predecidedVenueBonus + cliqueTieBonus - outsiderPenalty, 0, 1.5);
   }
 
-  const base = agent.willingness * agent.conformity * (1 - agent.influenceAvoidance);
+  // `explicit-meeting-point`: 公開された集合場所へ向かうことは「自分が場を動かしてしまう」ことに
+  // ならないため、influenceAvoidanceによる壁を薄くする
+  const influenceAvoidanceFactor = candidate.isPublicMeetingPoint
+    ? 1 - agent.influenceAvoidance * MEETING_POINT_INFLUENCE_AVOIDANCE_RESIDUAL
+    : 1 - agent.influenceAvoidance;
+  const base = agent.willingness * agent.conformity * influenceAvoidanceFactor;
   return clamp(base + cliqueTieBonus * 0.5 - outsiderPenalty * 0.5, 0, 1.5);
 }
 
@@ -253,7 +297,7 @@ export function stepSimulation(
     const candidate = nearestCandidate(agent, candidates);
     if (!candidate) continue;
 
-    const score = attractiveness(agent, candidate, agents, effectiveParams);
+    const score = attractiveness(agent, candidate, agents, effectiveParams, interventionId);
     const approachProbability = clamp(score * 0.35, 0, 0.9);
 
     if (rng.chance(approachProbability)) {
@@ -363,8 +407,17 @@ export function stepSimulation(
       Math.max(0.2, effectiveParams.ambiguityDuration);
 
     if (agent.isObserverJoiner && !hasWelcomingConfirmedGroup) {
+      // `predecided-venue`/`short-ambiguity-window`はどちらも「行き場・見通しの不確実性」を
+      // 先に取り除く介入のため、行き場がないこと自体に起因する追加ストレスの蓄積率を下げる
+      // (predecided-venueは行き先そのものが決まっている分、より強く効く)。
+      const noDestinationStressMultiplier =
+        interventionId === "predecided-venue"
+          ? PREDECIDED_VENUE_STRESS_MULTIPLIER
+          : interventionId === "short-ambiguity-window"
+            ? SHORT_AMBIGUITY_WINDOW_STRESS_MULTIPLIER
+            : 1;
       increment +=
-        (agent.willingness * agent.influenceAvoidance * OBSERVER_EXTRA_STRESS_RATE) /
+        (agent.willingness * agent.influenceAvoidance * OBSERVER_EXTRA_STRESS_RATE * noDestinationStressMultiplier) /
         Math.max(0.2, effectiveParams.ambiguityDuration);
     }
 
@@ -404,6 +457,17 @@ export function stepSimulation(
   }
 
   // 9. グループ成立判定 / 未成立候補の解散・期限切れ判定
+  // `short-ambiguity-window`: 行き詰まった輪の解散/期限切れ判断を早め、
+  // 帰宅判断(stress蓄積)より先に「合流できない輪への固執」自体を終わらせる
+  const candidateWeakResponseAge =
+    interventionId === "short-ambiguity-window"
+      ? Math.round(CANDIDATE_WEAK_RESPONSE_AGE * SHORT_AMBIGUITY_WINDOW_AGE_FACTOR)
+      : CANDIDATE_WEAK_RESPONSE_AGE;
+  const candidateMaxAge =
+    interventionId === "short-ambiguity-window"
+      ? Math.round(CANDIDATE_MAX_AGE * SHORT_AMBIGUITY_WINDOW_AGE_FACTOR)
+      : CANDIDATE_MAX_AGE;
+
   for (const candidate of candidates) {
     if (candidate.status === "confirmed") continue;
 
@@ -442,8 +506,14 @@ export function stepSimulation(
 
     candidate.age += 1;
 
-    // founder以外誰も加わらないまま反応が薄ければ、時間切れを待たずに解散する
-    if (candidate.memberIds.length < 2 && candidate.age >= CANDIDATE_WEAK_RESPONSE_AGE) {
+    // founder以外誰も加わらないまま反応が薄ければ、時間切れを待たずに解散する。
+    // ただし公開の集合場所(isPublicMeetingPoint)はfounderがいないことに変わりないため、
+    // 反応の薄さだけで早期解散の対象にはしない(期限切れ判定は引き続き適用する)
+    if (
+      !candidate.isPublicMeetingPoint &&
+      candidate.memberIds.length < 2 &&
+      candidate.age >= candidateWeakResponseAge
+    ) {
       candidate.status = "dissolving";
       candidate.age = 0;
       pushLog(
@@ -454,7 +524,7 @@ export function stepSimulation(
         "groupDissolved",
         { groupId: candidate.id, memberCount: candidate.memberIds.length },
       );
-    } else if (candidate.age >= CANDIDATE_MAX_AGE) {
+    } else if (candidate.age >= candidateMaxAge) {
       candidate.status = "expired";
       candidate.age = 0;
       pushLog(
