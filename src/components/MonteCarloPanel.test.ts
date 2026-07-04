@@ -29,9 +29,9 @@ describe("isValidRunCount", () => {
 });
 
 describe("isSameCondition", () => {
-  const base = { presetId: "natural", seed: 1, params: DEFAULT_PARAMS };
+  const base = { presetId: "natural", seed: 1, params: DEFAULT_PARAMS, interventionId: "none" as const };
 
-  it("treats identical preset/seed/params as the same condition", () => {
+  it("treats identical preset/seed/params/intervention as the same condition", () => {
     expect(isSameCondition(base, { ...base, params: { ...DEFAULT_PARAMS } })).toBe(true);
   });
 
@@ -47,6 +47,10 @@ describe("isSameCondition", () => {
     const changedParams: SimParams = { ...DEFAULT_PARAMS, overallWillingness: 0.99 };
     expect(isSameCondition(base, { ...base, params: changedParams })).toBe(false);
   });
+
+  it("detects a changed intervention", () => {
+    expect(isSameCondition(base, { ...base, interventionId: "late-join-ok" })).toBe(false);
+  });
 });
 
 describe("MonteCarloPanel", () => {
@@ -56,6 +60,7 @@ describe("MonteCarloPanel", () => {
         presetId: "natural",
         params: DEFAULT_PARAMS,
         seed: 12345,
+        interventionId: "none",
         singleSimRunning: false,
         onBeforeRun: () => {},
       }),
@@ -71,6 +76,7 @@ describe("MonteCarloPanel", () => {
         presetId: "natural",
         params: DEFAULT_PARAMS,
         seed: 12345,
+        interventionId: "none",
         singleSimRunning: true,
         onBeforeRun: () => {},
       }),

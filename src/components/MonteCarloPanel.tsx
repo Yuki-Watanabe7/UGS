@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { runMonteCarlo } from "../simulation/monteCarlo";
 import { getPresetById } from "../simulation/presets";
+import { getInterventionById } from "../simulation/interventions";
+import type { InterventionScenarioId } from "../simulation/interventions";
 import type { AgentState, MonteCarloResult, ObserverJoinerRunSummary, SimParams } from "../simulation/types";
 import { isSameCondition, isValidRunCount, MAX_RUNS, MIN_RUNS } from "./monteCarloPanelHelpers";
 import type { RunConditionSnapshot } from "./monteCarloPanelHelpers";
@@ -9,6 +11,7 @@ type Props = {
   presetId: string;
   params: SimParams;
   seed: number;
+  interventionId: InterventionScenarioId;
   singleSimRunning: boolean;
   onBeforeRun: () => void;
 };
@@ -48,25 +51,32 @@ function summarizeObservers(
   return observers.map(render).join(" / ");
 }
 
-export function MonteCarloPanel({ presetId, params, seed, singleSimRunning, onBeforeRun }: Props) {
+export function MonteCarloPanel({ presetId, params, seed, interventionId, singleSimRunning, onBeforeRun }: Props) {
   const [runCountInput, setRunCountInput] = useState(String(DEFAULT_RUN_COUNT));
   const [result, setResult] = useState<MonteCarloResult | null>(null);
   const [resultCondition, setResultCondition] = useState<RunConditionSnapshot | null>(null);
   const [resultPresetName, setResultPresetName] = useState("");
+  const [resultInterventionName, setResultInterventionName] = useState("");
 
   const runCount = Number(runCountInput);
   const runCountValid = isValidRunCount(runCount);
 
-  const currentCondition: RunConditionSnapshot = { presetId, seed, params };
+  const currentCondition: RunConditionSnapshot = { presetId, seed, params, interventionId };
   const isStale = result !== null && resultCondition !== null && !isSameCondition(currentCondition, resultCondition);
 
   const handleRun = () => {
     if (!runCountValid) return;
     onBeforeRun();
-    const monteCarloResult = runMonteCarlo({ baseSeed: seed, runs: runCount, params });
+    const monteCarloResult = runMonteCarlo({
+      baseSeed: seed,
+      runs: runCount,
+      params,
+      intervention: { interventionId },
+    });
     setResult(monteCarloResult);
     setResultCondition(currentCondition);
     setResultPresetName(getPresetById(presetId).name);
+    setResultInterventionName(getInterventionById(interventionId).name);
   };
 
   return (
@@ -106,7 +116,7 @@ export function MonteCarloPanel({ presetId, params, seed, singleSimRunning, onBe
       ) : (
         <>
           <p className="monte-carlo-condition">
-            条件: {resultPresetName} / baseSeed {result.config.baseSeed}〜
+            条件: {resultPresetName} / 介入: {resultInterventionName} / baseSeed {result.config.baseSeed}〜
             {result.config.baseSeed + result.config.runs - 1} ({result.config.runs}回)
           </p>
           {isStale && (
