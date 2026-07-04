@@ -98,9 +98,12 @@ export const INTERVENTION_SCENARIOS: InterventionScenario[] = [
       lateJoinEase: 0.3,
     },
     engineLogicNotes:
-      "明示的な許可は、observerJoinerの「行き場がない」ことに起因する追加ストレス" +
-      "(engine.tsのhasWelcomingConfirmedGroup判定)を直接緩和しうるが、" +
-      "現行の判定は宣言の有無を考慮しないため、engine側にこの許可を反映するロジックが必要。",
+      "engine.tsのattractivenessで、成立済みグループへのスコアに固定ボーナス(LATE_JOIN_OK_CONFIRMED_BONUS)を" +
+      "加える(未確定の輪へは影響しない)。あわせてhasWelcomingConfirmedGroup判定の" +
+      "「歓迎されていない」とみなすclique占有率のしきい値を引き上げ(0.5→0.85)、" +
+      "ある程度clique優勢な成立済みグループでもobserverJoinerの「行き場がない」ことに起因する" +
+      "追加ストレスが発生しにくくする。介入なしとの差分はcreateInitialStateの" +
+      "lateJoinPermissionAnnouncedログでも確認できる。",
   },
   {
     id: "light-observer-invitation",
@@ -160,9 +163,12 @@ export const INTERVENTION_SCENARIOS: InterventionScenario[] = [
       observerInfluenceAvoidance: -0.3,
     },
     engineLogicNotes:
-      "本来は「匿名の意思表明」という新しいアクション自体を導入し、それが核形成の確率や" +
-      "hasWelcomingConfirmedGroup相当の判定に反映される必要がある。現行engineには意思表明という概念がなく、" +
-      "observerInfluenceAvoidanceの一律引き下げで近似している。",
+      "engine.tsのstepSimulationで3点補正する: (1) 未確定の輪(forming)への接近確率に" +
+      "ANONYMOUS_INTENT_APPROACH_MULTIPLIERをかけて少し上げる(成立済みグループへの接近はlate-join-ok側の役割のため対象外)、" +
+      "(2) 核形成確率にANONYMOUS_INTENT_FORMING_PROBABILITY_MULTIPLIERをかけ、" +
+      "「参加したい人が一定数いる」匿名シグナルが主導者/既存グループの核形成を後押しする様子を" +
+      "控えめな倍率で近似する(強い主導者を追加したような挙動にはしない)、" +
+      "(3) observerJoinerの「行き場がない」ことに起因する追加ストレスにANONYMOUS_INTENT_STRESS_MULTIPLIERをかけて下げる。",
   },
 ];
 
