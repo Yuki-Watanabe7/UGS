@@ -19,6 +19,15 @@ const observerJoiner = {
 
 「行きたくない人」ではなく、**行きたい気持ちはあるが、場が形成される前の探り合いが苦手な人**です。画面上ではオレンジ色の太枠で強調表示されます。
 
+## 公開版(GitHub Pages)
+
+ビルド済みのUGSはGitHub Pagesで公開されています。インストール不要で、iPhoneのSafariを含む任意のブラウザから次のURLを開くだけで利用できます。
+
+**https://yuki-watanabe7.github.io/UGS/**
+
+- `main` ブランチへのpushをトリガーに、GitHub Actions(`.github/workflows/pages.yml`)が lint / test / build を実行して自動デプロイします
+- 公開版は**利用向け**です。コードを変更しながら動作を確かめたい場合は、後述のローカル開発起動(`npm run dev`)や実機確認(`npm run dev:host`)を使ってください
+
 ## 起動方法
 
 ```bash
@@ -26,7 +35,7 @@ npm install
 npm run dev
 ```
 
-表示されたURL(通常 http://localhost:5173 )をブラウザで開いてください。
+表示されたURL(通常 http://localhost:5173/UGS/ )をブラウザで開いてください。GitHub Pages公開のため `vite.config.ts` で `base: '/UGS/'` を設定しており、開発サーバーのURLにも `/UGS/` が付きます。
 
 - `npm run build` — 型チェック + 本番ビルド
 - `npm run test` — Vitestによるシミュレーションロジックのユニットテスト
@@ -47,7 +56,7 @@ npm run dev
    - ターミナルで `ipconfig getifaddr en0` を実行する(Wi-Fi接続時の一般的なインターフェース。表示されない場合は `ifconfig | grep "inet "` で確認)
    - または「システム設定 → Wi-Fi → 接続中のネットワークの詳細」でIPアドレスを確認
    - `npm run dev:host` 起動時にViteが表示する `Network:` のURLをそのまま使ってもよい
-4. iPhoneのSafariで `http://<MacのIPアドレス>:5173` を開く(例: `http://192.168.1.23:5173`)
+4. iPhoneのSafariで `http://<MacのIPアドレス>:5173/UGS/` を開く(例: `http://192.168.1.23:5173/UGS/`)
 
 #### 注意点
 
@@ -55,6 +64,14 @@ npm run dev
 - Macのファイアウォール設定によってはアクセスがブロックされることがあります(「システム設定 → ネットワーク → ファイアウォール」で許可が必要な場合あり)
 - `dev:host` はあくまで**開発中の実機確認用**です。開発サーバーをそのまま本番公開する用途には使わないでください
 - 通常のPCローカル開発はこれまでどおり `npm run dev` を使ってください
+
+### 3つの起動・利用方法の使い分け
+
+| 方法 | URL | 用途 |
+| --- | --- | --- |
+| GitHub Pages公開版 | https://yuki-watanabe7.github.io/UGS/ | 開発環境なしで利用する(iPhone含む)。`main` の最新ビルドが反映される |
+| `npm run dev` | http://localhost:5173/UGS/ | PC上での通常開発。コード変更が即時反映される |
+| `npm run dev:host` | http://\<MacのIP\>:5173/UGS/ | 開発中のコードを同一Wi-Fi上のiPhone実機で確認する |
 
 ## 画面の見方
 
