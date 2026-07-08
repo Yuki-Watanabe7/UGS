@@ -17,7 +17,7 @@ type Props = {
 
 export function EventLog({ log }: Props) {
   const [filter, setFilter] = useState<FilterKey>("all");
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   const activeTag = FILTERS.find((f) => f.key === filter)?.tag;
   const filteredLog = useMemo(
@@ -25,9 +25,13 @@ export function EventLog({ log }: Props) {
     [log, activeTag],
   );
 
-  // フィルタ変更・ログ追加のいずれでも、表示中のリスト末尾に追従させる
+  // フィルタ変更・ログ追加のいずれでも、表示中のリスト末尾に追従させる。
+  // scrollIntoViewはスクロール可能な祖先(モバイル1カラム時はページ全体)まで
+  // スクロールさせ、初回表示やログ追加のたびにページが状態ログへ飛んでしまうため、
+  // リスト自身のscrollTopだけを動かす。
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: "end" });
+    const list = listRef.current;
+    if (list) list.scrollTop = list.scrollHeight;
   }, [filteredLog.length, filter]);
 
   return (
@@ -50,7 +54,7 @@ export function EventLog({ log }: Props) {
           ))}
         </select>
       </div>
-      <div className="event-log-list">
+      <div className="event-log-list" ref={listRef}>
         {filteredLog.length === 0 && (
           <p className="event-log-empty">
             {log.length === 0 ? "まだイベントはありません。" : "該当するログはありません。"}
@@ -61,7 +65,6 @@ export function EventLog({ log }: Props) {
             {entry.message}
           </div>
         ))}
-        <div ref={bottomRef} />
       </div>
     </div>
   );

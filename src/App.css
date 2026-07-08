@@ -1,5 +1,8 @@
 .app-root {
+  /* iPhone Safariのアドレスバー表示/非表示で高さが変わっても破綻しないよう、
+     dvh対応ブラウザではdynamic viewport heightを使う(非対応環境はvhにフォールバック) */
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -34,6 +37,21 @@
   margin-top: 2px;
   font-size: 12px;
   color: #8b93a5;
+}
+
+/* モバイル時のみレンダリングされる折りたたみ(ヘッダー説明文・詳細パラメータ) */
+.app-intro-details summary,
+.sliders-details summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  color: #9ca3af;
+  padding: 6px 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.app-intro-details[open] summary,
+.sliders-details[open] summary {
+  margin-bottom: 4px;
 }
 
 .app-main {
@@ -661,6 +679,7 @@
   .app-root {
     height: auto;
     min-height: 100vh;
+    min-height: 100dvh;
     overflow: visible;
   }
 
@@ -691,5 +710,126 @@
   .event-log-list {
     flex: none;
     max-height: 50vh;
+  }
+}
+
+/*
+ * iPhoneなどスマホ幅向けレイアウト (#54)。
+ * 上の1100px用ブロックと同様に、デフォルト側ルールへの上書きなので必ずファイル末尾側に置くこと。
+ * 768px以下では1100px用ブロックも同時に適用され、競合時はこちら(後着)が勝つ。
+ *
+ * 3カラムのラッパー(.sidebar-left / .center-stage / .sidebar-right)を display: contents で
+ * レイアウト上消し、各パネルを .app-main 直下のflexアイテムとして order で並べ替える。
+ * JSXのDOM順(PC向け3カラム)は変えずに、スマホでは
+ * 「Canvas → 基本操作 → 凡例 → 観察系パネル → 分析系パネル」の優先順位にする。
+ */
+@media (max-width: 768px) {
+  .app-header {
+    padding: 12px 16px 10px;
+  }
+
+  .app-header h1 {
+    font-size: 17px;
+    margin-bottom: 2px;
+  }
+
+  .tick-status {
+    margin-top: 4px;
+  }
+
+  .app-main {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px 12px 32px;
+  }
+
+  .sidebar-left,
+  .center-stage,
+  .sidebar-right {
+    display: contents;
+  }
+
+  .canvas-panel {
+    order: 1;
+  }
+
+  .control-panel {
+    order: 2;
+  }
+
+  .intervention-selector {
+    order: 3;
+  }
+
+  .legend {
+    order: 4;
+  }
+
+  .observer-inspector {
+    order: 5;
+  }
+
+  .simulation-summary {
+    order: 6;
+  }
+
+  .event-log {
+    order: 7;
+  }
+
+  /* .monte-carlo-panel は介入比較パネルにも付いているため、
+     後着の .intervention-comparison-panel 指定で介入比較だけ最後に回す */
+  .monte-carlo-panel {
+    order: 8;
+  }
+
+  .intervention-comparison-panel {
+    order: 9;
+  }
+
+  /* viewBoxによる縮小表示は活かしつつ、スマホで縦に大きすぎないよう制限する。
+     preserveAspectRatioのデフォルト(meet)により、縦横比は崩れない */
+  .canvas-panel svg {
+    height: auto;
+    max-height: 60vh;
+    max-height: 60dvh;
+  }
+
+  /* タッチ操作性: ボタンとフォーム部品を指で押しやすいサイズにする */
+  .control-buttons button {
+    padding: 12px 0;
+    font-size: 14px;
+  }
+
+  .field input[type="number"],
+  .field select,
+  .event-log-filter-select {
+    /* 16px未満だとiOS Safariがフォーカス時に自動ズームする */
+    font-size: 16px;
+    padding: 10px;
+  }
+
+  .slider-field input[type="range"] {
+    height: 32px;
+  }
+
+  .monte-carlo-panel button {
+    padding: 12px 0;
+    font-size: 14px;
+  }
+
+  /* 詳細パラメータは<details>内に折りたたまれるため、内側スクロールをやめて
+     ページスクロールに任せる */
+  .sliders {
+    max-height: none;
+    overflow-y: visible;
+    padding-right: 0;
+  }
+
+  /* ログが伸びても画面全体の操作性を壊さないよう、リスト側だけを内側スクロールにする */
+  .event-log-list {
+    max-height: 40vh;
+    max-height: 40dvh;
   }
 }
