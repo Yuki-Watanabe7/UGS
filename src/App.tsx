@@ -16,11 +16,18 @@ import { getPresetById, PRESETS } from "./simulation/presets";
 import { getInterventionById } from "./simulation/interventions";
 import type { InterventionScenarioId } from "./simulation/interventions";
 import type { SimParams, SimulationState } from "./simulation/types";
+import { useIsMobile } from "./hooks/useIsMobile";
 
 const TICK_INTERVAL_MS = 250;
 const INITIAL_SEED = 12345;
 
+const INTRO_TEXT =
+  "このプロトタイプは、二次会に行くかどうかがその場の空気で決まるような、曖昧な移行場面での" +
+  "グループ形成過程を可視化します。オレンジ色のエージェントは" +
+  "「行きたいが、自分の意思で場を動かしたくない人 (observerJoiner)」です。";
+
 function App() {
+  const isMobile = useIsMobile();
   const [presetId, setPresetId] = useState(PRESETS[0].id);
   const [params, setParams] = useState<SimParams>(PRESETS[0].params);
   const [seed, setSeed] = useState(INITIAL_SEED);
@@ -110,11 +117,14 @@ function App() {
     <div className="app-root">
       <header className="app-header">
         <h1>グループ形成過程シミュレーター</h1>
-        <p>
-          このプロトタイプは、二次会に行くかどうかがその場の空気で決まるような、曖昧な移行場面での
-          グループ形成過程を可視化します。オレンジ色のエージェントは
-          「行きたいが、自分の意思で場を動かしたくない人 (observerJoiner)」です。
-        </p>
+        {isMobile ? (
+          <details className="app-intro-details">
+            <summary>このシミュレーターについて</summary>
+            <p>{INTRO_TEXT}</p>
+          </details>
+        ) : (
+          <p>{INTRO_TEXT}</p>
+        )}
         <p className="tick-status">
           Tick: {simState.tick} {simState.finished ? "(終了)" : running ? "(実行中)" : "(一時停止)"}
         </p>
@@ -138,6 +148,7 @@ function App() {
             onPresetChange={handlePresetChange}
             onParamsChange={setParams}
             hasPendingResetChanges={hasPendingResetChanges}
+            collapseSliders={isMobile}
           />
           <InterventionSelector
             interventionId={interventionId}

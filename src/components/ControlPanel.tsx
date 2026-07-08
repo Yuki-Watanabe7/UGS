@@ -14,6 +14,8 @@ type Props = {
   onPresetChange: (presetId: string) => void;
   onParamsChange: (params: SimParams) => void;
   hasPendingResetChanges: boolean;
+  // スマホ幅では詳細パラメータを折りたたんで、基本操作を優先表示する
+  collapseSliders?: boolean;
 };
 
 export function ControlPanel({
@@ -28,7 +30,33 @@ export function ControlPanel({
   onPresetChange,
   onParamsChange,
   hasPendingResetChanges,
+  collapseSliders = false,
 }: Props) {
+  const sliders = (
+    <div className="sliders">
+      {SLIDERS.map((slider) => (
+        <label className="field slider-field" key={slider.key}>
+          <span>
+            {slider.label}: {params[slider.key].toFixed(slider.step < 1 ? 2 : 0)}
+            <span className={`apply-mode-badge apply-mode-badge--${slider.applyMode}`}>
+              {APPLY_MODE_LABEL[slider.applyMode]}
+            </span>
+          </span>
+          <input
+            type="range"
+            min={slider.min}
+            max={slider.max}
+            step={slider.step}
+            value={params[slider.key]}
+            onChange={(e) =>
+              onParamsChange({ ...params, [slider.key]: Number(e.target.value) })
+            }
+          />
+        </label>
+      ))}
+    </div>
+  );
+
   return (
     <div className="panel control-panel">
       <h2>操作パネル</h2>
@@ -73,28 +101,14 @@ export function ControlPanel({
         </p>
       )}
 
-      <div className="sliders">
-        {SLIDERS.map((slider) => (
-          <label className="field slider-field" key={slider.key}>
-            <span>
-              {slider.label}: {params[slider.key].toFixed(slider.step < 1 ? 2 : 0)}
-              <span className={`apply-mode-badge apply-mode-badge--${slider.applyMode}`}>
-                {APPLY_MODE_LABEL[slider.applyMode]}
-              </span>
-            </span>
-            <input
-              type="range"
-              min={slider.min}
-              max={slider.max}
-              step={slider.step}
-              value={params[slider.key]}
-              onChange={(e) =>
-                onParamsChange({ ...params, [slider.key]: Number(e.target.value) })
-              }
-            />
-          </label>
-        ))}
-      </div>
+      {collapseSliders ? (
+        <details className="sliders-details">
+          <summary>詳細パラメータ</summary>
+          {sliders}
+        </details>
+      ) : (
+        sliders
+      )}
     </div>
   );
 }
