@@ -1,0 +1,29 @@
+{
+  "name": "グループ形成過程シミュレーター",
+  "short_name": "UGS",
+  "description": "曖昧な社会的移行の場面で非公式グループが形成される過程を可視化するエージェントベースシミュレーター",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "theme_color": "#0f1115",
+  "background_color": "#0f1115",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
