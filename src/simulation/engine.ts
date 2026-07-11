@@ -757,7 +757,13 @@ export function stepSimulation(
   // ここで生成される値がこのtick(またはそれ以降)の意思決定に使われることはない
   // (speechEffectsConfig.enabled === falseの間は3関数とも空配列を返す)。
   const tickReceptions = deriveSpeechReceptions(tickSpeechEvents, nextState.agents, speechEffectsConfig);
-  const tickInterpretations = deriveSpeechInterpretations(tickReceptions, tickSpeechEvents, speechEffectsConfig);
+  const tickInterpretations = deriveSpeechInterpretations(
+    tickReceptions,
+    tickSpeechEvents,
+    nextState.agents,
+    effectiveParams.existingTieStrength,
+    speechEffectsConfig,
+  );
   const tickEffects = deriveSpeechEffects(tickInterpretations, tickSpeechEvents, speechEffectsConfig);
 
   return {

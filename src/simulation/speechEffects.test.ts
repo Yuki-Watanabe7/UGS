@@ -9,13 +9,25 @@ import {
   deriveSpeechReceptions,
   resolveSpeechEffectsConfig,
 } from "./speechEffects";
-import type { SpeechEffectsConfig, SpeechReceiverCandidate } from "./speechEffects";
+import type { SpeechEffectsConfig, SpeechInterpreterCandidate, SpeechReceiverCandidate } from "./speechEffects";
 
 const ENABLED: SpeechEffectsConfig = { enabled: true };
 const DISABLED: SpeechEffectsConfig = { enabled: false };
 
 function makeCandidate(overrides: Partial<SpeechReceiverCandidate>): SpeechReceiverCandidate {
   return { id: "agent-x", x: 0, y: 0, state: "undecided", ...overrides };
+}
+
+function makeInterpreter(overrides: Partial<SpeechInterpreterCandidate>): SpeechInterpreterCandidate {
+  return {
+    id: "agent-x",
+    conformity: 0.5,
+    influenceAvoidance: 0.5,
+    cliqueId: undefined,
+    stress: 0,
+    state: "undecided",
+    ...overrides,
+  };
 }
 
 describe("resolveSpeechEffectsConfig", () => {
@@ -243,6 +255,24 @@ describe("deriveSpeechInterpretations", () => {
     originX: 0,
     originY: 0,
   });
+  const inviteTargeted = createSpeechEvent({
+    tick: 3,
+    speakerId: "founder",
+    intent: "invite",
+    reason: "lightObserverInvitation",
+    target: "a",
+    originX: 0,
+    originY: 0,
+  });
+  const greet = createSpeechEvent({
+    tick: 3,
+    speakerId: "joiner",
+    intent: "greet",
+    reason: "joinGreeting",
+    audience: "nearby",
+    originX: 0,
+    originY: 0,
+  });
   const decline = createSpeechEvent({
     tick: 4,
     speakerId: "leaver",
@@ -253,38 +283,28 @@ describe("deriveSpeechInterpretations", () => {
     originY: 0,
   });
 
+  /** invite/decline1件を1受け手(id: "a")について解釈するまでの共通セットアップ */
+  function interpretOne(
+    speech: SpeechEvent,
+    receiver: Partial<SpeechInterpreterCandidate>,
+    existingTieStrength = 0.5,
+  ) {
+    const speakerId = speech.speakerId;
+    const receptions = deriveSpeechReceptions(
+      [speech],
+      [makeCandidate({ id: speakerId }), makeCandidate({ id: "a", x: 10, y: 0 })],
+      ENABLED,
+    );
+    const participants = [makeInterpreter({ id: speakerId }), makeInterpreter({ id: "a", ...receiver })];
+    const interpretations = deriveSpeechInterpretations(receptions, [speech], participants, existingTieStrength, ENABLED);
+    expect(interpretations).toHaveLength(1);
+    return interpretations[0];
+  }
+
   it("returns an empty array when disabled", () => {
     const receptions = deriveSpeechReceptions([invite], [makeCandidate({ id: "founder" }), makeCandidate({ id: "a", x: 10, y: 0 })], ENABLED);
-    expect(deriveSpeechInterpretations(receptions, [invite], DISABLED)).toEqual([]);
-  });
-
-  it("derives valence purely from the SpeechEvent's intent (no personality/relationship input)", () => {
-    const receptions = deriveSpeechReceptions(
-      [invite],
-      [makeCandidate({ id: "founder" }), makeCandidate({ id: "a", x: 10, y: 0 })],
-      ENABLED,
-    );
-    const interpretations = deriveSpeechInterpretations(receptions, [invite], ENABLED);
-
-    expect(interpretations).toHaveLength(1);
-    expect(interpretations[0]).toMatchObject({
-      speechEventId: invite.id,
-      receptionEventId: receptions[0].id,
-      receiverId: "a",
-      inputFactors: { intent: "invite" },
-      valence: "positive",
-    });
-  });
-
-  it("maps decline to a neutral valence", () => {
-    const receptions = deriveSpeechReceptions(
-      [decline],
-      [makeCandidate({ id: "leaver" }), makeCandidate({ id: "a", x: 10, y: 0 })],
-      ENABLED,
-    );
-    const interpretations = deriveSpeechInterpretations(receptions, [decline], ENABLED);
-
-    expect(interpretations[0].valence).toBe("neutral");
+    const participants = [makeInterpreter({ id: "founder" }), makeInterpreter({ id: "a" })];
+    expect(deriveSpeechInterpretations(receptions, [invite], participants, 0.5, DISABLED)).toEqual([]);
   });
 
   it("skips receptions that were not heard (out of range), even though a matching SpeechEvent exists", () => {
@@ -295,7 +315,8 @@ describe("deriveSpeechInterpretations", () => {
     );
     expect(farReceptions[0].heard).toBe(false);
 
-    expect(deriveSpeechInterpretations(farReceptions, [invite], ENABLED)).toEqual([]);
+    const participants = [makeInterpreter({ id: "founder" }), makeInterpreter({ id: "far" })];
+    expect(deriveSpeechInterpretations(farReceptions, [invite], participants, 0.5, ENABLED)).toEqual([]);
   });
 
   it("skips receptions whose speechEventId is not found in the provided speechEvents (defensive, should not throw)", () => {
@@ -310,7 +331,165 @@ describe("deriveSpeechInterpretations", () => {
       heard: true,
       reason: "withinRange" as const,
     };
-    expect(deriveSpeechInterpretations([orphanReception], [], ENABLED)).toEqual([]);
+    expect(deriveSpeechInterpretations([orphanReception], [], [makeInterpreter({ id: "a" })], 0.5, ENABLED)).toEqual([]);
+  });
+
+  it("skips receptions whose speaker/receiver is not found among participants (defensive, should not throw)", () => {
+    const receptions = deriveSpeechReceptions(
+      [invite],
+      [makeCandidate({ id: "founder" }), makeCandidate({ id: "a", x: 10, y: 0 })],
+      ENABLED,
+    );
+    expect(deriveSpeechInterpretations(receptions, [invite], [], 0.5, ENABLED)).toEqual([]);
+  });
+
+  describe("table-driven: intent x receiver traits x relation", () => {
+    it("invite carries a positive valence for a receptive (high-conformity, low-avoidance) undecided receiver", () => {
+      const interpretation = interpretOne(invite, { conformity: 0.9, influenceAvoidance: 0.1, stress: 0, state: "undecided" });
+      expect(interpretation).toMatchObject({ intent: "invite", relation: "audience", valence: "positive" });
+      expect(interpretation.intensity).toBeGreaterThan(0);
+      expect(interpretation.intensity).toBeLessThanOrEqual(1);
+    });
+
+    it("welcome and invite share the same base magnitude, greet is deliberately weaker (social-cue reinforcement, not an invitation)", () => {
+      const welcome = createSpeechEvent({
+        tick: 3,
+        speakerId: "founder",
+        intent: "welcome",
+        reason: "approachWelcome",
+        target: "a",
+        originX: 0,
+        originY: 0,
+      });
+      const receiver = { conformity: 0.5, influenceAvoidance: 0.5, stress: 0, state: "undecided" as const };
+      const inviteIntensity = interpretOne(invite, receiver).intensity;
+      const welcomeIntensity = interpretOne({ ...welcome, target: undefined, audience: "nearby" }, receiver).intensity;
+      const greetIntensity = interpretOne(greet, receiver).intensity;
+
+      expect(welcomeIntensity).toBeCloseTo(inviteIntensity, 5);
+      expect(greetIntensity).toBeGreaterThan(0);
+      expect(greetIntensity).toBeLessThan(inviteIntensity);
+    });
+
+    it("decline carries a negative valence, lowering the target circle's attractiveness direction", () => {
+      const interpretation = interpretOne(decline, { conformity: 0.5, influenceAvoidance: 0.5, stress: 0, state: "undecided" });
+      expect(interpretation.valence).toBe("negative");
+      expect(interpretation.intensity).toBeGreaterThan(0);
+    });
+
+    it("higher influenceAvoidance dampens the interpreted intensity", () => {
+      const low = interpretOne(invite, { influenceAvoidance: 0.1 });
+      const high = interpretOne(invite, { influenceAvoidance: 0.9 });
+      expect(high.intensity).toBeLessThan(low.intensity);
+    });
+
+    it("influenceAvoidance dampens a targeted speech more than an equivalent nearby (audience) one", () => {
+      const targetHigh = interpretOne(inviteTargeted, { influenceAvoidance: 0.9 });
+      const audienceHigh = interpretOne(invite, { influenceAvoidance: 0.9 });
+      expect(targetHigh.relation).toBe("target");
+      expect(audienceHigh.relation).toBe("audience");
+      // both start from the same base magnitude/relation weighting differences aside, the
+      // avoidance penalty itself should bite harder for the personally-addressed (target) case.
+      const targetAvoidanceFactor = targetHigh.factors.find((f) => f.key === "influenceAvoidance")?.contribution;
+      const audienceAvoidanceFactor = audienceHigh.factors.find((f) => f.key === "influenceAvoidance")?.contribution;
+      expect(targetAvoidanceFactor).toBeLessThan(audienceAvoidanceFactor ?? 1);
+    });
+
+    it("a targeted (target) speech is interpreted more strongly than the same speech heard as nearby audience", () => {
+      const targeted = interpretOne(inviteTargeted, { conformity: 0.5, influenceAvoidance: 0.5, stress: 0, state: "undecided" });
+      const audience = interpretOne(invite, { conformity: 0.5, influenceAvoidance: 0.5, stress: 0, state: "undecided" });
+      expect(targeted.intensity).toBeGreaterThan(audience.intensity);
+    });
+
+    it("same-clique receivers trust the speaker more than out-of-clique receivers, given strong existing ties", () => {
+      const receptions = deriveSpeechReceptions(
+        [invite],
+        [makeCandidate({ id: "founder" }), makeCandidate({ id: "a", x: 10, y: 0 })],
+        ENABLED,
+      );
+      const sameInterpretation = deriveSpeechInterpretations(
+        receptions,
+        [invite],
+        [makeInterpreter({ id: "founder", cliqueId: 1 }), makeInterpreter({ id: "a", cliqueId: 1 })],
+        0.9,
+        ENABLED,
+      )[0];
+      const diffInterpretation = deriveSpeechInterpretations(
+        receptions,
+        [invite],
+        [makeInterpreter({ id: "founder", cliqueId: 1 }), makeInterpreter({ id: "a", cliqueId: 2 })],
+        0.9,
+        ENABLED,
+      )[0];
+      expect(sameInterpretation.intensity).toBeGreaterThan(diffInterpretation.intensity);
+      const sameTrust = sameInterpretation.factors.find((f) => f.key === "relationshipTrust")?.contribution ?? 0;
+      const diffTrust = diffInterpretation.factors.find((f) => f.key === "relationshipTrust")?.contribution ?? 0;
+      expect(sameTrust).toBeGreaterThan(diffTrust);
+    });
+
+    it("high stress amplifies a decline's negative intensity and dampens an invite's positive intensity", () => {
+      const declineLowStress = interpretOne(decline, { stress: 0 });
+      const declineHighStress = interpretOne(decline, { stress: 1 });
+      expect(declineHighStress.intensity).toBeGreaterThan(declineLowStress.intensity);
+
+      const inviteLowStress = interpretOne(invite, { stress: 0 });
+      const inviteHighStress = interpretOne(invite, { stress: 1 });
+      expect(inviteHighStress.intensity).toBeLessThan(inviteLowStress.intensity);
+    });
+
+    it("a receiver already 'joined' is less affected than one still 'undecided'", () => {
+      const undecidedInterpretation = interpretOne(invite, { state: "undecided" });
+      const joinedInterpretation = interpretOne(invite, { state: "joined" });
+      expect(joinedInterpretation.intensity).toBeLessThan(undecidedInterpretation.intensity);
+    });
+
+    it("stacking enough dampening factors rounds a nonzero base direction down to a neutral valence", () => {
+      const interpretation = interpretOne(
+        decline,
+        { conformity: 0, influenceAvoidance: 1, stress: 0, state: "joined" },
+        1,
+      );
+      expect(interpretation.valence).toBe("neutral");
+      expect(interpretation.intensity).toBeLessThan(0.05);
+    });
+
+    it("clamps out-of-range personality/strength inputs to finite, in-range output (no NaN/Infinity)", () => {
+      const wildSpeech: SpeechEvent = { ...invite, strength: Number.NaN, audibility: 500 };
+      const interpretation = interpretOne(
+        wildSpeech,
+        { conformity: -5, influenceAvoidance: 10, stress: -3, state: "undecided" },
+        5,
+      );
+      expect(Number.isFinite(interpretation.intensity)).toBe(true);
+      expect(interpretation.intensity).toBeGreaterThanOrEqual(0);
+      expect(interpretation.intensity).toBeLessThanOrEqual(1);
+      for (const factor of interpretation.factors) {
+        expect(Number.isFinite(factor.normalizedValue)).toBe(true);
+        expect(Number.isFinite(factor.contribution)).toBe(true);
+      }
+    });
+
+    it("is deterministic: identical inputs produce deep-equal interpretations", () => {
+      const receiver = { conformity: 0.6, influenceAvoidance: 0.3, stress: 0.4, state: "approaching" as const };
+      const first = interpretOne(invite, receiver, 0.7);
+      const second = interpretOne(invite, receiver, 0.7);
+      expect(second).toEqual(first);
+    });
+
+    it("carries an explanatory factor breakdown covering every documented input", () => {
+      const interpretation = interpretOne(invite, { conformity: 0.6, influenceAvoidance: 0.3, stress: 0.2, state: "undecided" });
+      const keys = interpretation.factors.map((f) => f.key);
+      expect(keys).toEqual([
+        "intentBase",
+        "conformity",
+        "influenceAvoidance",
+        "relationshipTrust",
+        "receiverStress",
+        "receiverState",
+        "receptionRelation",
+        "strength",
+      ]);
+    });
   });
 });
 
@@ -327,7 +506,8 @@ describe("deriveSpeechEffects", () => {
 
   function pipeline(speechEvents: SpeechEvent[], candidates: SpeechReceiverCandidate[], config: SpeechEffectsConfig) {
     const receptions = deriveSpeechReceptions(speechEvents, candidates, config);
-    const interpretations = deriveSpeechInterpretations(receptions, speechEvents, config);
+    const participants = candidates.map((c) => makeInterpreter({ id: c.id, state: c.state }));
+    const interpretations = deriveSpeechInterpretations(receptions, speechEvents, participants, 0.5, config);
     const effects = deriveSpeechEffects(interpretations, speechEvents, config);
     return { receptions, interpretations, effects };
   }
