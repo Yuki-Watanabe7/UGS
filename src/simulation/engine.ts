@@ -10,7 +10,7 @@ import type {
 } from "./types";
 import type { InterventionRuntimeOptions, InterventionScenarioId } from "./interventions";
 import type { SpeechEvent } from "./speech";
-import { createSpeechEvent } from "./speech";
+import { createSpeechEvent, deriveSpeechEvents } from "./speech";
 import {
   applyLightInvitationEffect,
   isUnderLightInvitationBoost,
@@ -718,7 +718,7 @@ export function stepSimulation(
     );
   }
 
-  return {
+  const nextState: SimulationState = {
     tick,
     agents,
     groupCandidates: candidates,
@@ -727,6 +727,16 @@ export function stepSimulation(
     height: state.height,
     finished,
     interventionId,
-    speechLog: [...(state.speechLog ?? []), ...speechEvents],
+    speechLog: [],
+  };
+
+  // formingGroupRecruitment/approachWelcome/joinGreeting/leaveDeclarationは、
+  // 発言主体がstate遷移そのものから一意に決まる(rngで選ばれない)ため、
+  // 個別のロジック内で都度createSpeechEventを呼ぶ代わりにここでまとめて導出する。
+  const derivedSpeechEvents = deriveSpeechEvents(state, nextState);
+
+  return {
+    ...nextState,
+    speechLog: [...(state.speechLog ?? []), ...speechEvents, ...derivedSpeechEvents],
   };
 }

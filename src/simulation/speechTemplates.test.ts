@@ -3,7 +3,15 @@ import { resolveSpeechEventText, resolveSpeechText } from "./speechTemplates";
 import { createSpeechEvent } from "./speech";
 import type { SpeechReason } from "./speech";
 
-const ALL_REASONS: SpeechReason[] = ["initiativeFormedCore", "cliqueFormedCore", "lightObserverInvitation"];
+const ALL_REASONS: SpeechReason[] = [
+  "initiativeFormedCore",
+  "cliqueFormedCore",
+  "formingGroupRecruitment",
+  "approachWelcome",
+  "joinGreeting",
+  "leaveDeclaration",
+  "lightObserverInvitation",
+];
 
 describe("speechTemplates: coverage", () => {
   it("has a non-empty template for every SpeechReason", () => {
