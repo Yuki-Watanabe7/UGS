@@ -154,11 +154,113 @@ npm run dev
 このアプリの心の声は、段階的に拡張予定のロードマップのうち**Phase 1**にあたります。現時点で表現していないものは以下のとおりです。
 
 - **Phase 1(実装済み・本機能)**: 非介入の心の声。既存の内部状態・判断を観察者向けに言語化するだけで、他エージェントへの影響や新しい判断ロジックは持ちません。
-- **Phase 2(実装済み)**: 発言イベント(`SpeechEvent`)。エージェントが実際に「発言」し、その記録が`speechLog`に蓄積され、実線+矢羽根しっぽの発言吹き出しやobserverJoinerインスペクターで確認できます。既存の「軽い声かけ」介入(下記[介入シナリオの使い方](#介入シナリオの使い方)参照)の発言もこの仕組みで記録されます。ただし、他エージェントがその発言を「聞いた」ことでstress・attractiveness・参加/離脱判断が変化することはありません(それはPhase 3の範囲)。`SpeechEvent`と既存介入の概念対応・責務境界の詳細は[`docs/speech-event-intervention-boundary.md`](docs/speech-event-intervention-boundary.md)を参照してください。
+- **Phase 2(実装済み)**: 発言イベント(`SpeechEvent`)。エージェントが実際に「発言」し、その記録が`speechLog`に蓄積され、実線+矢羽根しっぽの発言吹き出しやobserverJoinerインスペクターで確認できます。既存の「軽い声かけ」介入(下記[介入シナリオの使い方](#介入シナリオの使い方)参照)の発言もこの仕組みで記録されます。ただし、他エージェントがその発言を「聞いた」ことでstress・attractiveness・参加/離脱判断が変化することはありません(それはPhase 3の範囲)。詳しい使い方・データモデル・境界は次節[発言(SpeechEvent) — Phase 2](#発言speechevent--phase-2)を参照してください。
 - **Phase 3(未実装)**: 発言の認知・介入効果。ある発言が他エージェントの判断にどう影響するかのモデル化。
 - **Phase 4(未実装)**: 本心・建前・行動の不一致。心の声(本心)と実際の発言・行動が食い違う場合の表現。
 
 Phase 1の心の声は、あくまで「今の内部状態をどう言語化して見せるか」の範囲にとどまり、上記のいずれも実装していません。
+
+## 発言(SpeechEvent) — Phase 2
+
+心の声(Phase 1)とは別に、Phase 2では`SpeechEvent`(`src/simulation/speech.ts`)という「実際にエージェントが発した発言」を追加しました。両者は見た目・意味ともに区別されます。
+
+### 心の声と発言の違い
+
+| | 心の声(`ExpressionEvent`、Phase 1) | 発言(`SpeechEvent`、Phase 2) |
+| --- | --- | --- |
+| 何を表すか | 既存の内部状態・判断を観察者向けに言語化した非介入の演出 | 話者・意図・宛先を持つ、シミュレーション上で実際に発せられた発言 |
+| 他エージェントへの影響 | 一切なし(誰にも聞こえない) | Phase 2時点ではまだ一切なし(記録・表示のみ。Phase 3で「聞いた」ことによる影響を追加予定) |
+| 保持場所 | `SimulationState`には保持されない(表示層のみで組み立て) | `SimulationState.speechLog`に記録として蓄積される |
+| 見た目 | 点線枠+括弧書き | 実線枠+矢羽根しっぽ+💬アイコン |
+
+**重要(Phase 2の境界)**: 発言吹き出しやログに表示される発言は、他のエージェントの`stress`・`attractiveness`・参加/離脱判断には一切影響しません。「発言が見える=もう関係性が変わった」わけではなく、Phase 2は発言を生成・記録・表示できる基盤を作る段階にとどまります。この効果(発言を聞いた相手の判断が変わる)はPhase 3で扱う予定です。
+
+### UIでの観察方法
+
+- **発言吹き出し(SpeechBubble)**: シミュレーション領域上、発言したエージェントの近くに実線枠+矢羽根しっぽ+💬アイコン付きで一時的に表示されます。心の声の吹き出し(点線枠)とは視覚的に区別されています。
+- **発言表示設定**: 操作パネル付近の「発言表示」パネル(`SpeechBubbleDisplaySettings`)で、発言吹き出しの表示ON/OFFを切り替えられます。心の声の表示設定(`ExpressionDisplaySettings`)とは独立したパネルです。OFFにしてもシミュレーション本体の結果・ログ・インスペクターの値は変わりません。
+- **状態ログのフィルタ**: 状態ログ(`EventLog`)の表示フィルタに「発言のみ」があり、発言だけを抽出して確認できます。発言行は先頭に💬アイコンが付き、`intent`(誘う/歓迎/挨拶/辞退)・`reason`・`speaker`・`target`/`audience`を1行で確認できる補足行(meta)も併記されます。「全ログ」を選ぶと状態ログと発言ログがtick順に混在表示されます。
+- **observerJoinerインスペクターの関連発言履歴**: `ObserverJoinerInspector`の各カード下部「関連する発言」に、そのobserverJoinerが話者(speaker)・対象(target)・周囲(audience)のいずれかとして関わった発言だけが時系列で一覧表示されます。
+- **Pause / Step / Replayでの確認**: `speechLog`はtickごとに確定した記録であるため、ある時点の`SimulationState`が表す「そのtickの発言」は常に一意に決まります。Start/Pauseで止めて眺める、Stepで1tickずつ進めながら発言吹き出し・ログ・インスペクターを確認する、あるいは同一seedで最初から実行し直す(Reset)、いずれの経路でも同じtickなら同じ発言が再現されます(このアプリには過去tickへ巻き戻す専用の「Replay」ボタンはなく、Pause中の観察とStepでの逐次確認、同一seedでの再実行が実質的な「発言の確認手段」です)。
+
+### `SpeechEvent`の主要属性
+
+`SpeechEvent`(`src/simulation/speech.ts`)は以下のフィールドを持ちます。
+
+| 属性 | 意味 |
+| --- | --- |
+| `id` | 発言を一意に識別するID(`tick`/`speakerId`/`reason`/`target`または`idSuffix`から組み立て) |
+| `tick` | 発言が発生したtick |
+| `speakerId` | 発言したエージェントのID |
+| `intent` | 発言の分類。`invite`(誘う)/`welcome`(歓迎)/`greet`(挨拶)/`decline`(辞退)の4種 |
+| `reason` | 発言が発生した構造的な理由(例: `initiativeFormedCore`核形成、`approachWelcome`歓迎、`joinGreeting`合流挨拶、`leaveDeclaration`離脱表明、`lightObserverInvitation`軽い声かけ介入 など) |
+| `target` | 発言の名宛先。特定の1人に向けた発言(軽い声かけ等)の場合のみ設定(`audience`とは排他) |
+| `audience` | 発言が届く範囲。周囲全体に向けた発言の場合のみ`"nearby"`が設定される(`target`とは排他) |
+| `textKey` | 表示文言そのものではなく、テンプレート参照キー。実際の文言解決は`speechTemplates.ts`(UI側)の責務 |
+
+**Phase 2時点で持たないもの**: 「到達範囲(range)」「聞こえやすさ(audibility)」「発言の強さ(strength)」に相当するフィールドは、Phase 2の`SpeechEvent`にはまだ実装されていません。`audience: "nearby"`は実座標に基づく近接判定を持たず、全エージェントを対象とみなす簡略化です。詳細は[`docs/speech-event-intervention-boundary.md`](docs/speech-event-intervention-boundary.md)の「4. Phase 3への拡張点」を参照してください。
+
+### 発言が生成される代表的な場面 / されない条件
+
+`SpeechEvent`は`engine.ts`内の2経路のみから生成されます(状態遷移の副産物として導出する経路、または話者がrngで選ばれるため直接生成する経路)。
+
+代表的な生成場面:
+
+- 主導者または既存グループ(clique)が核を作り始めたとき(`initiativeFormedCore`/`cliqueFormedCore`、`invite`)
+- 既にできかけの核へ新たな1人が加わったとき、founderが重ねて誘う(`formingGroupRecruitment`、`invite`)
+- undecidedの人がforming/confirmedな輪へ接近を始めたとき、その輪の代表が歓迎する(`approachWelcome`、`welcome`)
+- 誰かが輪・グループへ合流を完了したとき、本人が挨拶する(`joinGreeting`、`greet`)
+- 誰かが曖昧な時間に耐えられず離脱を始めたとき、本人が辞退・帰宅を表明する(`leaveDeclaration`、`decline`)
+- 介入シナリオ「observerJoinerへの軽い声かけ」が発動したとき(`lightObserverInvitation`、`invite`。詳しくは次項参照)
+
+生成されない代表的な条件:
+
+- undecidedのまま状態が変わらずに様子見を続けているtick(接近も離脱も核形成もしていない)
+- 既にapproaching/forming/joined/leaving状態のエージェントが、状態を変えずに移動しているだけのtick
+- 輪が解散(dissolving/expired)するとき(現時点のreasonカタログに対応する発言は定義されていない)
+- 介入シナリオが「介入なし」、または「軽い声かけ」以外の介入が選ばれているとき(軽い声かけ以外の介入は`SpeechEvent`を生成しない)
+
+### 再現性・非介入性
+
+- 発言の内容は`tick`・`speakerId`・`reason`などシミュレーション状態から決定的に組み立てられます。**同一seed・同一パラメータであれば、`speechLog`の件数・内容・順序が毎回完全に一致します**(`speechReproducibility.test.ts`で全プリセットについて検証)。
+- `createSpeechEvent`/`deriveSpeechEvents`はどちらも`SimulationState`・他エージェント・乱数(`SeededRandom`)のいずれも参照/変更しない純粋関数です。発言の生成自体が乱数を消費したり状態を書き換えたりすることはありません。
+- 発言吹き出しの表示ON/OFF(「発言表示」設定)を変更しても、シミュレーション本体の結果(誰が参加・離脱するか、グループ成立tick等)・状態ログ・インスペクターの値は一切変わりません。これは心の声の表示設定と同じ非介入の保証です(`speechBubbleNonInterference.test.ts`で検証)。
+
+### 既存の「軽い声かけ介入」との関係
+
+介入シナリオ「observerJoinerへの軽い声かけ」(`light-observer-invitation`)は、Phase 2以前から存在する既存の介入で、`agent.invitedAtTick`を直接設定してobserverJoinerの`influenceAvoidance`の壁を緩和し、接近確率を上げ、追加ストレスを軽減する、という**シミュレーション本体の状態遷移そのものを変更する効果**を持ちます。
+
+Phase 2ではこの「声かけ」という出来事を`reason: "lightObserverInvitation"`の`SpeechEvent`としても記録・表示するようにしましたが、これは既存の効果メカニズムに変更を加えるものではありません。`SpeechEvent`自体は「声かけが発生した」という事実を記録するだけで、効果の発生・強さには一切関与しません。両者の詳しい概念対応・責務境界は[`docs/speech-event-intervention-boundary.md`](docs/speech-event-intervention-boundary.md)にまとめています。
+
+### Phase 3以降との境界
+
+- **Phase 2(実装済み・本機能)**: 発言の生成・記録・表示。他エージェントが発言を「聞いた」ことによる状態変化は一切持たない。
+- **Phase 3(未実装)**: 発言の認知・介入効果。ある発言を他エージェントが聞いたことで、そのエージェントの`stress`・`attractiveness`・参加/離脱判断がどう変化するかのモデル化。
+- **Phase 4(未実装)**: 本心・建前・行動の不一致。心の声(本心)と実際の発言・行動が食い違う場合の表現。
+
+README・UI上に表示される発言は、現時点では**見えるだけで、まだ誰にも効果を及ぼしません**。「発言が表示される=もう相手に影響している」と読まないよう注意してください。
+
+### PC/iPhoneでの操作上の注意点
+
+発言吹き出し・発言表示設定・ログの「発言のみ」フィルタ・インスペクターの関連発言履歴は、いずれもPC/iPhoneで機能差はありません。「発言表示」パネル(`SpeechBubbleDisplaySettings`)は、心の声の表示設定と同様にモバイル時もスライダー群のような折りたたみ対象にはならず、常に表示されます(モバイルで折りたたまれるのは操作パネルのパラメータスライダー部分のみ)。iPhoneでの起動方法自体は前述の[3つの起動・利用方法の使い分け](#3つの起動・利用方法の使い分け)を参照してください。
+
+### 開発者向けの主要ファイル
+
+| 関心 | ファイル |
+| --- | --- |
+| `SpeechEvent`の型・生成関数 | `src/simulation/speech.ts` |
+| 生成呼び出し(engine内の2経路) | `src/simulation/engine.ts` |
+| 既存の「軽い声かけ介入」定義 | `src/simulation/interventions.ts` |
+| `speechLog`を持つ状態の型 | `src/simulation/types.ts`(`SimulationState.speechLog`/`SpeechRelation`/`ObserverSpeechHistoryEntry`) |
+| 表示文言のテンプレート解決 | `src/simulation/speechTemplates.ts` |
+| observerJoiner向け関連発言の抽出 | `src/simulation/inspection.ts` |
+| 発言吹き出しの寿命・競合制御 | `src/simulation/activeSpeechBubbles.ts` |
+| 発言吹き出し(SVG描画) | `src/components/SpeechBubble.tsx` / `src/components/SimulationCanvas.tsx` |
+| 発言表示設定パネル | `src/components/SpeechBubbleDisplaySettings.tsx` / `src/components/speechBubbleDisplayFilter.ts` |
+| ログ・インスペクター向け表示文組み立て | `src/components/speechDisplay.ts` |
+| tickごとの表示駆動フック | `src/hooks/useActiveSpeechBubbles.ts` |
+| 再現性・非介入性・生成条件のテスト | `src/simulation/speechReproducibility.test.ts` / `speechGeneration.test.ts` / `speech.test.ts` / `speechBubbleNonInterference.test.ts` |
+| 既存介入との概念対応・責務境界の設計文書 | `docs/speech-event-intervention-boundary.md` |
 
 ## 観察機能(Phase A)
 
