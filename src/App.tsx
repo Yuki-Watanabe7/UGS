@@ -16,9 +16,7 @@ import { getPresetById, PRESETS } from "./simulation/presets";
 import { getInterventionById } from "./simulation/interventions";
 import type { InterventionScenarioId } from "./simulation/interventions";
 import type { SimParams, SimulationState } from "./simulation/types";
-import { deriveExpressionEvents } from "./simulation/expression";
-import { resolveExpressionEventText } from "./simulation/expressionTemplates";
-import type { ThoughtBubbleDisplay } from "./components/SimulationCanvas";
+import { useActiveExpressions } from "./hooks/useActiveExpressions";
 import { useIsMobile } from "./hooks/useIsMobile";
 
 const TICK_INTERVAL_MS = 250;
@@ -42,39 +40,25 @@ function App() {
   // 現在のsimStateの生成に実際に使われたparams。Reset必須パラメータが
   // これとparamsとで食い違っている間は、変更がまだ反映されていないとみなす。
   const [appliedParams, setAppliedParams] = useState<SimParams>(PRESETS[0].params);
-  // 直近1件の心の声のみを表示する(Phase 1の対応範囲: 1エージェント1吹き出し。
-  // 表示寿命・複数同時表示・重なり回避は後続issueで扱う)
-  const [activeThought, setActiveThought] = useState<ThoughtBubbleDisplay | undefined>();
+  // Reset・プリセット変更・seed変更・再実行のたびにインクリメントする。useActiveExpressionsは
+  // この値の変化を「新しい実行が始まった」シグナルとして扱い、古い心の声吹き出しを破棄する。
+  const [runId, setRunId] = useState(0);
 
   const rngRef = useRef(new SeededRandom(seed));
-  // deriveExpressionEventsの入力として、直前tickのSimulationStateを保持する
-  const prevSimStateRef = useRef(simState);
 
   const resetSimulation = useCallback(
     (nextSeed: number, nextParams: SimParams, nextInterventionId: InterventionScenarioId) => {
       rngRef.current = new SeededRandom(nextSeed);
       const initialState = createInitialState(nextSeed, nextParams, { interventionId: nextInterventionId });
-      prevSimStateRef.current = initialState;
       setSimState(initialState);
       setAppliedParams(nextParams);
-      setActiveThought(undefined);
+      setRunId((id) => id + 1);
       setRunning(false);
     },
     [],
   );
 
-  useEffect(() => {
-    const events = deriveExpressionEvents(prevSimStateRef.current, simState, { seed });
-    if (events.length > 0) {
-      const chosen = events[events.length - 1];
-      const agent = simState.agents.find((a) => a.id === chosen.agentId);
-      setActiveThought({
-        agentId: chosen.agentId,
-        text: resolveExpressionEventText(chosen, agent?.isObserverJoiner ?? false),
-      });
-    }
-    prevSimStateRef.current = simState;
-  }, [simState, seed]);
+  const activeThoughts = useActiveExpressions(simState, seed, runId);
 
   const hasPendingResetChanges = RESET_REQUIRED_PARAM_KEYS.some(
     (key) => params[key] !== appliedParams[key],
@@ -203,7 +187,7 @@ function App() {
             groupCandidates={simState.groupCandidates}
             width={simState.width}
             height={simState.height}
-            thoughts={activeThought ? [activeThought] : []}
+            thoughts={activeThoughts}
           />
         </section>
 

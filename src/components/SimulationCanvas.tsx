@@ -1,6 +1,6 @@
 import type { Agent, GroupCandidate } from "../simulation/types";
 import { ThoughtBubble } from "./ThoughtBubble";
-import { computeThoughtBubbleLayout } from "./thoughtBubbleLayout";
+import { computeThoughtBubbleLayouts } from "./thoughtBubbleLayout";
 
 /** 表示すべき心の声1件分。文言生成・寿命管理は呼び出し側(表示管理レイヤー)の責務で、ここでは受け取るだけ */
 export type ThoughtBubbleDisplay = {
@@ -70,7 +70,36 @@ function candidateLabel(candidate: GroupCandidate): string {
   }
 }
 
+/**
+ * 表示すべき心の声を、対応するagentが存在するものだけ配置用の入力へ変換する。
+ * observerJoinerを先頭に寄せて`computeThoughtBubbleLayouts`へ渡すことで、
+ * 重ならない候補位置(above/below/right/left)をobserverJoiner優先で確保させる
+ * (吹き出しの表示可否そのものの優先度制御はuseActiveExpressions側の責務)。
+ */
+function buildThoughtPlacementInputs(agents: Agent[], thoughts: ThoughtBubbleDisplay[], width: number, height: number) {
+  return thoughts
+    .map((thought) => {
+      const agent = agents.find((a) => a.id === thought.agentId);
+      if (!agent) return undefined;
+      return {
+        agentId: thought.agentId,
+        agentX: agent.x,
+        agentY: agent.y,
+        agentRadius: radiusFor(agent),
+        text: thought.text,
+        canvasWidth: width,
+        canvasHeight: height,
+        isObserverJoiner: agent.isObserverJoiner,
+      };
+    })
+    .filter((input): input is NonNullable<typeof input> => input !== undefined)
+    .sort((a, b) => Number(b.isObserverJoiner) - Number(a.isObserverJoiner));
+}
+
 export function SimulationCanvas({ agents, groupCandidates, width, height, thoughts = [] }: Props) {
+  const thoughtInputs = buildThoughtPlacementInputs(agents, thoughts, width, height);
+  const thoughtLayouts = computeThoughtBubbleLayouts(thoughtInputs);
+
   return (
     <div className="panel canvas-panel">
       <svg
@@ -117,18 +146,10 @@ export function SimulationCanvas({ agents, groupCandidates, width, height, thoug
           );
         })}
 
-        {thoughts.map((thought) => {
-          const agent = agents.find((a) => a.id === thought.agentId);
-          if (!agent) return null;
-          const layout = computeThoughtBubbleLayout({
-            agentX: agent.x,
-            agentY: agent.y,
-            agentRadius: radiusFor(agent),
-            text: thought.text,
-            canvasWidth: width,
-            canvasHeight: height,
-          });
-          return <ThoughtBubble key={thought.agentId} layout={layout} isObserverJoiner={agent.isObserverJoiner} />;
+        {thoughtInputs.map((input) => {
+          const layout = thoughtLayouts.get(input.agentId);
+          if (!layout) return null;
+          return <ThoughtBubble key={input.agentId} layout={layout} isObserverJoiner={input.isObserverJoiner} />;
         })}
       </svg>
     </div>
