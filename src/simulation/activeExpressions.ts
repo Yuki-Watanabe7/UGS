@@ -1,4 +1,4 @@
-import type { ExpressionEvent } from "./expression";
+import type { ExpressionEvent, ExpressionIntent } from "./expression";
 
 /**
  * `ExpressionEvent`をCanvas上のアクティブな吹き出しへ変換・管理する純粋な状態機械。
@@ -22,6 +22,8 @@ export type ExpressionBubbleCandidate = {
   agentId: string;
   text: string;
   isObserverJoiner: boolean;
+  /** 表示対象の絞り込み(「重要イベントのみ」等)のため、表示管理層より上に素通しする分類情報 */
+  intent: ExpressionIntent;
   priority: number;
   eventTick: number;
   ttlTicks: number;
@@ -54,6 +56,7 @@ export function toExpressionBubbleCandidate(
     agentId: event.agentId,
     text,
     isObserverJoiner,
+    intent: event.intent,
     priority: event.priority,
     eventTick: event.tick,
     ttlTicks: event.recommendedTtlTicks,

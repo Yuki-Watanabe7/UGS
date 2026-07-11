@@ -1,11 +1,18 @@
 import type { Agent, GroupCandidate } from "../simulation/types";
+import type { ExpressionIntent } from "../simulation/expression";
 import { ThoughtBubble } from "./ThoughtBubble";
 import { computeThoughtBubbleLayouts } from "./thoughtBubbleLayout";
 
-/** 表示すべき心の声1件分。文言生成・寿命管理は呼び出し側(表示管理レイヤー)の責務で、ここでは受け取るだけ */
+/**
+ * 表示すべき心の声1件分。文言生成・寿命管理は呼び出し側(表示管理レイヤー)の責務で、ここでは受け取るだけ。
+ * `isObserverJoiner`/`intent`は描画そのものには使わないが、呼び出し側(App.tsx)の表示設定フィルタ
+ * (`expressionDisplayFilter.ts`)がここを経由せず素通しできるよう、型として保持しておく。
+ */
 export type ThoughtBubbleDisplay = {
   agentId: string;
   text: string;
+  isObserverJoiner?: boolean;
+  intent?: ExpressionIntent;
 };
 
 type Props = {
