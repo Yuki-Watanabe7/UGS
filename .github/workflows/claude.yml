@@ -43,7 +43,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
           claude_args: |
-            --allowedTools Bash(bash scripts/quality-check.sh),Bash(npm:*),Bash(git status:*),Bash(git diff:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*)
+            --allowedTools "Bash(bash scripts/quality-check.sh:*)" "Bash(npm:*)" "Bash(git status:*)" "Bash(git diff:*)" "Bash(git add:*)" "Bash(git commit:*)" "Bash(git push:*)"
             --append-system-prompt "You must run bash scripts/quality-check.sh before committing or reporting completion.
             If the command fails, inspect the error, fix the issue, and rerun the command.
             Repeat until it passes.
