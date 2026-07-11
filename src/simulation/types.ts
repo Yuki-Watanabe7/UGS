@@ -1,5 +1,6 @@
 import type { InterventionRuntimeOptions, InterventionScenarioId } from "./interventions";
 import type { SpeechEvent } from "./speech";
+import type { SpeechEffectEvent, SpeechInterpretationEvent, SpeechReceptionEvent } from "./speechEffects";
 
 export type AgentState =
   | "undecided"
@@ -192,6 +193,20 @@ export type SimulationState = {
    * (発言の認知・介入効果はPhase 3で扱う)。既存stateとの後方互換のため任意フィールド。
    */
   speechLog?: SpeechEvent[];
+  /**
+   * Phase 3(`speechEffects.ts`)の認知・解釈・効果の因果イベントログ。`speechEffectsEnabled`が
+   * false(デフォルト)の間は常に空配列であり、既存のagents/rng/最終結果には一切影響しない。
+   * 3つとも`speechLog`と同様に時系列蓄積のみを行う記録であり、意思決定の入力には使われない。
+   */
+  speechReceptionLog?: SpeechReceptionEvent[];
+  speechInterpretationLog?: SpeechInterpretationEvent[];
+  speechEffectLog?: SpeechEffectEvent[];
+  /**
+   * このstateの生成/更新時点でPhase 3効果(`speechEffects.ts`)が有効だったかどうか。
+   * `interventionId`と同様、呼び出し側が引き継ぎ忘れても直前の設定を維持するためのfall back用。
+   * 未指定(既存stateの読み込み等)は無効相当として扱う。
+   */
+  speechEffectsEnabled?: boolean;
 };
 
 /**
