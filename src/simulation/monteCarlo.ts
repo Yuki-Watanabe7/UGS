@@ -16,8 +16,9 @@ import { buildSimulationSummary } from "./summary";
 /**
  * Monte Carlo層としての安全上限tick数。engine.ts内部の`tick >= 400`終了とは独立に持たせ、
  * 将来engine側の上限が変わっても`runSimulationToEnd`が無限ループしないようにするための保険。
+ * `speechEffectsMonteCarlo.ts`のpaired比較も同じ上限を使う(受入条件: 既存Monte Carlo運用に合わせる)。
  */
-const DEFAULT_MAX_TICKS = 1000;
+export const DEFAULT_MAX_TICKS = 1000;
 
 /**
  * 単一seedのシミュレーションを、終了(`state.finished`)または安全上限tickに達するまで実行する。
@@ -31,11 +32,12 @@ export function runSimulationToEnd(
 ): { summary: SimulationSummary; finishedTick: number } {
   const maxTicks = options?.maxTicks ?? DEFAULT_MAX_TICKS;
   const intervention = options?.intervention;
+  const speechEffects = options?.speechEffects;
   const rng = new SeededRandom(seed);
 
-  let state = createInitialState(seed, params, intervention);
+  let state = createInitialState(seed, params, intervention, speechEffects);
   while (!state.finished && state.tick < maxTicks) {
-    state = stepSimulation(state, params, rng, intervention);
+    state = stepSimulation(state, params, rng, intervention, speechEffects);
   }
 
   const summary = buildSimulationSummary(state);
@@ -54,7 +56,11 @@ function rateOf(runs: MonteCarloRunResult[], predicate: (run: MonteCarloRunResul
   return runs.filter(predicate).length / runs.length;
 }
 
-function summarizeRuns(runs: MonteCarloRunResult[]): MonteCarloSummary {
+/**
+ * `runs`から既存の主要指標を集計する。`speechEffectsMonteCarlo.ts`のpaired比較も、既存指標については
+ * この関数をそのまま再利用する(既存介入比較と同じ集計ロジックを使うことを型・値の両面で保証するため)。
+ */
+export function summarizeRuns(runs: MonteCarloRunResult[]): MonteCarloSummary {
   const observerJoinerJoinRate = rateOf(runs, (run) =>
     run.summary.observerJoiners.some((o) => o.finalState === "joined"),
   );
@@ -88,12 +94,12 @@ function summarizeRuns(runs: MonteCarloRunResult[]): MonteCarloSummary {
  * 個別run結果と集計値の両方を返す。`config.params`はmutationしない。
  */
 export function runMonteCarlo(config: MonteCarloConfig): MonteCarloResult {
-  const { baseSeed, runs: runCount, params, maxTicks, intervention } = config;
+  const { baseSeed, runs: runCount, params, maxTicks, intervention, speechEffects } = config;
 
   const runs: MonteCarloRunResult[] = [];
   for (let index = 0; index < runCount; index++) {
     const seed = baseSeed + index;
-    const { summary, finishedTick } = runSimulationToEnd(seed, params, { maxTicks, intervention });
+    const { summary, finishedTick } = runSimulationToEnd(seed, params, { maxTicks, intervention, speechEffects });
     runs.push({ seed, summary, finishedTick });
   }
 
@@ -104,11 +110,12 @@ export function runMonteCarlo(config: MonteCarloConfig): MonteCarloResult {
   };
 }
 
-function metricDelta(baseline: number, intervention: number): MonteCarloMetricDelta {
+/** `speechEffectsMonteCarlo.ts`のpaired比較も、既存の主要指標についてはこの関数をそのまま再利用する */
+export function metricDelta(baseline: number, intervention: number): MonteCarloMetricDelta {
   return { baseline, intervention, delta: intervention - baseline };
 }
 
-function optionalMetricDelta(
+export function optionalMetricDelta(
   baseline: number | undefined,
   intervention: number | undefined,
 ): MonteCarloMetricDelta<number | undefined> {

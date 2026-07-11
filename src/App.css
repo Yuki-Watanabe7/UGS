@@ -423,6 +423,18 @@
   color: #8b93a5;
 }
 
+.speech-effects-phase3-summary {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #232634;
+}
+
+.speech-effects-phase3-summary h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: #cbd5e1;
+}
+
 .center-stage {
   min-width: 0;
   min-height: 0;
@@ -1017,6 +1029,11 @@
 
   .intervention-comparison-panel {
     order: 11;
+  }
+
+  /* 同様に、発言効果ON/OFF比較パネルも .monte-carlo-panel を共有しているため最後尾へ回す */
+  .speech-effects-comparison-panel {
+    order: 12;
   }
 
   /* viewBoxによる縮小表示は活かしつつ、スマホで縦に大きすぎないよう制限する。

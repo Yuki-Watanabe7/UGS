@@ -6,7 +6,9 @@ import type {
   SimulationEventType,
   SimulationState,
   SimulationSummary,
+  SpeechEffectsRunSummary,
 } from "./types";
+import type { SpeechEffectDimension, SpeechEffectEvent } from "./speechEffects";
 
 function ticksFor(log: LogEntry[], eventType: SimulationEventType, agentId?: string): number[] {
   return log
@@ -100,5 +102,75 @@ export function buildSimulationSummary(state: SimulationState): SimulationSummar
     firstGroupConfirmedTick,
     confirmedGroupCount: groupConfirmedTicks.length,
     groupFailure: groupConfirmedTicks.length === 0,
+  };
+}
+
+/**
+ * `SpeechEffectDimension`ごとに、その効果が寄与したとみなせる構造化ログイベント種別(Issue #99)。
+ * `transitionInfluenced`の判定にのみ使う。`stress`は蓄積率の緩和が「離脱しなかった」という
+ * 非イベントにしか現れず対応する離散イベントを持たないため、意図的に空配列にしている
+ * (`buildSpeechEffectsRunSummary`のコメント、および`docs/speech-effects-paired-monte-carlo.md`参照)。
+ */
+const DIMENSION_TRANSITION_EVENTS: Record<SpeechEffectDimension, SimulationEventType[]> = {
+  approachProbability: ["observerApproached"],
+  attractiveness: ["observerJoinedForming", "observerJoinedConfirmed"],
+  leaveThreshold: ["observerLeaveStarted"],
+  stress: [],
+};
+
+/**
+ * `effect`の有効期間(`appliedTick`〜`appliedTick + durationTicks`)内に、同一受け手
+ * (`LogEntry.metadata.agentId === effect.receiverId`)についてdimensionに対応する構造化ログイベントが
+ * 存在するかを調べる。純粋関数(`log`を読み取るのみ)。
+ */
+function hasMatchingTransitionEvent(log: LogEntry[], effect: SpeechEffectEvent): boolean {
+  const eventTypes = DIMENSION_TRANSITION_EVENTS[effect.dimension];
+  if (eventTypes.length === 0) return false;
+  const windowEnd = effect.appliedTick + effect.durationTicks;
+  return log.some(
+    (entry) =>
+      entry.metadata?.agentId === effect.receiverId &&
+      entry.eventType !== undefined &&
+      (eventTypes as SimulationEventType[]).includes(entry.eventType) &&
+      entry.tick >= effect.appliedTick &&
+      entry.tick <= windowEnd,
+  );
+}
+
+/**
+ * SimulationStateから、Phase 3(発言効果)固有の観察指標(`SpeechEffectsRunSummary`)を導出する
+ * (Issue #99)。`state.speechReceptionLog`/`speechInterpretationLog`/`speechEffectLog`/`log`/`agents`
+ * のみを読み取り、SimulationStateはmutationしない。`speechEffectsEnabled`がfalse(または未指定)の
+ * 場合、これらのログは常に空配列のため、全フィールドが「発生なし」を表す値になる。
+ */
+export function buildSpeechEffectsRunSummary(state: SimulationState): SpeechEffectsRunSummary {
+  const observerJoinerIds = new Set(state.agents.filter((agent) => agent.isObserverJoiner).map((agent) => agent.id));
+  const receptions = state.speechReceptionLog ?? [];
+  const interpretations = state.speechInterpretationLog ?? [];
+  const effects = state.speechEffectLog ?? [];
+
+  const observerJoinerHeardSpeech = receptions.some(
+    (reception) => reception.heard && observerJoinerIds.has(reception.receiverId),
+  );
+  const hadInterpretationOrEffect =
+    interpretations.some((interpretation) => interpretation.valence !== "neutral") || effects.length > 0;
+
+  const dimensionTotals: Record<SpeechEffectDimension, number> = {
+    stress: 0,
+    attractiveness: 0,
+    approachProbability: 0,
+    leaveThreshold: 0,
+  };
+  for (const effect of effects) {
+    dimensionTotals[effect.dimension] += Math.abs(effect.outputValue);
+  }
+
+  const transitionInfluenced = effects.some((effect) => hasMatchingTransitionEvent(state.log, effect));
+
+  return {
+    observerJoinerHeardSpeech,
+    hadInterpretationOrEffect,
+    dimensionTotals,
+    transitionInfluenced,
   };
 }
