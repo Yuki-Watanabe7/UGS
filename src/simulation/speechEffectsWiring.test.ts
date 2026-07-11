@@ -146,6 +146,10 @@ describe("Phase 3 speech effects wiring: enabled config", () => {
     expect(second.speechReceptionLog).toEqual(first.speechReceptionLog);
     expect(second.speechInterpretationLog).toEqual(first.speechInterpretationLog);
     expect(second.speechEffectLog).toEqual(first.speechEffectLog);
+    // Issue #97: the aggregation/registration state (activeSpeechEffects) that
+    // registerActiveSpeechEffects/aggregateActiveEffects operate on must reproduce identically too,
+    // not just the append-only logs above.
+    expect(second.activeSpeechEffects).toEqual(first.activeSpeechEffects);
   });
 
   it("ids are unique within each Phase 3 log across a full run", () => {
@@ -159,6 +163,25 @@ describe("Phase 3 speech effects wiring: enabled config", () => {
     ]) {
       const ids = log.map((e) => e.id);
       expect(new Set(ids).size).toBe(ids.length);
+    }
+  });
+
+  it("Issue #97: activeSpeechEffects never holds two simultaneous effects from the same speaker+intent+receiver+dimension, at any tick of a full run (registerActiveSpeechEffects keeps re-speeches replaced instead of stacked)", () => {
+    const preset = PRESETS[2];
+    const rng = new SeededRandom(777);
+    let state = createInitialState(777, preset.params, undefined, { enabled: true });
+
+    let ticks = 0;
+    while (!state.finished && ticks < 400) {
+      state = stepSimulation(state, preset.params, rng);
+      ticks += 1;
+
+      const seen = new Set<string>();
+      for (const effect of state.activeSpeechEffects ?? []) {
+        const key = `${effect.receiverId}|${effect.dimension}|${effect.speakerId}|${effect.intent}|${effect.targetGroupId ?? ""}`;
+        expect(seen.has(key)).toBe(false);
+        seen.add(key);
+      }
     }
   });
 });

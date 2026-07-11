@@ -5,11 +5,13 @@ import { WORLD_HEIGHT, WORLD_WIDTH } from "./model";
 import {
   activeEffectStrengthAtTick,
   advanceActiveSpeechEffects,
+  aggregateActiveEffects,
   DEFAULT_SPEECH_EFFECTS_CONFIG,
   deriveSpeechActiveEffects,
   deriveSpeechEffects,
   deriveSpeechInterpretations,
   deriveSpeechReceptions,
+  registerActiveSpeechEffects,
   resolveSpeechEffectsConfig,
   sumActiveEffectValue,
 } from "./speechEffects";
@@ -671,6 +673,9 @@ describe("SpeechActiveEffect: decay and application (Issue #96)", () => {
     return {
       id: "active-effect-1",
       speechEffectEventId: "effect-1",
+      speechEventId: "speech-1",
+      speakerId: "speaker",
+      intent: "greet",
       receiverId: "a",
       dimension: "stress",
       startedAtTick: 10,
@@ -724,10 +729,24 @@ describe("SpeechActiveEffect: decay and application (Issue #96)", () => {
   describe("sumActiveEffectValue", () => {
     it("sums only effects matching receiverId and dimension, ignoring the rest", () => {
       const effects: SpeechActiveEffect[] = [
-        makeActiveEffect({ id: "e1", receiverId: "a", dimension: "stress", initialStrength: -0.02 }),
-        makeActiveEffect({ id: "e2", receiverId: "a", dimension: "stress", initialStrength: -0.01 }),
-        makeActiveEffect({ id: "e3", receiverId: "b", dimension: "stress", initialStrength: -0.5 }),
-        makeActiveEffect({ id: "e4", receiverId: "a", dimension: "leaveThreshold", initialStrength: 0.5 }),
+        makeActiveEffect({
+          id: "e1",
+          speechEventId: "speech-e1",
+          speakerId: "speaker-1",
+          receiverId: "a",
+          dimension: "stress",
+          initialStrength: -0.02,
+        }),
+        makeActiveEffect({
+          id: "e2",
+          speechEventId: "speech-e2",
+          speakerId: "speaker-2",
+          receiverId: "a",
+          dimension: "stress",
+          initialStrength: -0.01,
+        }),
+        makeActiveEffect({ id: "e3", speechEventId: "speech-e3", receiverId: "b", dimension: "stress", initialStrength: -0.5 }),
+        makeActiveEffect({ id: "e4", speechEventId: "speech-e4", receiverId: "a", dimension: "leaveThreshold", initialStrength: 0.5 }),
       ];
       // At startedAtTick (10), full initialStrength applies: -0.02 + -0.01 = -0.03
       expect(sumActiveEffectValue(effects, "a", "stress", 10)).toBeCloseTo(-0.03, 10);
@@ -735,8 +754,20 @@ describe("SpeechActiveEffect: decay and application (Issue #96)", () => {
 
     it("for the attractiveness dimension, only sums effects whose targetGroupId matches the given group", () => {
       const effects: SpeechActiveEffect[] = [
-        makeActiveEffect({ id: "e1", dimension: "attractiveness", targetGroupId: "group-1", initialStrength: 0.3 }),
-        makeActiveEffect({ id: "e2", dimension: "attractiveness", targetGroupId: "group-2", initialStrength: 0.4 }),
+        makeActiveEffect({
+          id: "e1",
+          speechEventId: "speech-e1",
+          dimension: "attractiveness",
+          targetGroupId: "group-1",
+          initialStrength: 0.3,
+        }),
+        makeActiveEffect({
+          id: "e2",
+          speechEventId: "speech-e2",
+          dimension: "attractiveness",
+          targetGroupId: "group-2",
+          initialStrength: 0.4,
+        }),
       ];
       expect(sumActiveEffectValue(effects, "a", "attractiveness", 10, "group-1")).toBeCloseTo(0.3, 10);
       expect(sumActiveEffectValue(effects, "a", "attractiveness", 10, "group-2")).toBeCloseTo(0.4, 10);
@@ -754,6 +785,8 @@ describe("SpeechActiveEffect: decay and application (Issue #96)", () => {
       speechEventId: "speech-1",
       interpretationEventId: "interpretation-1",
       receiverId: "a",
+      speakerId: "speaker",
+      intent: "invite" as const,
       reason: "initiativeFormedCore" as const,
       occurredTick: 4,
       appliedTick: 4,
@@ -876,5 +909,195 @@ describe("Issue #96 integration: single speech, single receiver, end-to-end from
     //    dimension/receiverIdのどちらかが一致しなければ加算されないことを明示的に確認する)
     expect(sumActiveEffectValue(activeEffects, "receiver", "stress", active.startedAtTick)).toBe(0);
     expect(sumActiveEffectValue(activeEffects, "someone-else", "approachProbability", active.startedAtTick)).toBe(0);
+  });
+});
+
+describe("aggregateActiveEffects (Issue #97: 複数発言の競合・累積・更新・上限制御)", () => {
+  function makeActive(overrides: Partial<SpeechActiveEffect> = {}): SpeechActiveEffect {
+    return {
+      id: "active-1",
+      speechEffectEventId: "effect-1",
+      speechEventId: "speech-1",
+      speakerId: "speaker-1",
+      intent: "invite",
+      receiverId: "a",
+      dimension: "approachProbability",
+      startedAtTick: 10,
+      expiresAtTick: 20,
+      initialStrength: 0.1,
+      currentStrength: 0.1,
+      decay: "linear",
+      ...overrides,
+    };
+  }
+
+  it("returns value 0 and empty contributions when nothing matches", () => {
+    const result = aggregateActiveEffects([], "a", "stress", 10);
+    expect(result).toMatchObject({ value: 0, rawNetValue: 0 });
+    expect(result.positiveContributions).toEqual([]);
+    expect(result.negativeContributions).toEqual([]);
+    expect(result.duplicateContributions).toEqual([]);
+  });
+
+  it("caps same-direction accumulation at DIMENSION_EFFECT_LIMIT (3x the dimension's base magnitude) instead of summing without bound", () => {
+    // approachProbability base magnitude is 0.25, so the limit is 0.75; three distinct 0.5 contributions
+    // would sum to 1.5 without a cap.
+    const effects = [
+      makeActive({ id: "e1", speechEventId: "speech-1", initialStrength: 0.5 }),
+      makeActive({ id: "e2", speechEventId: "speech-2", initialStrength: 0.5 }),
+      makeActive({ id: "e3", speechEventId: "speech-3", initialStrength: 0.5 }),
+    ];
+    const result = aggregateActiveEffects(effects, "a", "approachProbability", 10);
+    expect(result.positiveContributions).toHaveLength(3);
+    expect(result.value).toBeCloseTo(0.75, 10);
+    expect(result.rawNetValue).toBeCloseTo(0.75, 10);
+  });
+
+  it("caps same-direction negative accumulation symmetrically", () => {
+    // leaveThreshold base magnitude is 0.15, so the limit is 0.45; two distinct -0.5 contributions
+    // would sum to -1.0 without a cap.
+    const effects = [
+      makeActive({ id: "e1", speechEventId: "speech-1", dimension: "leaveThreshold", initialStrength: -0.5 }),
+      makeActive({ id: "e2", speechEventId: "speech-2", dimension: "leaveThreshold", initialStrength: -0.5 }),
+    ];
+    const result = aggregateActiveEffects(effects, "a", "leaveThreshold", 10);
+    expect(result.negativeContributions).toHaveLength(2);
+    expect(result.value).toBeCloseTo(-0.45, 10);
+  });
+
+  it("nets opposite-direction contributions while keeping both sides individually traceable", () => {
+    const effects = [
+      makeActive({ id: "e1", speechEventId: "speech-1", dimension: "stress", initialStrength: 0.05 }),
+      makeActive({ id: "e2", speechEventId: "speech-2", dimension: "stress", initialStrength: -0.07 }),
+    ];
+    const result = aggregateActiveEffects(effects, "a", "stress", 10);
+    expect(result.value).toBeCloseTo(-0.02, 10);
+    expect(result.positiveContributions.map((c) => c.speechEventId)).toEqual(["speech-1"]);
+    expect(result.negativeContributions.map((c) => c.speechEventId)).toEqual(["speech-2"]);
+  });
+
+  it("forbids double-applying the same speechEventId, keeping only the first contribution in stable order", () => {
+    const effects = [
+      makeActive({ id: "dup-b", speechEventId: "speech-dup", startedAtTick: 10, initialStrength: 0.2 }),
+      makeActive({ id: "dup-a", speechEventId: "speech-dup", startedAtTick: 10, initialStrength: 0.4 }),
+    ];
+    const result = aggregateActiveEffects(effects, "a", "approachProbability", 10);
+    // compareActiveEffectOrder ties on (startedAtTick, speechEventId) here, so "dup-a" < "dup-b" by id wins.
+    expect(result.positiveContributions).toHaveLength(1);
+    expect(result.positiveContributions[0].speechActiveEffectId).toBe("dup-a");
+    expect(result.duplicateContributions).toHaveLength(1);
+    expect(result.duplicateContributions[0].speechActiveEffectId).toBe("dup-b");
+    expect(result.value).toBeCloseTo(0.4, 10);
+  });
+
+  it("clamps a single extreme contribution to the dimension's safe range", () => {
+    const effects = [makeActive({ dimension: "attractiveness", targetGroupId: "g1", initialStrength: 100 })];
+    const result = aggregateActiveEffects(effects, "a", "attractiveness", 10, "g1");
+    expect(result.value).toBeCloseTo(1.05, 10); // attractiveness limit: 0.35 * 3
+  });
+
+  it("is independent of the input array's order (reversal invariant)", () => {
+    const effects = [
+      makeActive({ id: "e1", speechEventId: "speech-1", dimension: "stress", initialStrength: 0.02 }),
+      makeActive({ id: "e2", speechEventId: "speech-2", dimension: "stress", initialStrength: -0.03 }),
+      makeActive({ id: "e3", speechEventId: "speech-3", dimension: "stress", initialStrength: 0.04 }),
+      makeActive({ id: "e4", speechEventId: "speech-4", dimension: "stress", initialStrength: -0.01 }),
+    ];
+    const forward = aggregateActiveEffects(effects, "a", "stress", 10);
+    const reversed = aggregateActiveEffects([...effects].reverse(), "a", "stress", 10);
+    expect(reversed).toEqual(forward);
+  });
+});
+
+describe("registerActiveSpeechEffects (Issue #97: 同一話者・同一intentの再発言は置換/更新として扱う)", () => {
+  function makeActive(overrides: Partial<SpeechActiveEffect> = {}): SpeechActiveEffect {
+    return {
+      id: "active-1",
+      speechEffectEventId: "effect-1",
+      speechEventId: "speech-1",
+      speakerId: "speaker-1",
+      intent: "invite",
+      receiverId: "a",
+      dimension: "approachProbability",
+      startedAtTick: 10,
+      expiresAtTick: 20,
+      initialStrength: 0.1,
+      currentStrength: 0.1,
+      decay: "linear",
+      ...overrides,
+    };
+  }
+
+  it("appends a new effect when no existing effect shares receiver+dimension+speaker+intent", () => {
+    const existing = [makeActive({ id: "old", speakerId: "speaker-1" })];
+    const incoming = [makeActive({ id: "new", speakerId: "speaker-2", speechEventId: "speech-2" })];
+    const result = registerActiveSpeechEffects(existing, incoming);
+    expect(result.map((e) => e.id)).toEqual(["old", "new"]);
+  });
+
+  it("replaces (does not stack) an existing effect from the same speaker+intent+receiver+dimension", () => {
+    const existing = [makeActive({ id: "old", initialStrength: 0.1 })];
+    const incoming = [makeActive({ id: "new", speechEventId: "speech-2", initialStrength: 0.2 })];
+    const result = registerActiveSpeechEffects(existing, incoming);
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("new");
+  });
+
+  it("does not replace an effect from a different speaker", () => {
+    const existing = [makeActive({ id: "old", speakerId: "speaker-1" })];
+    const incoming = [makeActive({ id: "new", speakerId: "speaker-2", speechEventId: "speech-2" })];
+    const result = registerActiveSpeechEffects(existing, incoming);
+    expect(result.map((e) => e.id)).toEqual(["old", "new"]);
+  });
+
+  it("does not replace an effect from the same speaker but a different intent", () => {
+    const existing = [makeActive({ id: "old", intent: "invite" })];
+    const incoming = [makeActive({ id: "new", intent: "greet", speechEventId: "speech-2" })];
+    const result = registerActiveSpeechEffects(existing, incoming);
+    expect(result.map((e) => e.id)).toEqual(["old", "new"]);
+  });
+
+  it("for the attractiveness dimension, only replaces when targetGroupId also matches", () => {
+    const existing = [
+      makeActive({ id: "old", dimension: "attractiveness", targetGroupId: "group-1", initialStrength: 0.2 }),
+    ];
+    const differentGroup = [
+      makeActive({
+        id: "new-group",
+        dimension: "attractiveness",
+        targetGroupId: "group-2",
+        speechEventId: "speech-2",
+        initialStrength: 0.3,
+      }),
+    ];
+    const sameGroup = [
+      makeActive({
+        id: "new-same-group",
+        dimension: "attractiveness",
+        targetGroupId: "group-1",
+        speechEventId: "speech-3",
+        initialStrength: 0.4,
+      }),
+    ];
+
+    const afterDifferentGroup = registerActiveSpeechEffects(existing, differentGroup);
+    expect(afterDifferentGroup.map((e) => e.id)).toEqual(["old", "new-group"]);
+
+    const afterSameGroup = registerActiveSpeechEffects(existing, sameGroup);
+    expect(afterSameGroup.map((e) => e.id)).toEqual(["new-same-group"]);
+  });
+
+  it("is independent of the incoming array's order (reversal invariant)", () => {
+    const existing: SpeechActiveEffect[] = [];
+    const incoming = [
+      makeActive({ id: "e1", speakerId: "speaker-1", speechEventId: "speech-1", startedAtTick: 10 }),
+      makeActive({ id: "e2", speakerId: "speaker-2", speechEventId: "speech-2", startedAtTick: 11 }),
+      makeActive({ id: "e3", speakerId: "speaker-3", speechEventId: "speech-3", startedAtTick: 9 }),
+    ];
+    const forward = registerActiveSpeechEffects(existing, incoming);
+    const reversed = registerActiveSpeechEffects(existing, [...incoming].reverse());
+    expect(reversed).toEqual(forward);
+    // Stable order (startedAtTick -> speechEventId -> ...) puts e3 (tick 9) before e1 (tick 10) before e2 (tick 11).
+    expect(forward.map((e) => e.id)).toEqual(["e3", "e1", "e2"]);
   });
 });

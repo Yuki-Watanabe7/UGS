@@ -112,8 +112,9 @@ tick末尾で今回生成された`SpeechEffectEvent`から`deriveSpeechActiveEf
   `agent.stress > agent.leaveThreshold + sumActiveEffectValue(..., "leaveThreshold", tick)`に変更する。
   `agent.leaveThreshold`本体(personality値)は変更しない。
 
-いずれも`sumActiveEffectValue`は該当する`activeEffects`を単純に合計するだけで、
-複数発言由来の効果が重なった場合の優先順位づけ・競合解決は行わない(対応しない範囲、下記5節)。
+いずれも`sumActiveEffectValue`は`aggregateActiveEffects`(Issue #97、
+`docs/speech-effects-aggregation-model.md`)へ委譲しており、複数発言由来の効果が重なった場合の
+上限付き加算・正負のnet化・重複適用の禁止・再発言の置換規則を透過的に適用したうえでの値を返す。
 
 ## 6. 対応した範囲・対応しなかった範囲
 
@@ -135,7 +136,11 @@ tick末尾で今回生成された`SpeechEffectEvent`から`deriveSpeechActiveEf
 
 対応しなかった範囲(意図的に対応しない、issue記載の対応しない範囲そのまま):
 
-- 複数発言の競合・累積規則(同一受け手・同一次元への複数の`SpeechActiveEffect`は単純加算のみ)
+- ~~複数発言の競合・累積規則(同一受け手・同一次元への複数の`SpeechActiveEffect`は単純加算のみ)~~
+
+  > **対応済み(Issue #97)**: `aggregateActiveEffects`/`registerActiveSpeechEffects`が、
+  > 上限付き加算・正負のnet化・重複適用の禁止・再発言の置換規則を決定的に定義する。
+  > 詳細は`docs/speech-effects-aggregation-model.md`参照。
 - 永続的な性格・信頼・関係性更新(`willingness`/`conformity`/`influenceAvoidance`等、および
   `agent.leaveThreshold`本体は不変のまま)
 - 新しい発言intent
@@ -145,6 +150,8 @@ tick末尾で今回生成された`SpeechEffectEvent`から`deriveSpeechActiveEf
 ## 7. 参照
 
 - Issue #96(本文書が対応するissue)、親ロードマップ #61、Depends on: #93, #94, #95
+- `docs/speech-effects-aggregation-model.md`(Issue #97、複数`SpeechActiveEffect`の集約・競合・
+  再発言規則。本文書が「対応しない範囲」としていた領域を引き継ぐ)
 - `docs/speech-effects-phase3-boundary.md`(Issue #93、3段階のイベントモデルの責務境界)
 - `docs/speech-interpretation-model.md`(Issue #95、解釈モデルの詳細)
 - `src/simulation/speechEffects.ts`, `src/simulation/engine.ts`, `src/simulation/types.ts`,
