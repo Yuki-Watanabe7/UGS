@@ -88,6 +88,82 @@ describe("SimulationCanvas thought bubbles", () => {
   });
 });
 
+describe("SimulationCanvas speech bubbles", () => {
+  const baseProps = { groupCandidates: [], width: 800, height: 520 };
+
+  it("renders no speech-bubble markup when speeches is omitted", () => {
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, { ...baseProps, agents: [makeAgent({})] }),
+    );
+    expect(html).not.toContain("speech-bubble");
+  });
+
+  it("renders no speech-bubble markup when speeches is an empty array", () => {
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, { ...baseProps, agents: [makeAgent({})], speeches: [] }),
+    );
+    expect(html).not.toContain("speech-bubble");
+  });
+
+  it("renders a speech bubble anchored near the speaking agent when a speech is provided", () => {
+    const agent = makeAgent({ id: "agent-a", x: 123, y: 200 });
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        ...baseProps,
+        agents: [agent],
+        speeches: [{ agentId: "agent-a", text: "💬もう一軒行く?" }],
+      }),
+    );
+    expect(html).toContain("speech-bubble-box");
+    expect(html).toContain("もう一軒行く?");
+  });
+
+  it("silently skips a speech whose agentId no longer exists in agents", () => {
+    const agent = makeAgent({ id: "agent-a" });
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        ...baseProps,
+        agents: [agent],
+        speeches: [{ agentId: "agent-missing", text: "💬もう一軒行く?" }],
+      }),
+    );
+    expect(html).not.toContain("speech-bubble");
+  });
+
+  it("renders both a thought bubble for one agent and a speech bubble for another simultaneously", () => {
+    const agents = [
+      makeAgent({ id: "agent-a", x: 200, y: 200 }),
+      makeAgent({ id: "agent-b", x: 600, y: 400 }),
+    ];
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        ...baseProps,
+        agents,
+        thoughts: [{ agentId: "agent-a", text: "様子を見よう" }],
+        speeches: [{ agentId: "agent-b", text: "💬もう一軒行く?" }],
+      }),
+    );
+    expect(html).toContain("thought-bubble-box");
+    expect(html).toContain("speech-bubble-box");
+  });
+
+  it("suppresses the thought bubble for an agent that also has an active speech bubble (speech takes priority)", () => {
+    const agent = makeAgent({ id: "agent-a", x: 300, y: 260 });
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        ...baseProps,
+        agents: [agent],
+        thoughts: [{ agentId: "agent-a", text: "様子を見よう" }],
+        speeches: [{ agentId: "agent-a", text: "💬もう一軒行く?" }],
+      }),
+    );
+    expect(html).toContain("speech-bubble-box");
+    expect(html).not.toContain("thought-bubble-box");
+    expect(html).toContain("もう一軒行く?");
+    expect(html).not.toContain("様子を見よう");
+  });
+});
+
 describe("SimulationCanvas responsive rendering", () => {
   const baseProps = { groupCandidates: [], width: 800, height: 520 };
 
