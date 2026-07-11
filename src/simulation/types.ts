@@ -3,7 +3,9 @@ import type { SpeechEvent } from "./speech";
 import type {
   AggregatedActiveEffect,
   SpeechActiveEffect,
+  SpeechEffectDimension,
   SpeechEffectEvent,
+  SpeechEffectsConfig,
   SpeechInterpretationEvent,
   SpeechReceptionEvent,
 } from "./speechEffects";
@@ -376,6 +378,11 @@ export type MonteCarloRunOptions = {
   maxTicks?: number;
   /** 単発実行/Monte Carloの各runに適用する介入シナリオ。省略時は介入なし */
   intervention?: InterventionRuntimeOptions;
+  /**
+   * 単発実行/Monte Carloの各runに適用するPhase 3発言効果設定(Issue #99)。省略時は無効
+   * (`resolveSpeechEffectsConfig`の既定値、既存呼び出し元との後方互換のため)。
+   */
+  speechEffects?: Partial<SpeechEffectsConfig>;
 };
 
 /** Monte Carlo実行全体の設定。`runs`回、`baseSeed + index`をseedとして実行する */
@@ -386,6 +393,12 @@ export type MonteCarloConfig = {
   maxTicks?: number;
   /** 全runに共通で適用する介入シナリオ。省略時は介入なし(単発実行と同じ介入設定を使うことを想定) */
   intervention?: InterventionRuntimeOptions;
+  /**
+   * 全runに共通で適用するPhase 3発言効果設定(Issue #99)。省略時は無効。
+   * `compareSpeechEffects`(`speechEffectsMonteCarlo.ts`)はこの値を無視し、常にoff/on両方を実行する
+   * (`compareMonteCarloIntervention`がbaseline側で`config.intervention`を無視するのと同じ設計)。
+   */
+  speechEffects?: Partial<SpeechEffectsConfig>;
 };
 
 /** 単一seed分のMonte Carlo実行結果 */
@@ -449,5 +462,98 @@ export type MonteCarloComparisonResult = {
     lateJoinSuccessRate: MonteCarloMetricDelta;
     averageJoinedCount: MonteCarloMetricDelta;
     averageLeftCount: MonteCarloMetricDelta;
+  };
+};
+
+/**
+ * Issue #99: 単一run分の、Phase 3(発言効果)固有の観察指標。`buildSpeechEffectsRunSummary`
+ * (`summary.ts`)が`SimulationState`(`speechReceptionLog`/`speechInterpretationLog`/
+ * `speechEffectLog`/`log`/`agents`)から導出する。既存の`SimulationSummary`とは独立した集計軸であり、
+ * どちらか一方の型を拡張せず並立させることで、「介入あり/なし比較」と「発言効果ON/OFF比較」を
+ * 型レベルで混同しないようにする(受入条件)。
+ */
+export type SpeechEffectsRunSummary = {
+  /** このrunでobserverJoinerが1件以上の発言を認知(`SpeechReceptionEvent.heard === true`)したか */
+  observerJoinerHeardSpeech: boolean;
+  /**
+   * このrunで、中立でない解釈(`SpeechInterpretationEvent.valence !== "neutral"`)、または
+   * `SpeechEffectEvent`が1件以上発生したか
+   */
+  hadInterpretationOrEffect: boolean;
+  /**
+   * dimension別の累積補正(このrunで発生した`SpeechEffectEvent.outputValue`の絶対値の合計)。
+   * 発言効果が一度も発生しなければ全dimension 0。
+   */
+  dimensionTotals: Record<SpeechEffectDimension, number>;
+  /**
+   * 発言効果が何らかの状態遷移に寄与したとみなせるrunか。`approachProbability`→`observerApproached`、
+   * `attractiveness`→`observerJoinedForming`/`observerJoinedConfirmed`、`leaveThreshold`→
+   * `observerLeaveStarted`の対応で、同一`receiverId`(=`LogEntry.metadata.agentId`)について
+   * `SpeechEffectEvent`の有効期間(`appliedTick`〜`appliedTick + durationTicks`)内に該当する
+   * 構造化ログイベントが存在するかで判定するヒューリスティックであり、厳密な反実仮想検証ではない
+   * (`stress`は蓄積率の緩和が「離脱しなかった」という非イベントにしか現れず対応する離散イベントを
+   * 持たないため、この判定の対象外。詳細は`docs/speech-effects-paired-monte-carlo.md`参照)。
+   */
+  transitionInfluenced: boolean;
+};
+
+/** 複数run分のPhase 3固有指標の集計値 */
+export type SpeechEffectsMonteCarloSummary = {
+  runs: number;
+  observerJoinerHeardSpeechRate: number;
+  interpretationOrEffectRate: number;
+  averageDimensionTotals: Record<SpeechEffectDimension, number>;
+  transitionInfluencedRate: number;
+};
+
+/**
+ * Issue #99: 発言効果ON/OFF paired比較の実行設定。既存の`MonteCarloConfig`(介入あり/なし比較用)とは
+ * 独立した型であり、意図せず混同されないようにする。`compareSpeechEffects`は、この設定のまま
+ * `speechEffects.enabled`だけをfalse/trueに切り替えてoff/on両方を実行する
+ * (preset由来`params`・`intervention`・`baseSeed`・`runs`・`maxTicks`は固定)。
+ */
+export type SpeechEffectsMonteCarloConfig = {
+  baseSeed: number;
+  runs: number;
+  params: SimParams;
+  maxTicks?: number;
+  intervention?: InterventionRuntimeOptions;
+};
+
+/** `compareSpeechEffects`が内部でoff/onそれぞれについて実行する単一条件分の結果一式 */
+export type SpeechEffectsMonteCarloResult = {
+  config: SpeechEffectsMonteCarloConfig;
+  runs: MonteCarloRunResult[];
+  summary: MonteCarloSummary;
+  /** `runs`と同じ順序・同じ長さ(seedで1:1対応)のPhase 3固有run結果 */
+  speechEffectsRuns: SpeechEffectsRunSummary[];
+  speechEffectsSummary: SpeechEffectsMonteCarloSummary;
+};
+
+/**
+ * `compareSpeechEffects`の戻り値。既存の`MonteCarloComparisonResult`(`baseline`/`intervention`)とは
+ * フィールド名も型も分離し、「発言効果OFF」「発言効果ON」であることを`off`/`on`という名前で明示する
+ * (受入条件: 既存介入比較と名称・型を混同しない)。
+ */
+export type SpeechEffectsComparisonResult = {
+  off: SpeechEffectsMonteCarloResult;
+  on: SpeechEffectsMonteCarloResult;
+  /** off/on共通のseed列(`baseSeed`〜`baseSeed + runs - 1`)。run iがseedで対応することの明示 */
+  pairedSeeds: number[];
+  metrics: {
+    observerJoinerJoinRate: MonteCarloMetricDelta;
+    observerJoinerLeaveRate: MonteCarloMetricDelta;
+    groupFailureRate: MonteCarloMetricDelta;
+    averageFirstGroupConfirmedTick: MonteCarloMetricDelta<number | undefined>;
+    lateJoinSuccessRate: MonteCarloMetricDelta;
+    averageJoinedCount: MonteCarloMetricDelta;
+    averageLeftCount: MonteCarloMetricDelta;
+  };
+  /** Phase 3固有指標のoff/on/delta。`metrics`とは別に保持し、既存指標との混同を避ける */
+  phase3Metrics: {
+    observerJoinerHeardSpeechRate: MonteCarloMetricDelta;
+    interpretationOrEffectRate: MonteCarloMetricDelta;
+    transitionInfluencedRate: MonteCarloMetricDelta;
+    dimensionTotals: Record<SpeechEffectDimension, MonteCarloMetricDelta>;
   };
 };
