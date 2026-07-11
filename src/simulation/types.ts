@@ -195,6 +195,23 @@ export type SimulationState = {
 };
 
 /**
+ * observerJoinerと`SpeechEvent`との関わり方。1件のSpeechEventにつき最も強い関係を1つだけ持つ
+ * (speaker > target > audienceの優先順で判定。話者と対象/audienceが同一tickで重なることはない)。
+ * - "speaker": 自分がその発言の話者
+ * - "target": 自分がその発言の明示的なtarget
+ * - "audience": `audience === "nearby"`の発言。Phase 2時点では発言時点の実座標近接判定を
+ *   保持していないため、"nearby"な発言はobserverJoinerを含む全エージェントにとって
+ *   audience対象とみなす簡略化を採る(inspection.ts参照)。
+ */
+export type SpeechRelation = "speaker" | "target" | "audience";
+
+/** observerJoiner Inspector向けに、関連する発言1件と、その関わり方をひも付けたもの */
+export type ObserverSpeechHistoryEntry = {
+  event: SpeechEvent;
+  relation: SpeechRelation;
+};
+
+/**
  * observerJoiner一人分の観察用データ。UI(inspector表示)から安全に参照できるよう、
  * engine.ts内部のロジック結果を読み取り専用の形にまとめたもの。
  * 最寄りの合流可能な輪(joinableなGroupCandidate)が存在しない場合、
@@ -216,6 +233,8 @@ export type ObserverJoinerInspection = {
   nearestGroupMemberCount?: number;
   nearestGroupDistance?: number;
   attractivenessScore?: number;
+  /** このobserverJoinerが話者/target/audienceのいずれかとして関わった発言の履歴。tick順 */
+  speechHistory: ObserverSpeechHistoryEntry[];
 };
 
 /**

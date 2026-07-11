@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildObserverJoinerInspection } from "./inspection";
 import { attractiveness } from "./engine";
+import { createSpeechEvent } from "./speech";
 import { DEFAULT_PARAMS } from "./presets";
 import type { Agent, GroupCandidate, SimulationState } from "./types";
 
@@ -176,5 +177,101 @@ describe("buildObserverJoinerInspection", () => {
     const inspections = buildObserverJoinerInspection(state, DEFAULT_PARAMS);
 
     expect(inspections.map((i) => i.agentId)).toEqual(["observer-a", "observer-b"]);
+  });
+
+  it("returns an empty speechHistory when speechLog is absent or empty", () => {
+    const observer = makeAgent({ id: "observer", isObserverJoiner: true });
+    const state = makeState({ agents: [observer] });
+
+    const [inspection] = buildObserverJoinerInspection(state, DEFAULT_PARAMS);
+
+    expect(inspection.speechHistory).toEqual([]);
+  });
+
+  it("classifies a speech event where the observerJoiner is the speaker", () => {
+    const observer = makeAgent({ id: "observer", isObserverJoiner: true });
+    const event = createSpeechEvent({
+      tick: 3,
+      speakerId: "observer",
+      intent: "greet",
+      reason: "joinGreeting",
+      audience: "nearby",
+    });
+    const state = makeState({ agents: [observer], speechLog: [event] });
+
+    const [inspection] = buildObserverJoinerInspection(state, DEFAULT_PARAMS);
+
+    expect(inspection.speechHistory).toEqual([{ event, relation: "speaker" }]);
+  });
+
+  it("classifies a speech event where the observerJoiner is the explicit target", () => {
+    const observer = makeAgent({ id: "observer", isObserverJoiner: true });
+    const event = createSpeechEvent({
+      tick: 5,
+      speakerId: "helper",
+      intent: "invite",
+      reason: "lightObserverInvitation",
+      target: "observer",
+    });
+    const state = makeState({ agents: [observer], speechLog: [event] });
+
+    const [inspection] = buildObserverJoinerInspection(state, DEFAULT_PARAMS);
+
+    expect(inspection.speechHistory).toEqual([{ event, relation: "target" }]);
+  });
+
+  it("classifies a nearby-audience speech event from an unrelated agent as 'audience'", () => {
+    const observer = makeAgent({ id: "observer", isObserverJoiner: true });
+    const event = createSpeechEvent({
+      tick: 7,
+      speakerId: "founder",
+      intent: "invite",
+      reason: "formingGroupRecruitment",
+      audience: "nearby",
+    });
+    const state = makeState({ agents: [observer], speechLog: [event] });
+
+    const [inspection] = buildObserverJoinerInspection(state, DEFAULT_PARAMS);
+
+    expect(inspection.speechHistory).toEqual([{ event, relation: "audience" }]);
+  });
+
+  it("excludes speech events that neither name nor broadcast to the observerJoiner", () => {
+    const observer = makeAgent({ id: "observer", isObserverJoiner: true });
+    const event = createSpeechEvent({
+      tick: 9,
+      speakerId: "helper",
+      intent: "invite",
+      reason: "lightObserverInvitation",
+      target: "someone-else",
+    });
+    const state = makeState({ agents: [observer], speechLog: [event] });
+
+    const [inspection] = buildObserverJoinerInspection(state, DEFAULT_PARAMS);
+
+    expect(inspection.speechHistory).toEqual([]);
+  });
+
+  it("preserves speechLog tick order in speechHistory", () => {
+    const observer = makeAgent({ id: "observer", isObserverJoiner: true });
+    const first = createSpeechEvent({
+      tick: 2,
+      speakerId: "observer",
+      intent: "invite",
+      reason: "initiativeFormedCore",
+      audience: "nearby",
+    });
+    const second = createSpeechEvent({
+      tick: 6,
+      speakerId: "helper",
+      intent: "invite",
+      reason: "lightObserverInvitation",
+      target: "observer",
+    });
+    const state = makeState({ agents: [observer], speechLog: [first, second] });
+
+    const [inspection] = buildObserverJoinerInspection(state, DEFAULT_PARAMS);
+
+    expect(inspection.speechHistory.map((h) => h.event.id)).toEqual([first.id, second.id]);
   });
 });

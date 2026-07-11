@@ -1,9 +1,24 @@
 import { buildObserverJoinerInspection } from "../simulation/inspection";
-import type { AgentState, GroupCandidateStatus, ObserverJoinerInspection, SimParams, SimulationState } from "../simulation/types";
+import type {
+  AgentState,
+  GroupCandidateStatus,
+  ObserverJoinerInspection,
+  ObserverSpeechHistoryEntry,
+  SimParams,
+  SimulationState,
+  SpeechRelation,
+} from "../simulation/types";
+import { buildAgentLabelMap, formatSpeechDebugMeta, formatSpeechLogMessage } from "./speechDisplay";
 
 type Props = {
   state: SimulationState;
   params: SimParams;
+};
+
+const SPEECH_RELATION_LABEL: Record<SpeechRelation, string> = {
+  speaker: "話者",
+  target: "対象",
+  audience: "周囲",
 };
 
 const AGENT_STATE_LABEL: Record<AgentState, string> = {
@@ -34,7 +49,31 @@ function formatDistance(value: number): string {
   return value.toFixed(1);
 }
 
-function InspectionCard({ inspection }: { inspection: ObserverJoinerInspection }) {
+function SpeechHistoryEntry({
+  entry,
+  labelById,
+}: {
+  entry: ObserverSpeechHistoryEntry;
+  labelById: Map<string, string>;
+}) {
+  return (
+    <div className="observer-inspector-speech-entry">
+      <div className="observer-inspector-speech-message">
+        <span className="observer-inspector-speech-relation">{SPEECH_RELATION_LABEL[entry.relation]}</span>
+        {formatSpeechLogMessage(entry.event, labelById)}
+      </div>
+      <div className="observer-inspector-speech-meta">{formatSpeechDebugMeta(entry.event, labelById)}</div>
+    </div>
+  );
+}
+
+function InspectionCard({
+  inspection,
+  labelById,
+}: {
+  inspection: ObserverJoinerInspection;
+  labelById: Map<string, string>;
+}) {
   const isNearLeaving = inspection.leaveMargin <= LEAVE_MARGIN_WARNING_THRESHOLD;
   const hasNearestGroup = inspection.nearestGroupId !== undefined;
 
@@ -104,12 +143,28 @@ function InspectionCard({ inspection }: { inspection: ObserverJoinerInspection }
           <span>なし</span>
         </div>
       )}
+
+      <div className="observer-inspector-divider" />
+
+      <div className="observer-inspector-row observer-inspector-row--header">
+        <span>関連する発言</span>
+      </div>
+      {inspection.speechHistory.length === 0 ? (
+        <p className="observer-inspector-speech-empty">まだ関連する発言はありません。</p>
+      ) : (
+        <div className="observer-inspector-speech-list">
+          {inspection.speechHistory.map((entry) => (
+            <SpeechHistoryEntry key={entry.event.id} entry={entry} labelById={labelById} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
 export function ObserverJoinerInspector({ state, params }: Props) {
   const inspections = buildObserverJoinerInspection(state, params);
+  const labelById = buildAgentLabelMap(state.agents);
 
   return (
     <div className="panel observer-inspector">
@@ -117,7 +172,9 @@ export function ObserverJoinerInspector({ state, params }: Props) {
       {inspections.length === 0 ? (
         <p className="observer-inspector-empty">observerJoinerがいません。</p>
       ) : (
-        inspections.map((inspection) => <InspectionCard key={inspection.agentId} inspection={inspection} />)
+        inspections.map((inspection) => (
+          <InspectionCard key={inspection.agentId} inspection={inspection} labelById={labelById} />
+        ))
       )}
     </div>
   );

@@ -24,6 +24,7 @@ import {
 } from "./interventions";
 import { SeededRandom } from "./random";
 import { WORLD_WIDTH, WORLD_HEIGHT, clamp, distance, createInitialAgents } from "./model";
+import { formatTick } from "./time";
 
 const APPROACH_SPEED = 14;
 const WANDER_SPEED = 0.5;
@@ -88,7 +89,7 @@ export function createInitialState(
   if (scenario.id !== "none") {
     log.push({
       tick: 0,
-      message: `${fmtTick(0)} 介入シナリオ「${scenario.name}」が適用された`,
+      message: `${formatTick(0)} 介入シナリオ「${scenario.name}」が適用された`,
       tags: ["intervention"],
       eventType: "interventionApplied",
       metadata: { interventionId: scenario.id },
@@ -148,13 +149,6 @@ export function createInitialState(
   };
 }
 
-function fmtTick(tick: number): string {
-  const totalSeconds = tick * 3;
-  const mm = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
-  const ss = String(totalSeconds % 60).padStart(2, "0");
-  return `${mm}:${ss}`;
-}
-
 function pushLog(
   log: LogEntry[],
   tick: number,
@@ -163,7 +157,7 @@ function pushLog(
   eventType?: SimulationEventType,
   metadata?: SimulationEventMetadata,
 ): void {
-  log.push({ tick, message: `${fmtTick(tick)} ${message}`, tags, eventType, metadata });
+  log.push({ tick, message: `${formatTick(tick)} ${message}`, tags, eventType, metadata });
 }
 
 /** candidate.memberIdsへの追加は必ずこの関数を通し、同一agentの重複登録を防ぐ */

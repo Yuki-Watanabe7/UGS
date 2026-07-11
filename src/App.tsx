@@ -214,7 +214,7 @@ function App() {
         <aside className="sidebar-right">
           <ObserverJoinerInspector state={simState} params={params} />
           <SimulationSummaryPanel state={simState} />
-          <EventLog log={simState.log} />
+          <EventLog state={simState} />
         </aside>
       </main>
     </div>
