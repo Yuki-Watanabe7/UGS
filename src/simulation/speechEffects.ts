@@ -48,10 +48,14 @@ import { clamp } from "./model";
  *   (詳細は`docs/speech-interpretation-model.md`参照)
  *
  * Issue #96(発言効果の持続・減衰付き適用、`deriveSpeechActiveEffects`/`engine.ts`)の対応しない範囲:
- * - 複数発言の競合・累積規則(同一受け手・同一次元への複数の`SpeechActiveEffect`は単純加算のみ)
  * - 永続的な性格・信頼・関係性更新(`willingness`/`conformity`/`influenceAvoidance`等は不変のまま)
  * - 新しい発言intent、UI可視化、Monte Carlo比較
  *   (詳細は`docs/speech-effects-application-model.md`参照)
+ *
+ * Issue #97(複数発言の競合・累積・更新・上限制御、`aggregateActiveEffects`/`registerActiveSpeechEffects`)
+ * が対応した範囲: 同一受け手・同一次元(・attractivenessなら同一targetGroupId)への複数`SpeechActiveEffect`の
+ * 決定的な集約規則。詳細は`docs/speech-effects-aggregation-model.md`参照。対応しなかった範囲:
+ * - 会話ターン・返答生成、信頼・評判の永続更新、新規intentテンプレート、UI表示・Monte Carlo比較
  */
 
 /** Phase 3効果の生成有無を切り替える設定境界。既存の`SimParams`/`InterventionRuntimeOptions`とは独立 */
@@ -178,6 +182,9 @@ export type SpeechEffectEvent = {
   speechEventId: string;
   interpretationEventId: string;
   receiverId: string;
+  /** 発言主体。Issue #97: 同一話者・同一intentの再発言を`registerActiveSpeechEffects`が判定するために保持する */
+  speakerId: string;
+  intent: SpeechIntent;
   reason: SpeechReason;
   occurredTick: number;
   appliedTick: number;
@@ -507,6 +514,8 @@ export function deriveSpeechEffects(
       speechEventId: interpretation.speechEventId,
       interpretationEventId: interpretation.id,
       receiverId: interpretation.receiverId,
+      speakerId: speech.speakerId,
+      intent: speech.intent,
       reason: speech.reason,
       occurredTick: interpretation.tick,
       appliedTick: interpretation.tick,
@@ -535,6 +544,11 @@ export type SpeechEffectDecayMethod = "linear";
 export type SpeechActiveEffect = {
   id: string;
   speechEffectEventId: string;
+  /** 生成元の`SpeechEvent.id`。Issue #97: 同一発言による重複適用の検出、集約結果からの遡及に使う */
+  speechEventId: string;
+  /** 発言主体。Issue #97: `registerActiveSpeechEffects`が同一話者・同一intentの再発言を判定するために使う */
+  speakerId: string;
+  intent: SpeechIntent;
   receiverId: string;
   dimension: SpeechEffectDimension;
   /** dimension === "attractiveness"のときのみ設定される、作用対象のGroupCandidate.id(受け手のjoinedGroupIdの登録時点スナップショット) */
@@ -575,9 +589,157 @@ export function advanceActiveSpeechEffects(effects: SpeechActiveEffect[], tick: 
 }
 
 /**
+ * Issue #97: `receiverId`・`dimension`(・attractivenessの場合は`targetGroupId`)が一致する
+ * `activeEffects`1件分の寄与(`ActiveEffectContribution`、`tick`時点の減衰後の符号付き値)。
+ * `aggregateActiveEffects`の`positiveContributions`/`negativeContributions`/`duplicateContributions`の要素型。
+ */
+export type ActiveEffectContribution = {
+  speechActiveEffectId: string;
+  speechEffectEventId: string;
+  speechEventId: string;
+  speakerId: string;
+  intent: SpeechIntent;
+  /** `tick`時点の減衰後の符号付き値(dimensionごとの上限clamp前) */
+  value: number;
+};
+
+/**
+ * `aggregateActiveEffects`1回分の集約結果。`value`が実際にengine.tsの計算式へ加算されるべき
+ * 最終値(上限・下限へclamp済み)で、寄与した各`SpeechActiveEffect`(→`speechEffectEventId`→
+ * `speechEventId`)は正負・重複それぞれの内訳として保持される(受入条件:
+ * 「集約後の値と、寄与した各speechEventId・個別寄与を保持する」)。
+ */
+export type AggregatedActiveEffect = {
+  receiverId: string;
+  dimension: SpeechEffectDimension;
+  targetGroupId?: string;
+  tick: number;
+  /** 最終的にengine.tsの計算式へ加算される、dimensionごとの安全範囲へclamp済みの値 */
+  value: number;
+  /** 正方向寄与(上限clamp後)・負方向寄与(下限clamp後)をnetした値。`value`と一致するのが通常だが、
+   * 意図を明示するため`value`とは別に保持する(下記`DIMENSION_EFFECT_LIMIT`参照) */
+  rawNetValue: number;
+  positiveContributions: ActiveEffectContribution[];
+  negativeContributions: ActiveEffectContribution[];
+  /** 同一`speechEventId`から2件目以降の寄与(受入条件「同じ発言の重複適用を禁止」により集約対象外) */
+  duplicateContributions: ActiveEffectContribution[];
+};
+
+/**
+ * `aggregateActiveEffects`/`registerActiveSpeechEffects`が使う安定した処理順序
+ * (受入条件: 「同一tick内の処理順を tick -> speechEventId -> receiverId -> effectDimension 等の
+ * 安定順序へ固定する」)。`startedAtTick`をtickの代わりに使う(`SpeechActiveEffect`自体はtick非依存の
+ * オブジェクトのため、生成されたtick=`startedAtTick`を順序キーとする)。入力配列の並び順に依存せず、
+ * 常に同じ結果になることを保証する(配列反転invariantテストの対象)。
+ */
+function compareActiveEffectOrder(a: SpeechActiveEffect, b: SpeechActiveEffect): number {
+  if (a.startedAtTick !== b.startedAtTick) return a.startedAtTick - b.startedAtTick;
+  if (a.speechEventId !== b.speechEventId) return a.speechEventId < b.speechEventId ? -1 : 1;
+  if (a.receiverId !== b.receiverId) return a.receiverId < b.receiverId ? -1 : 1;
+  if (a.dimension !== b.dimension) return a.dimension < b.dimension ? -1 : 1;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+/**
+ * dimensionごとの安全な最小値・最大値(受入条件: 「次元ごとに安全な最小値・最大値を定義し、stressや
+ * 確率を有効範囲へclampする」)。`DIMENSION_UNIT[dimension].magnitude`(単一の全力発言1件分の基礎強度)の
+ * 3倍を上限とする — 「同方向の発言が3件分までは効果が積み上がるが、そこで頭打ちになる」という
+ * 上限付き加算(受入条件: 「上限付き加算、または逓減合成」のうち上限付き加算を選択)を、正負それぞれの
+ * 方向に独立して適用する。同じ値を最終netValueのclamp範囲としても再利用する(下記`aggregateActiveEffects`
+ * 参照。正負を独立してこの範囲へclampしてからnetするため、結果として最終clampは数学的には冗長だが、
+ * 将来positive/negativeの上限ロジックが変わっても安全範囲が保たれるようにする防御的な二重チェックとして残す)。
+ */
+const DIMENSION_ACCUMULATION_MULTIPLIER = 3;
+const DIMENSION_EFFECT_LIMIT: Record<SpeechEffectDimension, number> = {
+  stress: DIMENSION_UNIT.stress.magnitude * DIMENSION_ACCUMULATION_MULTIPLIER,
+  attractiveness: DIMENSION_UNIT.attractiveness.magnitude * DIMENSION_ACCUMULATION_MULTIPLIER,
+  approachProbability: DIMENSION_UNIT.approachProbability.magnitude * DIMENSION_ACCUMULATION_MULTIPLIER,
+  leaveThreshold: DIMENSION_UNIT.leaveThreshold.magnitude * DIMENSION_ACCUMULATION_MULTIPLIER,
+};
+
+function sumContributionValues(contributions: ActiveEffectContribution[]): number {
+  return contributions.reduce((total, contribution) => total + contribution.value, 0);
+}
+
+/**
+ * Issue #97: `receiverId`・`dimension`(・attractivenessの場合は`targetGroupId`)が一致する
+ * `activeEffects`を、入力配列の並び順に依存しない決定的な規則で1つの値へ集約する純粋関数。
+ *
+ * 規則(受入条件に対応):
+ * 1. `compareActiveEffectOrder`で安定した順序に並べ替えてから処理する(配列順反転で結果が変わらない)。
+ * 2. 同一`speechEventId`が複数の一致effectを生成していた場合、順序上最初の1件のみを寄与として数え、
+ *    以降は`duplicateContributions`へ回す(同じ発言の重複適用の禁止)。
+ * 3. 正方向の寄与(`value > 0`)と負方向の寄与(`value < 0`)に分け、それぞれを合計してから
+ *    `DIMENSION_EFFECT_LIMIT[dimension]`で独立にclampする(同方向効果の上限付き加算)。
+ * 4. 正負2つのclamp済み合計をnet化する(反対方向効果の競合規則: 正負をnet化する。両方の寄与元は
+ *    `positiveContributions`/`negativeContributions`にそのまま残るため、因果追跡は失われない)。
+ * 5. 最後にもう一度`DIMENSION_EFFECT_LIMIT[dimension]`へclampして`value`とする(dimensionの安全範囲)。
+ *
+ * target/nearby(audience)の優先度・明示対象への重みは、この集約より前の段階
+ * (`deriveSpeechInterpretations`の`relationFactor`: target=1.0, audience(nearby)=0.7)で
+ * 固定済みであり、ここでは追加の重み付けを行わない(二重適用を避けるため)。
+ */
+export function aggregateActiveEffects(
+  activeEffects: SpeechActiveEffect[],
+  receiverId: string,
+  dimension: SpeechEffectDimension,
+  tick: number,
+  targetGroupId?: string,
+): AggregatedActiveEffect {
+  const matching = activeEffects.filter((effect) => {
+    if (effect.receiverId !== receiverId || effect.dimension !== dimension) return false;
+    if (dimension === "attractiveness" && effect.targetGroupId !== targetGroupId) return false;
+    return true;
+  });
+  const ordered = [...matching].sort(compareActiveEffectOrder);
+
+  const seenSpeechEventIds = new Set<string>();
+  const positiveContributions: ActiveEffectContribution[] = [];
+  const negativeContributions: ActiveEffectContribution[] = [];
+  const duplicateContributions: ActiveEffectContribution[] = [];
+
+  for (const effect of ordered) {
+    const contribution: ActiveEffectContribution = {
+      speechActiveEffectId: effect.id,
+      speechEffectEventId: effect.speechEffectEventId,
+      speechEventId: effect.speechEventId,
+      speakerId: effect.speakerId,
+      intent: effect.intent,
+      value: activeEffectStrengthAtTick(effect, tick),
+    };
+    if (seenSpeechEventIds.has(effect.speechEventId)) {
+      duplicateContributions.push(contribution);
+      continue;
+    }
+    seenSpeechEventIds.add(effect.speechEventId);
+    if (contribution.value > 0) positiveContributions.push(contribution);
+    else if (contribution.value < 0) negativeContributions.push(contribution);
+  }
+
+  const limit = DIMENSION_EFFECT_LIMIT[dimension];
+  const positiveSum = clamp(sumContributionValues(positiveContributions), 0, limit);
+  const negativeSum = clamp(sumContributionValues(negativeContributions), -limit, 0);
+  const rawNetValue = positiveSum + negativeSum;
+  const value = clamp(rawNetValue, -limit, limit);
+
+  return {
+    receiverId,
+    dimension,
+    targetGroupId,
+    tick,
+    value,
+    rawNetValue,
+    positiveContributions,
+    negativeContributions,
+    duplicateContributions,
+  };
+}
+
+/**
  * `receiverId`・`dimension`(・attractivenessの場合は`targetGroupId`)が一致する`activeEffects`の
- * `tick`時点の強度を単純合計する。複数発言由来の効果が同時に有効な場合の競合・優先順位づけは
- * 対応しない範囲(Issue #96の対応しない範囲: 複数発言の競合・累積規則)であり、単純な加算のみを行う。
+ * `tick`時点の集約値(`aggregateActiveEffects(...).value`)を返す。`engine.ts`の4箇所の呼び出し元
+ * (`attractiveness()`・接近確率・stress蓄積率・leave判定の実効しきい値)はこの関数を通して
+ * Issue #97の集約規則(上限付き加算・正負net化・重複排除・安全範囲clamp)を透過的に受け取る。
  */
 export function sumActiveEffectValue(
   activeEffects: SpeechActiveEffect[],
@@ -586,13 +748,7 @@ export function sumActiveEffectValue(
   tick: number,
   targetGroupId?: string,
 ): number {
-  let total = 0;
-  for (const effect of activeEffects) {
-    if (effect.receiverId !== receiverId || effect.dimension !== dimension) continue;
-    if (dimension === "attractiveness" && effect.targetGroupId !== targetGroupId) continue;
-    total += activeEffectStrengthAtTick(effect, tick);
-  }
-  return total;
+  return aggregateActiveEffects(activeEffects, receiverId, dimension, tick, targetGroupId).value;
 }
 
 /**
@@ -617,6 +773,9 @@ export function deriveSpeechActiveEffects(
     active.push({
       id: `active-${effect.id}`,
       speechEffectEventId: effect.id,
+      speechEventId: effect.speechEventId,
+      speakerId: effect.speakerId,
+      intent: effect.intent,
       receiverId: effect.receiverId,
       dimension: effect.dimension,
       targetGroupId,
@@ -628,4 +787,43 @@ export function deriveSpeechActiveEffects(
     });
   }
   return active;
+}
+
+/** `registerActiveSpeechEffects`が「同一の再発言」とみなす一致条件(受入条件: 再発言の置換/更新/cooldownの明示) */
+function isSameReplacementGroup(a: SpeechActiveEffect, b: SpeechActiveEffect): boolean {
+  return (
+    a.receiverId === b.receiverId &&
+    a.dimension === b.dimension &&
+    a.speakerId === b.speakerId &&
+    a.intent === b.intent &&
+    (a.dimension !== "attractiveness" || a.targetGroupId === b.targetGroupId)
+  );
+}
+
+/**
+ * Issue #97: 前tickまでに登録済みの`existing`(`advanceActiveSpeechEffects`で減衰・期限切れ破棄済み)と、
+ * このtickで新たに生成された`incoming`(`deriveSpeechActiveEffects`の出力)を、次tickへ引き継ぐ
+ * `SimulationState.activeSpeechEffects`へ合成する純粋関数。単純な配列結合ではなく、
+ * 「同一話者・同一intentの再発言」を**置換(更新/refresh)**として扱う(受入条件が求める
+ * 置換/更新/cooldownのいずれかの明示的選択): `incoming`の各効果について、`existing`(および
+ * `incoming`内でこれより先に処理された効果)の中に`isSameReplacementGroup`が真になるものがあれば、
+ * それを取り除いてから新しい効果を追加する。これにより、同じ話者が同じintentの発言を繰り返しても
+ * 効果が際限なく積み上がらず、常に最新の発言の強度・持続期間で上書きされる
+ * (`aggregateActiveEffects`の上限付き加算は、話者/intentが異なる複数発言が同時に効いている場合の
+ * 積み上がりに対する規則であり、この置換規則とは独立に働く)。
+ *
+ * `incoming`は`compareActiveEffectOrder`(tick -> speechEventId -> receiverId -> dimension)で
+ * 安定した順序に並べ替えてから処理するため、`incoming`の入力配列順序を反転しても結果は変わらない。
+ */
+export function registerActiveSpeechEffects(
+  existing: SpeechActiveEffect[],
+  incoming: SpeechActiveEffect[],
+): SpeechActiveEffect[] {
+  const orderedIncoming = [...incoming].sort(compareActiveEffectOrder);
+  let result = existing;
+  for (const next of orderedIncoming) {
+    result = result.filter((effect) => !isSameReplacementGroup(effect, next));
+    result = [...result, next];
+  }
+  return result;
 }

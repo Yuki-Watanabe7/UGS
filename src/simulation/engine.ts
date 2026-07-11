@@ -18,6 +18,7 @@ import {
   deriveSpeechEffects,
   deriveSpeechInterpretations,
   deriveSpeechReceptions,
+  registerActiveSpeechEffects,
   resolveSpeechEffectsConfig,
   sumActiveEffectValue,
 } from "./speechEffects";
@@ -815,6 +816,8 @@ export function stepSimulation(
     speechInterpretationLog: [...(state.speechInterpretationLog ?? []), ...tickInterpretations],
     speechEffectLog: [...(state.speechEffectLog ?? []), ...tickEffects],
     speechEffectsEnabled: speechEffectsConfig.enabled,
-    activeSpeechEffects: [...activeEffects, ...tickActiveEffects],
+    // Issue #97: 単純な配列結合ではなく、同一話者・同一intentの再発言を置換(更新)として扱う
+    // 決定的な合成規則を通す(詳細はspeechEffects.tsの`registerActiveSpeechEffects`参照)。
+    activeSpeechEffects: registerActiveSpeechEffects(activeEffects, tickActiveEffects),
   };
 }
