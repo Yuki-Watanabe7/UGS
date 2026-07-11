@@ -3,6 +3,13 @@ import { buildObserverJoinerInspection } from "./inspection";
 import { attractiveness } from "./engine";
 import { createSpeechEvent } from "./speech";
 import { DEFAULT_PARAMS } from "./presets";
+import { aggregateActiveEffects } from "./speechEffects";
+import type {
+  SpeechActiveEffect,
+  SpeechEffectEvent,
+  SpeechInterpretationEvent,
+  SpeechReceptionEvent,
+} from "./speechEffects";
 import type { Agent, GroupCandidate, SimulationState } from "./types";
 
 function makeAgent(overrides: Partial<Agent>): Agent {
@@ -273,5 +280,220 @@ describe("buildObserverJoinerInspection", () => {
     const [inspection] = buildObserverJoinerInspection(state, DEFAULT_PARAMS);
 
     expect(inspection.speechHistory.map((h) => h.event.id)).toEqual([first.id, second.id]);
+  });
+});
+
+describe("buildObserverJoinerInspection: Phase 3 speechEffectDetails/activeEffectSummaries (Issue #98)", () => {
+  it("returns speechEffectDetails with all-undefined fields when no Phase 3 logs are present", () => {
+    const observer = makeAgent({ id: "observer", isObserverJoiner: true });
+    const event = createSpeechEvent({
+      tick: 3,
+      speakerId: "observer",
+      intent: "greet",
+      reason: "joinGreeting",
+      audience: "nearby",
+    });
+    const state = makeState({ agents: [observer], speechLog: [event] });
+
+    const [inspection] = buildObserverJoinerInspection(state, DEFAULT_PARAMS);
+
+    expect(inspection.speechEffectDetails).toEqual([
+      { speechEventId: event.id, reception: undefined, interpretation: undefined, effect: undefined, activeEffectStatus: undefined },
+    ]);
+    expect(inspection.activeEffectSummaries).toEqual([]);
+  });
+
+  it("links reception/interpretation/effect/activeEffectStatus to the matching speechHistory entry by speechEventId+receiverId", () => {
+    const observer = makeAgent({ id: "observer", isObserverJoiner: true });
+    const helper = makeAgent({ id: "helper", label: "Helper" });
+    const event = createSpeechEvent({
+      tick: 5,
+      speakerId: "helper",
+      intent: "invite",
+      reason: "lightObserverInvitation",
+      target: "observer",
+    });
+
+    const reception: SpeechReceptionEvent = {
+      id: "reception-1",
+      speechEventId: event.id,
+      tick: 5,
+      receiverId: "observer",
+      relation: "target",
+      distance: 10,
+      threshold: 200,
+      heard: true,
+      reason: "withinRange",
+    };
+    const interpretation: SpeechInterpretationEvent = {
+      id: "interpretation-1",
+      speechEventId: event.id,
+      receptionEventId: reception.id,
+      tick: 5,
+      receiverId: "observer",
+      intent: "invite",
+      relation: "target",
+      valence: "positive",
+      intensity: 0.5,
+      factors: [{ key: "intentBase", rawValue: 1, normalizedValue: 0.6, contribution: 0.6 }],
+    };
+    const effect: SpeechEffectEvent = {
+      id: "effect-1",
+      speechEventId: event.id,
+      interpretationEventId: interpretation.id,
+      receiverId: "observer",
+      speakerId: "helper",
+      intent: "invite",
+      reason: "lightObserverInvitation",
+      occurredTick: 5,
+      appliedTick: 5,
+      dimension: "approachProbability",
+      outputValue: 0.2,
+      durationTicks: 5,
+    };
+    const activeEffect: SpeechActiveEffect = {
+      id: "active-effect-1",
+      speechEffectEventId: effect.id,
+      speechEventId: event.id,
+      speakerId: "helper",
+      intent: "invite",
+      receiverId: "observer",
+      dimension: "approachProbability",
+      startedAtTick: 5,
+      expiresAtTick: 10,
+      initialStrength: 0.2,
+      currentStrength: 0.15,
+      decay: "linear",
+    };
+
+    const state = makeState({
+      agents: [observer, helper],
+      speechLog: [event],
+      speechReceptionLog: [reception],
+      speechInterpretationLog: [interpretation],
+      speechEffectLog: [effect],
+      activeSpeechEffects: [activeEffect],
+      tick: 7,
+    });
+
+    const [inspection] = buildObserverJoinerInspection(state, DEFAULT_PARAMS);
+
+    expect(inspection.speechEffectDetails).toEqual([
+      {
+        speechEventId: event.id,
+        reception,
+        interpretation,
+        effect,
+        activeEffectStatus: {
+          initialStrength: 0.2,
+          currentStrength: 0.15,
+          startedAtTick: 5,
+          expiresAtTick: 10,
+          remainingTicks: 3,
+        },
+      },
+    ]);
+  });
+
+  it("leaves activeEffectStatus undefined once the active effect has expired/been replaced, while the effect record itself remains", () => {
+    const observer = makeAgent({ id: "observer", isObserverJoiner: true });
+    const event = createSpeechEvent({
+      tick: 5,
+      speakerId: "helper",
+      intent: "invite",
+      reason: "lightObserverInvitation",
+      target: "observer",
+    });
+    const effect: SpeechEffectEvent = {
+      id: "effect-1",
+      speechEventId: event.id,
+      interpretationEventId: "interpretation-1",
+      receiverId: "observer",
+      speakerId: "helper",
+      intent: "invite",
+      reason: "lightObserverInvitation",
+      occurredTick: 5,
+      appliedTick: 5,
+      dimension: "approachProbability",
+      outputValue: 0.2,
+      durationTicks: 5,
+    };
+    const state = makeState({
+      agents: [observer],
+      speechLog: [event],
+      speechEffectLog: [effect],
+      activeSpeechEffects: [],
+      tick: 20,
+    });
+
+    const [inspection] = buildObserverJoinerInspection(state, DEFAULT_PARAMS);
+
+    expect(inspection.speechEffectDetails[0].effect).toEqual(effect);
+    expect(inspection.speechEffectDetails[0].activeEffectStatus).toBeUndefined();
+  });
+
+  it("aggregates activeEffectSummaries by dimension via aggregateActiveEffects, keeping individual speechEventId contributions", () => {
+    const observer = makeAgent({ id: "observer", isObserverJoiner: true });
+    const activeEffect: SpeechActiveEffect = {
+      id: "active-effect-1",
+      speechEffectEventId: "effect-1",
+      speechEventId: "speech-1",
+      speakerId: "helper",
+      intent: "invite",
+      receiverId: "observer",
+      dimension: "approachProbability",
+      startedAtTick: 2,
+      expiresAtTick: 10,
+      initialStrength: 0.25,
+      currentStrength: 0.2,
+      decay: "linear",
+    };
+    const state = makeState({ agents: [observer], activeSpeechEffects: [activeEffect], tick: 4 });
+
+    const [inspection] = buildObserverJoinerInspection(state, DEFAULT_PARAMS);
+
+    const expected = aggregateActiveEffects([activeEffect], "observer", "approachProbability", 4, undefined);
+    expect(inspection.activeEffectSummaries).toEqual([expected]);
+  });
+
+  it("computes attractivenessScoreBeforeEffects as the score without Phase 3 speech effects", () => {
+    const observer = makeAgent({ id: "observer", isObserverJoiner: true, x: 400, y: 260 });
+    const candidate: GroupCandidate = {
+      id: "group-1",
+      x: 430,
+      y: 260,
+      memberIds: ["leader"],
+      status: "forming",
+      age: 1,
+    };
+    const activeEffect: SpeechActiveEffect = {
+      id: "active-effect-1",
+      speechEffectEventId: "effect-1",
+      speechEventId: "speech-1",
+      speakerId: "leader",
+      intent: "welcome",
+      receiverId: "observer",
+      dimension: "attractiveness",
+      targetGroupId: "group-1",
+      startedAtTick: 0,
+      expiresAtTick: 8,
+      initialStrength: 0.3,
+      currentStrength: 0.3,
+      decay: "linear",
+    };
+    const state = makeState({
+      agents: [observer],
+      groupCandidates: [candidate],
+      activeSpeechEffects: [activeEffect],
+      tick: 0,
+    });
+
+    const [inspection] = buildObserverJoinerInspection(state, DEFAULT_PARAMS);
+
+    const baseline = attractiveness(observer, candidate, state.agents, DEFAULT_PARAMS, undefined, 0);
+    const withEffects = attractiveness(observer, candidate, state.agents, DEFAULT_PARAMS, undefined, 0, [activeEffect]);
+    expect(inspection.attractivenessScoreBeforeEffects).toBe(baseline);
+    expect(inspection.attractivenessScore).toBe(withEffects);
+    expect(inspection.attractivenessScore).not.toBe(inspection.attractivenessScoreBeforeEffects);
   });
 });

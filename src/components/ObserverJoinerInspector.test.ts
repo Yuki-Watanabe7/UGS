@@ -96,4 +96,96 @@ describe("ObserverJoinerInspector speech history", () => {
 
     expect(html).toContain("まだ関連する発言はありません");
   });
+
+  it("shows an empty-state message for active speech effects when none are active", () => {
+    const observer = makeAgent({ id: "observer", label: "Observer", isObserverJoiner: true });
+    const html = render(makeState({ agents: [observer] }));
+
+    expect(html).toContain("現在作用中の発言効果はありません");
+  });
+
+  it("renders the Phase 3 causal detail block (reception/interpretation/effect) for a related speech event", () => {
+    const observer = makeAgent({ id: "observer", label: "Observer", isObserverJoiner: true });
+    const helper = makeAgent({ id: "helper", label: "Helper" });
+    const event = createSpeechEvent({
+      tick: 5,
+      speakerId: "helper",
+      intent: "invite",
+      reason: "lightObserverInvitation",
+      target: "observer",
+    });
+    const state = makeState({
+      agents: [observer, helper],
+      speechLog: [event],
+      speechReceptionLog: [
+        {
+          id: "reception-1",
+          speechEventId: event.id,
+          tick: 5,
+          receiverId: "observer",
+          relation: "target",
+          distance: 10,
+          threshold: 200,
+          heard: true,
+          reason: "withinRange",
+        },
+      ],
+      speechInterpretationLog: [
+        {
+          id: "interpretation-1",
+          speechEventId: event.id,
+          receptionEventId: "reception-1",
+          tick: 5,
+          receiverId: "observer",
+          intent: "invite",
+          relation: "target",
+          valence: "positive",
+          intensity: 0.5,
+          factors: [{ key: "conformity", rawValue: 0.5, normalizedValue: 0.5, contribution: 0.75 }],
+        },
+      ],
+      speechEffectLog: [
+        {
+          id: "effect-1",
+          speechEventId: event.id,
+          interpretationEventId: "interpretation-1",
+          receiverId: "observer",
+          speakerId: "helper",
+          intent: "invite",
+          reason: "lightObserverInvitation",
+          occurredTick: 5,
+          appliedTick: 5,
+          dimension: "approachProbability",
+          outputValue: 0.2,
+          durationTicks: 5,
+        },
+      ],
+      activeSpeechEffects: [
+        {
+          id: "active-effect-1",
+          speechEffectEventId: "effect-1",
+          speechEventId: event.id,
+          speakerId: "helper",
+          intent: "invite",
+          receiverId: "observer",
+          dimension: "approachProbability",
+          startedAtTick: 5,
+          expiresAtTick: 10,
+          initialStrength: 0.2,
+          currentStrength: 0.15,
+          decay: "linear",
+        },
+      ],
+      tick: 7,
+    });
+
+    const html = render(state);
+
+    expect(html).toContain("発言効果の詳細");
+    expect(html).toContain("届いた");
+    expect(html).toContain("同調傾向");
+    expect(html).toContain("接近確率");
+    expect(html).toContain("残り3tick");
+    expect(html).toContain("現在作用中の発言効果");
+  });
 });

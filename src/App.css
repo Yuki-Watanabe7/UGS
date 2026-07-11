@@ -741,6 +741,40 @@
   margin-top: 1px;
 }
 
+/* Phase 3の因果詳細(認知/解釈/効果)。折りたたみ式のnative <details>で、色だけに頼らず
+   summaryのテキストと矢印マーカーで開閉状態を示す(アクセシビリティ配慮)。 */
+.observer-inspector-effect-details {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #d1d5db;
+}
+
+.observer-inspector-effect-details summary {
+  cursor: pointer;
+  color: #93c5fd;
+}
+
+.observer-inspector-effect-line {
+  margin-top: 3px;
+}
+
+.observer-inspector-effect-reason {
+  margin-top: 3px;
+  color: #fdba74;
+}
+
+.observer-inspector-effect-empty {
+  margin-top: 4px;
+  color: #6b7280;
+  font-size: 11px;
+}
+
+.observer-inspector-factor-list {
+  margin: 3px 0 0;
+  padding-left: 16px;
+  color: #9ca3af;
+}
+
 .event-log {
   display: flex;
   flex-direction: column;
@@ -815,6 +849,44 @@
 
 .event-log-empty {
   color: #6b7280;
+}
+
+/* Phase 3の解釈/効果ログは発言ログと同じ左ボーダー系だが、色相を変えて視覚的に区別する
+   (色だけに依存しないよう、行頭の絵文字とmeta見出しのテキストでも区別できるようにしている)。 */
+.event-log-entry--speech-effect {
+  border-left: 2px solid #c4b5fd;
+  padding-left: 6px;
+}
+
+.event-log-entry-meta-details {
+  margin-top: 2px;
+}
+
+.event-log-entry-meta-details summary {
+  cursor: pointer;
+  color: #9ca3af;
+  font-size: 10.5px;
+}
+
+.event-log-truncation-notice {
+  font-size: 11px;
+  color: #9ca3af;
+  margin: 0 0 6px;
+}
+
+.event-log-show-all-button {
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid #3f4250;
+  background: #232634;
+  color: #cbd5e1;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.event-log-show-all-button:hover {
+  background: #2b2f40;
 }
 
 /*

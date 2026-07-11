@@ -110,4 +110,66 @@ describe("EventLog", () => {
 
     expect((html.match(/<select/g) ?? []).length).toBe(1);
   });
+
+  it("offers a '発言効果のみ' filter option in the select", () => {
+    const html = render(makeState({}));
+
+    expect(html).toContain("発言効果のみ");
+  });
+
+  it("renders speechInterpretationLog entries with a speech-effect class, distinct from speech rows", () => {
+    const observer = makeAgent({ id: "observer", label: "Observer" });
+    const html = render(
+      makeState({
+        agents: [observer],
+        speechInterpretationLog: [
+          {
+            id: "interpretation-1",
+            speechEventId: "speech-1",
+            receptionEventId: "reception-1",
+            tick: 4,
+            receiverId: "observer",
+            intent: "invite",
+            relation: "target",
+            valence: "positive",
+            intensity: 0.5,
+            factors: [{ key: "intentBase", rawValue: 1, normalizedValue: 0.6, contribution: 0.6 }],
+          },
+        ],
+      }),
+    );
+
+    expect(html).toContain("event-log-entry--speech-effect");
+    expect(html).toContain("Observerさんの解釈");
+    expect(html).toContain("好意的");
+  });
+
+  it("renders speechEffectLog entries with the dimension and duration", () => {
+    const observer = makeAgent({ id: "observer", label: "Observer" });
+    const html = render(
+      makeState({
+        agents: [observer],
+        speechEffectLog: [
+          {
+            id: "effect-1",
+            speechEventId: "speech-1",
+            interpretationEventId: "interpretation-1",
+            receiverId: "observer",
+            speakerId: "observer",
+            intent: "invite",
+            reason: "lightObserverInvitation",
+            occurredTick: 4,
+            appliedTick: 4,
+            dimension: "approachProbability",
+            outputValue: 0.2,
+            durationTicks: 5,
+          },
+        ],
+      }),
+    );
+
+    expect(html).toContain("event-log-entry--speech-effect");
+    expect(html).toContain("接近確率");
+    expect(html).toContain("持続5tick");
+  });
 });
