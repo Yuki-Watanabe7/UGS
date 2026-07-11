@@ -1,4 +1,5 @@
 import type { InterventionRuntimeOptions, InterventionScenarioId } from "./interventions";
+import type { SpeechEvent } from "./speech";
 
 export type AgentState =
   | "undecided"
@@ -184,6 +185,13 @@ export type SimulationState = {
    * 介入なしの場合は"none"。UI表示・集計向けの最小限の保持であり、既存の状態遷移ロジックには影響しない。
    */
   interventionId?: InterventionScenarioId;
+  /**
+   * エージェントが実際に行った発言(`SpeechEvent`、`speech.ts`参照)の時系列記録。Phase 2で追加。
+   * `log`(検証可能な出来事の記録)とは別軸で、「誰が何を発言したか」だけを構造化して保持する。
+   * 生成・記録・表示の基盤に留まり、この記録を他エージェントの判断が参照することはない
+   * (発言の認知・介入効果はPhase 3で扱う)。既存stateとの後方互換のため任意フィールド。
+   */
+  speechLog?: SpeechEvent[];
 };
 
 /**

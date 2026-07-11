@@ -9,6 +9,8 @@ import type {
   SimulationState,
 } from "./types";
 import type { InterventionRuntimeOptions, InterventionScenarioId } from "./interventions";
+import type { SpeechEvent } from "./speech";
+import { createSpeechEvent } from "./speech";
 import {
   applyLightInvitationEffect,
   isUnderLightInvitationBoost,
@@ -142,6 +144,7 @@ export function createInitialState(
     height: WORLD_HEIGHT,
     finished: false,
     interventionId: scenario.id,
+    speechLog: [],
   };
 }
 
@@ -290,6 +293,7 @@ export function stepSimulation(
   const agents = state.agents.map((a) => ({ ...a }));
   let candidates = state.groupCandidates.map((c) => ({ ...c, memberIds: [...c.memberIds] }));
   const log: LogEntry[] = [];
+  const speechEvents: SpeechEvent[] = [];
 
   // 1. 核形成: undecidedな人が forming になるかどうか
   // 核を作れるのは主導性が十分高い人、または既存の仲良しグループが
@@ -348,6 +352,15 @@ export function stepSimulation(
           "nucleusCreated",
           { agentId: agent.id, agentLabel: agent.label, groupId: candidate.id },
         );
+        speechEvents.push(
+          createSpeechEvent({
+            tick,
+            speakerId: agent.id,
+            intent: "invite",
+            reason: hasInitiative ? "initiativeFormedCore" : "cliqueFormedCore",
+            audience: "nearby",
+          }),
+        );
       }
     }
   }
@@ -374,6 +387,15 @@ export function stepSimulation(
           inviterAgentId: inviter.id,
           inviterAgentLabel: inviter.label,
         },
+      );
+      speechEvents.push(
+        createSpeechEvent({
+          tick,
+          speakerId: inviter.id,
+          intent: "invite",
+          reason: "lightObserverInvitation",
+          target: agent.id,
+        }),
       );
     }
   }
@@ -705,5 +727,6 @@ export function stepSimulation(
     height: state.height,
     finished,
     interventionId,
+    speechLog: [...(state.speechLog ?? []), ...speechEvents],
   };
 }
