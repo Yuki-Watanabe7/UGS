@@ -2,8 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   applyExpressionEvents,
   createActiveExpressionsState,
+  toExpressionBubbleCandidate,
+  MAX_CONCURRENT_BUBBLES,
+  MIN_DISPLAY_TICKS,
   type ExpressionBubbleCandidate,
 } from "./activeExpressions";
+import { createInitialState, stepSimulation } from "./engine";
+import { deriveExpressionEvents } from "./expression";
+import { resolveExpressionEventText } from "./expressionTemplates";
+import { SeededRandom } from "./random";
+import { PRESETS } from "./presets";
 
 function makeCandidate(overrides: Partial<ExpressionBubbleCandidate>): ExpressionBubbleCandidate {
   return {
@@ -207,5 +215,78 @@ describe("applyExpressionEvents: multiple same-tick events for one agent", () =>
 
     expect(resultA.active.get("agent-a")?.text).toBe("高");
     expect(resultB.active.get("agent-a")?.text).toBe("高");
+  });
+});
+
+/**
+ * Issue #67「混雑・フィルタテスト」の受入テスト。
+ * 個別ルールの単体テスト(上記)に加え、実際のシミュレーションを最後まで走らせたときにも
+ * 「1エージェント1吹き出し」「同時表示上限」が一度も破られないことを、多数の代表seed・presetで確認する。
+ */
+describe("crowding invariants: 1エージェント1吹き出し制約 / 同時表示上限が実際のシミュレーション全体を通じて守られる", () => {
+  for (const preset of PRESETS) {
+    for (const seed of [1, 2024, 999999]) {
+      it(`preset="${preset.id}" seed=${seed}: 全tickでactive.size<=maxConcurrentかつagentIdの重複がない`, () => {
+        const rng = new SeededRandom(seed);
+        let state = createInitialState(seed, preset.params);
+        let active = createActiveExpressionsState();
+        const maxConcurrent = 4;
+        let ticks = 0;
+
+        while (!state.finished && ticks < 400) {
+          const next = stepSimulation(state, preset.params, rng);
+          const events = deriveExpressionEvents(state, next, { seed });
+          const candidates = events.map((event) => {
+            const agent = next.agents.find((a) => a.id === event.agentId);
+            const isObserverJoiner = agent?.isObserverJoiner ?? false;
+            return toExpressionBubbleCandidate(
+              event,
+              resolveExpressionEventText(event, isObserverJoiner),
+              isObserverJoiner,
+            );
+          });
+          active = applyExpressionEvents(active, candidates, next.tick, { maxConcurrent });
+
+          // 混雑上限: アクティブ数は常にmaxConcurrent以下
+          expect(active.active.size).toBeLessThanOrEqual(maxConcurrent);
+          // 1エージェント1吹き出し: Mapのキーはagentidなので構造上重複しえないが、
+          // 値の`agentId`フィールド自体もキーと矛盾しないことを確認する
+          for (const [agentId, bubble] of active.active) {
+            expect(bubble.agentId).toBe(agentId);
+          }
+          // pending(キュー)も同様に1エージェントにつき最大1件(全体人数を超えて膨張しない)
+          for (const [agentId, bubble] of active.pending) {
+            expect(bubble.agentId).toBe(agentId);
+          }
+          expect(active.pending.size).toBeLessThanOrEqual(next.agents.length);
+
+          state = next;
+          ticks += 1;
+        }
+      });
+    }
+  }
+});
+
+describe("crowding defaults: オプション省略時はエクスポート済みの既定値が使われる", () => {
+  it("maxConcurrentを省略するとMAX_CONCURRENT_BUBBLESが上限として使われる", () => {
+    const state0 = createActiveExpressionsState();
+    const candidates = Array.from({ length: MAX_CONCURRENT_BUBBLES + 2 }, (_, i) =>
+      makeCandidate({ agentId: `agent-${i}`, eventTick: 0, priority: 1 }),
+    );
+    const state1 = applyExpressionEvents(state0, candidates, 0);
+    expect(state1.active.size).toBe(MAX_CONCURRENT_BUBBLES);
+  });
+
+  it("minDisplayTicksを省略するとMIN_DISPLAY_TICKSが最低表示時間として使われる", () => {
+    const state0 = createActiveExpressionsState();
+    const candidate = makeCandidate({ eventTick: 0, priority: 1, ttlTicks: 1 });
+    const state1 = applyExpressionEvents(state0, [candidate], 0);
+
+    const justBefore = applyExpressionEvents(state1, [], MIN_DISPLAY_TICKS - 1);
+    expect(justBefore.active.has("agent-a")).toBe(true);
+
+    const atMinDisplay = applyExpressionEvents(state1, [], MIN_DISPLAY_TICKS);
+    expect(atMinDisplay.active.has("agent-a")).toBe(false);
   });
 });

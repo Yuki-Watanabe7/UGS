@@ -38,4 +38,18 @@ describe("ExpressionDisplaySettings", () => {
     expect(html).toContain('value="observerJoiner" selected=""');
     expect(html).toContain('value="few" selected=""');
   });
+
+  it("uses only native form controls (checkbox/select wrapped in label) so keyboard and touch operate them without extra script", () => {
+    // Issue #67「表示設定をキーボードおよびタッチ相当操作で変更できる」: <input>/<select>はブラウザ標準で
+    // Tab/Space/Enter/矢印キー操作とタッチタップの両方に対応するため、独自のdiv+onClickの
+    // 疑似ボタン(キーボード操作に追加のJSが必要になりがちなパターン)を使っていないことを保証する。
+    const html = render({ ...DEFAULT_EXPRESSION_DISPLAY_SETTINGS, target: "observerJoiner", density: "many" });
+
+    expect(html).toContain("<label");
+    expect((html.match(/<input /g) ?? []).length).toBeGreaterThanOrEqual(1);
+    expect((html.match(/<select/g) ?? []).length).toBe(2);
+    expect(html).not.toContain("onClick");
+    expect(html).not.toMatch(/role="button"/);
+    expect(html).not.toMatch(/tabIndex/i);
+  });
 });

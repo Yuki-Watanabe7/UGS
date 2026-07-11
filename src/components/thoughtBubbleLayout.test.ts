@@ -146,3 +146,70 @@ describe("computeThoughtBubbleLayouts", () => {
     expect(layouts.get("priority")).toEqual(priorityDefault);
   });
 });
+
+/**
+ * Issue #67「レスポンシブ・アクセシビリティ確認」の受入テスト。
+ * PC想定幅とiPhone想定幅(iPhone SEクラスの狭い幅も含む)でCanvas端の吹き出し位置補正を検証し、
+ * 横スクロールの原因になる「Canvas幅を超えるはみ出し」が発生しないことを確認する。
+ */
+describe("responsive: PC / iPhone想定幅での吹き出し位置補正", () => {
+  const VIEWPORTS = [
+    { label: "PC (1200x800)", canvasWidth: 1200, canvasHeight: 800 },
+    { label: "iPhone想定 (390x844)", canvasWidth: 390, canvasHeight: 844 },
+    { label: "iPhone SEクラスの狭い幅 (320x568)", canvasWidth: 320, canvasHeight: 568 },
+  ];
+
+  for (const viewport of VIEWPORTS) {
+    describe(viewport.label, () => {
+      it("エージェントがCanvas内のどこにいても、吹き出しがCanvas幅を横方向にはみ出さない(横スクロール要因を作らない)", () => {
+        const sampleXs = [
+          2,
+          viewport.canvasWidth * 0.25,
+          viewport.canvasWidth * 0.5,
+          viewport.canvasWidth * 0.75,
+          viewport.canvasWidth - 2,
+        ];
+        for (const agentX of sampleXs) {
+          const layout = computeThoughtBubbleLayout({
+            agentX,
+            agentY: viewport.canvasHeight / 2,
+            agentRadius: 9,
+            text: "そろそろ潮時かもしれない",
+            canvasWidth: viewport.canvasWidth,
+            canvasHeight: viewport.canvasHeight,
+          });
+          expect(layout.boxX).toBeGreaterThanOrEqual(0);
+          expect(layout.boxX + layout.boxWidth).toBeLessThanOrEqual(viewport.canvasWidth);
+        }
+      });
+
+      it("エージェントがCanvas内のどこにいても、吹き出しが縦方向にもCanvas範囲内に収まる", () => {
+        const sampleYs = [2, viewport.canvasHeight * 0.5, viewport.canvasHeight - 2];
+        for (const agentY of sampleYs) {
+          const layout = computeThoughtBubbleLayout({
+            agentX: viewport.canvasWidth / 2,
+            agentY,
+            agentRadius: 9,
+            text: "近くに輪が見当たらないな",
+            canvasWidth: viewport.canvasWidth,
+            canvasHeight: viewport.canvasHeight,
+          });
+          expect(layout.boxY).toBeGreaterThanOrEqual(0);
+          expect(layout.boxY + layout.boxHeight).toBeLessThanOrEqual(viewport.canvasHeight);
+        }
+      });
+
+      it("最大文字数の吹き出しでもCanvas幅を超えない(最大吹き出し幅がどのビューポートより十分小さいこと)", () => {
+        const layout = computeThoughtBubbleLayout({
+          agentX: viewport.canvasWidth / 2,
+          agentY: viewport.canvasHeight / 2,
+          agentRadius: 9,
+          text: "あ".repeat(50),
+          canvasWidth: viewport.canvasWidth,
+          canvasHeight: viewport.canvasHeight,
+        });
+        expect(layout.boxWidth).toBeLessThan(viewport.canvasWidth);
+      });
+    });
+  }
+});
