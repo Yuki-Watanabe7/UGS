@@ -66,4 +66,24 @@ describe("SimulationCanvas thought bubbles", () => {
     );
     expect(html).not.toContain("thought-bubble");
   });
+
+  it("renders one bubble per agent when multiple thoughts are provided simultaneously", () => {
+    const agents = [
+      makeAgent({ id: "agent-a", x: 200, y: 200 }),
+      makeAgent({ id: "agent-b", x: 600, y: 400, isObserverJoiner: true }),
+    ];
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        ...baseProps,
+        agents,
+        thoughts: [
+          { agentId: "agent-a", text: "様子を見よう" },
+          { agentId: "agent-b", text: "もう帰ろう" },
+        ],
+      }),
+    );
+    expect(html.split("thought-bubble-box").length - 1).toBe(2);
+    expect(html).toContain("様子を見よう");
+    expect(html).toContain("もう帰ろう");
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeThoughtBubbleLayout, wrapThoughtText } from "./thoughtBubbleLayout";
+import { computeThoughtBubbleLayout, computeThoughtBubbleLayouts, wrapThoughtText } from "./thoughtBubbleLayout";
 
 describe("wrapThoughtText", () => {
   it("returns the whole text as a single line when it fits within one line", () => {
@@ -62,5 +62,87 @@ describe("computeThoughtBubbleLayout", () => {
   it("caps the bubble width so long text does not stretch it unbounded", () => {
     const layout = computeThoughtBubbleLayout({ ...baseInput, text: "あ".repeat(50) });
     expect(layout.boxWidth).toBeLessThanOrEqual(140);
+  });
+
+  it("places to the left of the agent and points its tail at the agent's left edge when side is 'left'", () => {
+    const layout = computeThoughtBubbleLayout(baseInput, "left");
+    expect(layout.boxX + layout.boxWidth).toBeLessThanOrEqual(baseInput.agentX);
+    expect(layout.tailX).toBe(baseInput.agentX - baseInput.agentRadius);
+    expect(layout.tailY).toBe(baseInput.agentY);
+  });
+
+  it("places to the right of the agent and points its tail at the agent's right edge when side is 'right'", () => {
+    const layout = computeThoughtBubbleLayout(baseInput, "right");
+    expect(layout.boxX).toBeGreaterThanOrEqual(baseInput.agentX);
+    expect(layout.tailX).toBe(baseInput.agentX + baseInput.agentRadius);
+    expect(layout.tailY).toBe(baseInput.agentY);
+  });
+
+  it("forces placement below the agent when side is 'below', even when there is room above", () => {
+    const layout = computeThoughtBubbleLayout(baseInput, "below");
+    expect(layout.boxY).toBeGreaterThan(baseInput.agentY);
+  });
+});
+
+describe("computeThoughtBubbleLayouts", () => {
+  const canvasWidth = 800;
+  const canvasHeight = 520;
+
+  function boxesOverlap(a: { boxX: number; boxY: number; boxWidth: number; boxHeight: number }, b: typeof a): boolean {
+    return (
+      a.boxX < b.boxX + b.boxWidth &&
+      a.boxX + a.boxWidth > b.boxX &&
+      a.boxY < b.boxY + b.boxHeight &&
+      a.boxY + a.boxHeight > b.boxY
+    );
+  }
+
+  it("returns one layout per input, keyed by agentId", () => {
+    const layouts = computeThoughtBubbleLayouts([
+      { agentId: "a", agentX: 400, agentY: 260, agentRadius: 9, text: "あ", canvasWidth, canvasHeight },
+      { agentId: "b", agentX: 420, agentY: 260, agentRadius: 9, text: "い", canvasWidth, canvasHeight },
+    ]);
+    expect(layouts.size).toBe(2);
+    expect(layouts.has("a")).toBe(true);
+    expect(layouts.has("b")).toBe(true);
+  });
+
+  it("avoids overlapping boxes for two agents standing right next to each other", () => {
+    const layouts = computeThoughtBubbleLayouts([
+      { agentId: "a", agentX: 400, agentY: 260, agentRadius: 9, text: "近くに輪が見当たらないな", canvasWidth, canvasHeight },
+      { agentId: "b", agentX: 415, agentY: 260, agentRadius: 9, text: "そろそろ潮時かもしれない", canvasWidth, canvasHeight },
+    ]);
+    const [a, b] = ["a", "b"].map((id) => layouts.get(id)!);
+    expect(boxesOverlap(a, b)).toBe(false);
+  });
+
+  it("still returns a layout for every agent even when many are clustered together (may fall back to overlapping)", () => {
+    const inputs = Array.from({ length: 5 }, (_, i) => ({
+      agentId: `agent-${i}`,
+      agentX: 400 + i * 2,
+      agentY: 260,
+      agentRadius: 9,
+      text: "テスト",
+      canvasWidth,
+      canvasHeight,
+    }));
+    const layouts = computeThoughtBubbleLayouts(inputs);
+    expect(layouts.size).toBe(5);
+  });
+
+  it("gives earlier entries first pick, so a later entry yields to an already-placed earlier one", () => {
+    const layouts = computeThoughtBubbleLayouts([
+      { agentId: "priority", agentX: 400, agentY: 260, agentRadius: 9, text: "重要な心の声", canvasWidth, canvasHeight },
+      { agentId: "other", agentX: 405, agentY: 260, agentRadius: 9, text: "その他の心の声", canvasWidth, canvasHeight },
+    ]);
+    const priorityDefault = computeThoughtBubbleLayout({
+      agentX: 400,
+      agentY: 260,
+      agentRadius: 9,
+      text: "重要な心の声",
+      canvasWidth,
+      canvasHeight,
+    });
+    expect(layouts.get("priority")).toEqual(priorityDefault);
   });
 });
