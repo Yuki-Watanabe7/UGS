@@ -204,3 +204,153 @@ describe("deriveExpressionEvents: does not depend on the main PRNG", () => {
     expect(a[0].reason).toBe(b[0].reason);
   });
 });
+
+describe("deriveExpressionEvents: stress threshold crossings (undecided-only, no state transition)", () => {
+  it("derives 'stressRising' only on the tick where stress/leaveThreshold first crosses 0.5", () => {
+    const previous = makeState({
+      tick: 4,
+      agents: [makeAgent({ state: "undecided", stress: 0.4, leaveThreshold: 1 })],
+    });
+    const next = makeState({
+      tick: 5,
+      agents: [makeAgent({ state: "undecided", stress: 0.55, leaveThreshold: 1 })],
+    });
+
+    const events = deriveExpressionEvents(previous, next, CONTEXT);
+    expect(events).toHaveLength(1);
+    expect(events[0].intent).toBe("stressRising");
+    expect(events[0].reason).toBe("stressCrossedRisingThreshold");
+  });
+
+  it("does not repeat 'stressRising' once already above the threshold", () => {
+    const previous = makeState({
+      tick: 5,
+      agents: [makeAgent({ state: "undecided", stress: 0.55, leaveThreshold: 1 })],
+    });
+    const next = makeState({
+      tick: 6,
+      agents: [makeAgent({ state: "undecided", stress: 0.6, leaveThreshold: 1 })],
+    });
+
+    const events = deriveExpressionEvents(previous, next, CONTEXT);
+    expect(events.filter((e) => e.intent === "stressRising")).toHaveLength(0);
+  });
+
+  it("derives 'consideringLeaving' only on the tick where stress/leaveThreshold first crosses 0.85", () => {
+    const previous = makeState({
+      tick: 4,
+      agents: [makeAgent({ state: "undecided", stress: 0.8, leaveThreshold: 1 })],
+    });
+    const next = makeState({
+      tick: 5,
+      agents: [makeAgent({ state: "undecided", stress: 0.9, leaveThreshold: 1 })],
+    });
+
+    const events = deriveExpressionEvents(previous, next, CONTEXT);
+    expect(events).toHaveLength(1);
+    expect(events[0].intent).toBe("consideringLeaving");
+    expect(events[0].reason).toBe("stressNearLeaveThreshold");
+  });
+
+  it("derives both 'stressRising' and 'consideringLeaving' when a single tick crosses both thresholds", () => {
+    const previous = makeState({
+      tick: 4,
+      agents: [makeAgent({ state: "undecided", stress: 0.3, leaveThreshold: 1 })],
+    });
+    const next = makeState({
+      tick: 5,
+      agents: [makeAgent({ state: "undecided", stress: 0.95, leaveThreshold: 1 })],
+    });
+
+    const events = deriveExpressionEvents(previous, next, CONTEXT);
+    const intents = events.map((e) => e.intent).sort();
+    expect(intents).toEqual(["consideringLeaving", "stressRising"].sort());
+    expect(new Set(events.map((e) => e.id)).size).toBe(events.length);
+  });
+
+  it("does not derive stress-threshold events when the agent transitions out of 'undecided' this tick", () => {
+    const previous = makeState({
+      tick: 4,
+      agents: [makeAgent({ state: "undecided", stress: 0.95, leaveThreshold: 1 })],
+    });
+    const next = makeState({
+      tick: 5,
+      agents: [makeAgent({ state: "leaving", stress: 0.95, leaveThreshold: 1 })],
+    });
+
+    const events = deriveExpressionEvents(previous, next, CONTEXT);
+    expect(events.map((e) => e.intent)).toEqual(["givingUpWaiting"]);
+  });
+});
+
+describe("deriveExpressionEvents: hesitating/watching cooldown for persistent undecided conditions", () => {
+  it("derives 'hesitating' (not 'watching') when a joinable candidate exists nearby, on a cooldown cadence rather than every tick", () => {
+    const candidate: GroupCandidate = {
+      id: "group-1",
+      x: 450,
+      y: 260,
+      memberIds: [],
+      status: "forming",
+      age: 0,
+    };
+    let fired = 0;
+    for (let tick = 1; tick <= 16; tick++) {
+      const previous = makeState({ tick: tick - 1, agents: [makeAgent({ state: "undecided" })] });
+      const next = makeState({
+        tick,
+        agents: [makeAgent({ state: "undecided" })],
+        groupCandidates: [candidate],
+      });
+      const events = deriveExpressionEvents(previous, next, CONTEXT);
+      const hesitationEvents = events.filter((e) => e.intent === "hesitating");
+      const watchingEvents = events.filter((e) => e.intent === "watching");
+      expect(watchingEvents).toHaveLength(0);
+      fired += hesitationEvents.length;
+      for (const e of hesitationEvents) {
+        expect(e.reason).toBe("nearbyGroupUnapproached");
+      }
+    }
+    // 16 ticks / 8-tick cooldown period = exactly 2 firings, not 16
+    expect(fired).toBe(2);
+  });
+
+  it("derives 'watching' (not 'hesitating') when no joinable candidate exists nearby", () => {
+    let fired = 0;
+    for (let tick = 1; tick <= 16; tick++) {
+      const previous = makeState({ tick: tick - 1, agents: [makeAgent({ state: "undecided" })] });
+      const next = makeState({ tick, agents: [makeAgent({ state: "undecided" })], groupCandidates: [] });
+      const events = deriveExpressionEvents(previous, next, CONTEXT);
+      const watchingEvents = events.filter((e) => e.intent === "watching");
+      expect(events.filter((e) => e.intent === "hesitating")).toHaveLength(0);
+      fired += watchingEvents.length;
+      for (const e of watchingEvents) {
+        expect(e.reason).toBe("noJoinableGroupNearby");
+      }
+    }
+    expect(fired).toBe(2);
+  });
+
+  it("treats a dissolved/expired candidate as no candidate (derives 'watching', not 'hesitating')", () => {
+    const candidate: GroupCandidate = {
+      id: "group-1",
+      x: 450,
+      y: 260,
+      memberIds: [],
+      status: "dissolved",
+      age: 1,
+    };
+    let sawWatching = false;
+    for (let tick = 1; tick <= 16; tick++) {
+      const previous = makeState({ tick: tick - 1, agents: [makeAgent({ state: "undecided" })] });
+      const next = makeState({
+        tick,
+        agents: [makeAgent({ state: "undecided" })],
+        groupCandidates: [candidate],
+      });
+      const events = deriveExpressionEvents(previous, next, CONTEXT);
+      if (events.some((e) => e.intent === "watching")) sawWatching = true;
+      expect(events.filter((e) => e.intent === "hesitating")).toHaveLength(0);
+    }
+    expect(sawWatching).toBe(true);
+  });
+});
