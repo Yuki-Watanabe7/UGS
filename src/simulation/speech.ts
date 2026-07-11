@@ -66,16 +66,29 @@ export type CreateSpeechEventInput = {
   reason: SpeechReason;
   target?: string;
   audience?: SpeechAudience;
+  /**
+   * id生成のみに使う衝突回避用の追加識別子(`SpeechEvent`のフィールドには含まれない)。
+   * 同一tick・同一speakerId・同一reasonの発言が複数回起こりうる場合(例:
+   * "formingGroupRecruitment"で同じfounderが同一tick内に複数人を誘う)、target/audienceの
+   * 意味を変えずにidだけを一意にするために、遷移した相手のagent idなどを渡す。
+   * `target`が設定されている場合はそちらが既に一意性を持つためidSuffixは無視される。
+   */
+  idSuffix?: string;
 };
 
 /**
  * `SpeechEvent`を組み立てる唯一の生成口(発言生成境界)。engine.tsはこの関数を通してのみ
  * SpeechEventを作り、`id`/`textKey`の組み立てルールをここに集約することで生成箇所ごとの
  * 表記ゆれを防ぐ。`SimulationState`・`SeededRandom`のいずれも受け取らない純粋関数。
+ *
+ * `id`は`tick`/`speakerId`/`reason`だけでは、同一tickに同じspeakerが同じreasonで複数回
+ * 発言しうるケース(1人のfounder/welcomerが同一tick内で複数の相手に対応する場合)で衝突する。
+ * `target`(またはそれがない場合は`idSuffix`)を末尾に含めて一意性を担保する。
  */
 export function createSpeechEvent(input: CreateSpeechEventInput): SpeechEvent {
+  const disambiguator = input.target ?? input.idSuffix;
   return {
-    id: `speech-${input.tick}-${input.speakerId}-${input.reason}`,
+    id: `speech-${input.tick}-${input.speakerId}-${input.reason}${disambiguator ? `-${disambiguator}` : ""}`,
     tick: input.tick,
     speakerId: input.speakerId,
     intent: input.intent,
@@ -121,6 +134,7 @@ export function deriveSpeechEvents(previousState: SimulationState, nextState: Si
             intent: "invite",
             reason: "formingGroupRecruitment",
             audience: "nearby",
+            idSuffix: agent.id,
           }),
         );
       }
