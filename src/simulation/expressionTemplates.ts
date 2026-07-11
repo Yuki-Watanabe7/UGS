@@ -1,4 +1,4 @@
-import type { ExpressionReason } from "./expression";
+import type { ExpressionEvent, ExpressionReason } from "./expression";
 
 /**
  * `ExpressionReason`ごとの心の声テンプレート集。文言そのものはこのモジュールでのみ保持し、
@@ -81,4 +81,17 @@ export function getExpressionVariantCount(reason: ExpressionReason, isObserverJo
 export function resolveExpressionText(reason: ExpressionReason, isObserverJoiner: boolean, variantIndex: number): string {
   const variants = resolveExpressionVariants(reason, isObserverJoiner);
   return variants[variantIndex % variants.length];
+}
+
+const TEXT_KEY_VARIANT_PATTERN = /\.v(\d+)$/;
+
+/**
+ * `ExpressionEvent`から実際の表示文言を解決する。`textKey`(`thought.${reason}.v${variant}`)から
+ * バリアント番号を取り出し、`event.reason`と合わせて`resolveExpressionText`に渡すだけの薄いラッパー。
+ * 表示側(UI)がtextKeyの文字列構造を直接パースしなくて済むようにする。
+ */
+export function resolveExpressionEventText(event: ExpressionEvent, isObserverJoiner: boolean): string {
+  const match = TEXT_KEY_VARIANT_PATTERN.exec(event.textKey);
+  const variantIndex = match ? Number(match[1]) : 0;
+  return resolveExpressionText(event.reason, isObserverJoiner, variantIndex);
 }

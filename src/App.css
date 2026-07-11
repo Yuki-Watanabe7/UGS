@@ -449,6 +449,41 @@
   text-anchor: middle;
 }
 
+/* 心の声吹き出し。他エージェント/本人には認知されない観察者向けの演出のため、
+   実線の発言吹き出し(未実装)とは点線枠+しっぽの丸+括弧付き表示の3点で視覚的に区別する。
+   クリック等の操作を持たないため pointer-events は無効化する */
+.thought-bubble {
+  pointer-events: none;
+}
+
+.thought-bubble-box {
+  fill: rgba(241, 245, 249, 0.95);
+  stroke: #64748b;
+  stroke-width: 1.2;
+  stroke-dasharray: 3 2;
+}
+
+.thought-bubble.observer .thought-bubble-box {
+  stroke: #f97316;
+}
+
+.thought-bubble-trail {
+  fill: rgba(241, 245, 249, 0.9);
+  stroke: #64748b;
+  stroke-width: 1;
+  stroke-dasharray: 2 1;
+}
+
+.thought-bubble.observer .thought-bubble-trail {
+  stroke: #f97316;
+}
+
+.thought-bubble-text {
+  fill: #0f172a;
+  font-size: 10px;
+  text-anchor: middle;
+}
+
 .sidebar-right {
   display: flex;
   flex-direction: column;
