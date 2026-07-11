@@ -23,9 +23,13 @@ import { clamp } from "./model";
  *   決定的な数値ルールに過ぎない。** 可変の「信頼学習」(発言を重ねるほど信頼が変化する等)や
  *   本心と建前の不一致、発言の真実性判定は対応しない範囲。
  * - `SpeechEffectEvent`(本ファイル): `SpeechInterpretationEvent`1件につき、どの状態次元へ・どの強度/期間で
- *   作用しうるかを構造化して保持する記録。**実際にAgentの状態(stress等)へ適用する処理はPhase 4以降の
- *   スコープであり、本ファイルの`deriveSpeechEffects`は記録を生成するだけで、いかなるAgent/SimulationState
- *   も参照・変更しない。**
+ *   作用しうるかを構造化して保持する記録。`deriveSpeechEffects`自体は引き続き記録を生成するだけの
+ *   純粋関数で、Agent/SimulationStateを参照・変更しない。
+ * - `SpeechActiveEffect`(本ファイル、Issue #96): `SpeechEffectEvent`1件につき1件生成される、実際に
+ *   `engine.ts`の判断式(stress蓄積率/attractiveness/接近確率/leave判定のしきい値)へ加算される
+ *   持続効果。`startedAtTick`から`expiresAtTick`まで線形減衰し、`SimulationState.activeSpeechEffects`
+ *   に保持されて毎tick更新される。`willingness`等の恒常的なpersonality値そのものは変更しない
+ *   (一時的な補正としてのみ適用される)。詳細は`docs/speech-effects-application-model.md`参照。
  *
  * 3段階(reception -> interpretation -> effect)は`speechEventId`で、interpretation/effectは
  * さらに`receptionEventId`/`interpretationEventId`で前段と一意に関連付けられる。全段が`receiverId`も
@@ -41,9 +45,13 @@ import { clamp } from "./model";
  * Issue #95(受け手別の解釈モデル、`deriveSpeechInterpretations`)の対応しない範囲:
  * - 時間とともに変化する信頼・評判(常に現在の関係性から一意に導出する固定値のみを使う)
  * - 発言の真実性判定・本心と建前の不一致・LLMによる文章解釈
- * - 解釈結果をAgent.stress等の状態変数へ実際に適用する処理、複数発言の集約、UI表示
- *   (`deriveSpeechEffects`が生成する記録は引き続き構造化された記録に留まる。詳細は
- *   `docs/speech-interpretation-model.md`参照)
+ *   (詳細は`docs/speech-interpretation-model.md`参照)
+ *
+ * Issue #96(発言効果の持続・減衰付き適用、`deriveSpeechActiveEffects`/`engine.ts`)の対応しない範囲:
+ * - 複数発言の競合・累積規則(同一受け手・同一次元への複数の`SpeechActiveEffect`は単純加算のみ)
+ * - 永続的な性格・信頼・関係性更新(`willingness`/`conformity`/`influenceAvoidance`等は不変のまま)
+ * - 新しい発言intent、UI可視化、Monte Carlo比較
+ *   (詳細は`docs/speech-effects-application-model.md`参照)
  */
 
 /** Phase 3効果の生成有無を切り替える設定境界。既存の`SimParams`/`InterventionRuntimeOptions`とは独立 */
@@ -150,8 +158,14 @@ export type SpeechInterpretationEvent = {
   factors: SpeechInterpretationFactor[];
 };
 
-/** 効果が作用しうる状態次元。Phase 3時点ではstress方向の効果のみを構造として持つ(実適用はしない) */
-export type SpeechEffectDimension = "stress";
+/**
+ * 効果が作用しうる状態次元(Issue #96)。intentごとに1次元だけを固定で割り当てる(`INTENT_DIMENSION`)。
+ * - "stress": undecided中のstress蓄積率への補正(即時diffではなく、tick毎の増分に加算する形)
+ * - "attractiveness": 特定のGroupCandidateへの`attractiveness()`スコアへの加算補正
+ * - "approachProbability": 輪への接近確率への加算補正
+ * - "leaveThreshold": leave判定で使う実効しきい値(`agent.leaveThreshold`本体は変更しない)への加算補正
+ */
+export type SpeechEffectDimension = "stress" | "attractiveness" | "approachProbability" | "leaveThreshold";
 
 /**
  * 「どの状態次元へ、どの強度・期間で作用するか」を構造化して保持する記録。
@@ -179,7 +193,7 @@ export type SpeechEffectEvent = {
  */
 export type SpeechInterpreterCandidate = Pick<
   Agent,
-  "id" | "conformity" | "influenceAvoidance" | "cliqueId" | "stress" | "state"
+  "id" | "conformity" | "influenceAvoidance" | "cliqueId" | "stress" | "state" | "joinedGroupId"
 >;
 
 /**
@@ -254,12 +268,47 @@ function strengthFactor(strength: number): number {
   return clamp(strength, 0, 2);
 }
 
-/** valence(作用方向)のみに基づく固定の効果量対応表(受け手の性格には依存しない、構造化された記録用の値) */
-const VALENCE_STRESS_EFFECT: Record<SpeechInterpretationValence, { outputValue: number; durationTicks: number }> = {
-  positive: { outputValue: -0.05, durationTicks: 5 },
-  neutral: { outputValue: 0, durationTicks: 0 },
-  negative: { outputValue: 0.08, durationTicks: 6 },
+/**
+ * intentごとに、どの状態次元へ作用するかを固定する(Issue #96の受入条件:
+ * 「invite/welcome/greet/declineごとに、作用対象・方向・基礎強度を明示する」)。
+ * 作用方向はintentの基礎方向(`INTENT_BASE[intent].direction`、`valence`に反映済み)をそのまま使う。
+ * - invite: 周囲のundecidedがその輪に近づく後押し(approachProbability)
+ * - welcome: 対象者が今まさに近づいている輪自体の魅力度(attractiveness。対象は受け手の
+ *   `joinedGroupId`の登録時点スナップショット=`SpeechActiveEffect.targetGroupId`)
+ * - greet: 周囲で合流が起きたのを見て感じる、曖昧な時間へのstress蓄積率の緩和(stress)
+ * - decline: 周囲で離脱が起きたのを見て感じる、帰宅への踏ん切りの伝染(leaveThreshold。
+ *   `agent.leaveThreshold`本体は変更せず、判定に使う実効しきい値のみを補正する)
+ */
+const INTENT_DIMENSION: Record<SpeechIntent, SpeechEffectDimension> = {
+  invite: "approachProbability",
+  welcome: "attractiveness",
+  greet: "stress",
+  decline: "leaveThreshold",
 };
+
+/**
+ * 次元ごとの基礎強度(`intensity === 1`のときの絶対値)と継続tick数。Issue #96の受入条件
+ * 「初期実装の減衰式（線形または指数）を1種類に固定し、tick単位で決定的に計算する」を踏まえ、
+ * 減衰方式は全次元共通で線形固定とする(`SpeechActiveEffect.decay`は常に`"linear"`)。
+ */
+const DIMENSION_UNIT: Record<SpeechEffectDimension, { magnitude: number; durationTicks: number }> = {
+  stress: { magnitude: 0.03, durationTicks: 6 },
+  attractiveness: { magnitude: 0.35, durationTicks: 8 },
+  approachProbability: { magnitude: 0.25, durationTicks: 5 },
+  leaveThreshold: { magnitude: 0.15, durationTicks: 10 },
+};
+
+/**
+ * dimensionごとの符号付き基礎値(`engine.ts`の該当する計算式へそのまま加算する値)を計算する。
+ * `stress`のみ符号を反転させる: positive valence(歓迎ムード)はstress"蓄積率"を下げる方向
+ * (=負の補正)に効くため。他の3次元はvalenceの符号をそのまま使う
+ * (positiveなら後押し/上昇、negativeなら抑制/低下)。
+ */
+function dimensionSignedValue(dimension: SpeechEffectDimension, direction: 1 | -1, intensity: number): number {
+  const magnitude = DIMENSION_UNIT[dimension].magnitude * intensity;
+  const signed = direction * magnitude;
+  return dimension === "stress" ? -signed : signed;
+}
 
 /** 話者自身、およびleft状態のagentは認知対象の候補から除外する(存在しないagentは呼び出し側の配列に含まれ得ない) */
 function isEligibleReceiver(candidate: SpeechReceiverCandidate, speakerId: string): boolean {
@@ -427,9 +476,11 @@ export function deriveSpeechInterpretations(
 }
 
 /**
- * `interpretations`から、`valence`だけに基づく固定の効果量対応表で`SpeechEffectEvent`を導出する
- * 純粋関数。生成するのは「どの状態次元へ、どの強度・期間で作用しうるか」という構造化された記録のみで、
- * Agent.stress等へ実際に適用する処理はここには存在しない(対応しない範囲、Phase 4以降で扱う)。
+ * `interpretations`から、intentごとに固定の次元(`INTENT_DIMENSION`)と基礎強度(`DIMENSION_UNIT`)で
+ * `SpeechEffectEvent`を導出する純粋関数。生成するのは「どの状態次元へ・どの強度/期間で作用しうるか」
+ * という構造化された記録であり、Agent.stress等へ実際に適用する処理自体はここには存在しない
+ * (それは`deriveSpeechActiveEffects`が生成する`SpeechActiveEffect`を`engine.ts`が参照する形で行う)。
+ * `valence === "neutral"`(ほぼ何も感じなかった)の解釈からは効果を生成しない。
  * `SimulationState`・rngのいずれも参照/変更しない。
  */
 export function deriveSpeechEffects(
@@ -442,9 +493,15 @@ export function deriveSpeechEffects(
   const speechById = new Map(speechEvents.map((speech) => [speech.id, speech]));
   const events: SpeechEffectEvent[] = [];
   for (const interpretation of interpretations) {
+    if (interpretation.valence === "neutral") continue;
     const speech = speechById.get(interpretation.speechEventId);
     if (!speech) continue;
-    const { outputValue, durationTicks } = VALENCE_STRESS_EFFECT[interpretation.valence];
+
+    const dimension = INTENT_DIMENSION[interpretation.intent];
+    const direction: 1 | -1 = interpretation.valence === "positive" ? 1 : -1;
+    const outputValue = dimensionSignedValue(dimension, direction, interpretation.intensity);
+    const durationTicks = DIMENSION_UNIT[dimension].durationTicks;
+
     events.push({
       id: `effect-${interpretation.id}`,
       speechEventId: interpretation.speechEventId,
@@ -453,10 +510,122 @@ export function deriveSpeechEffects(
       reason: speech.reason,
       occurredTick: interpretation.tick,
       appliedTick: interpretation.tick,
-      dimension: "stress",
+      dimension,
       outputValue,
       durationTicks,
     });
   }
   return events;
+}
+
+/** 減衰方式。Issue #96時点では線形減衰のみをサポートする(受入条件: 減衰式を1種類に固定する) */
+export type SpeechEffectDecayMethod = "linear";
+
+/**
+ * `SpeechEffectEvent`1件から生成される、実際に`engine.ts`の判断式へ適用されうる持続効果(Issue #96)。
+ * `SpeechEffectEvent`自体は「作用しうる値」の構造化された記録に留まる一方、こちらは`startedAtTick`から
+ * `expiresAtTick`まで、tickが進むごとに線形減衰しながら実際の計算式(attractiveness/接近確率/
+ * stress蓄積率/leave判定のしきい値)へ加算される値そのものを表す。
+ *
+ * `initialStrength`/`currentStrength`はどちらも符号付きの実際の適用値であり、0〜1に正規化された
+ * 強度ではない(dimensionごとに単位が異なるため)。`currentStrength`は`engine.ts`が毎tick、
+ * `startedAtTick`からの経過で線形減衰させた値に更新し直した状態で
+ * `SimulationState.activeSpeechEffects`に保持される。
+ */
+export type SpeechActiveEffect = {
+  id: string;
+  speechEffectEventId: string;
+  receiverId: string;
+  dimension: SpeechEffectDimension;
+  /** dimension === "attractiveness"のときのみ設定される、作用対象のGroupCandidate.id(受け手のjoinedGroupIdの登録時点スナップショット) */
+  targetGroupId?: string;
+  startedAtTick: number;
+  expiresAtTick: number;
+  initialStrength: number;
+  currentStrength: number;
+  decay: SpeechEffectDecayMethod;
+};
+
+/**
+ * `effect`が`tick`時点でどれだけの強度を保っているかを、`startedAtTick`からの経過を
+ * `expiresAtTick`までの区間で線形に0まで減衰させて計算する純粋関数。tick単位の決定的な計算のみで、
+ * rngは一切使わない。`tick >= expiresAtTick`では0を返す。
+ */
+export function activeEffectStrengthAtTick(effect: SpeechActiveEffect, tick: number): number {
+  const span = effect.expiresAtTick - effect.startedAtTick;
+  if (span <= 0) return 0;
+  const remaining = clamp(1 - (tick - effect.startedAtTick) / span, 0, 1);
+  // `remaining === 0`のとき`initialStrength * 0`が-0になりうる(initialStrengthが負の場合)ため、
+  // Object.is上の-0/0の違いが呼び出し側の比較・テストで意図せず露出しないよう正規化する。
+  return remaining === 0 ? 0 : effect.initialStrength * remaining;
+}
+
+/**
+ * `effects`(前tickまでに登録済みの持続効果)を`tick`時点の強度へ更新し、期限切れ
+ * (`tick >= expiresAtTick`)のものを破棄した新しい配列を返す純粋関数。`engine.ts`が毎tick、
+ * 状態・行動判断への参照より前に呼び出す(受入条件の「期限切れ効果の破棄」をtick単位で行う)。
+ */
+export function advanceActiveSpeechEffects(effects: SpeechActiveEffect[], tick: number): SpeechActiveEffect[] {
+  const advanced: SpeechActiveEffect[] = [];
+  for (const effect of effects) {
+    if (tick >= effect.expiresAtTick) continue;
+    advanced.push({ ...effect, currentStrength: activeEffectStrengthAtTick(effect, tick) });
+  }
+  return advanced;
+}
+
+/**
+ * `receiverId`・`dimension`(・attractivenessの場合は`targetGroupId`)が一致する`activeEffects`の
+ * `tick`時点の強度を単純合計する。複数発言由来の効果が同時に有効な場合の競合・優先順位づけは
+ * 対応しない範囲(Issue #96の対応しない範囲: 複数発言の競合・累積規則)であり、単純な加算のみを行う。
+ */
+export function sumActiveEffectValue(
+  activeEffects: SpeechActiveEffect[],
+  receiverId: string,
+  dimension: SpeechEffectDimension,
+  tick: number,
+  targetGroupId?: string,
+): number {
+  let total = 0;
+  for (const effect of activeEffects) {
+    if (effect.receiverId !== receiverId || effect.dimension !== dimension) continue;
+    if (dimension === "attractiveness" && effect.targetGroupId !== targetGroupId) continue;
+    total += activeEffectStrengthAtTick(effect, tick);
+  }
+  return total;
+}
+
+/**
+ * `effects`(このtickで新たに登録された`SpeechEffectEvent`)から、1件につき1件の`SpeechActiveEffect`を
+ * 導出する純粋関数(受入条件: 「1件の解釈結果から`SpeechEffectEvent`とactive effectを生成する」)。
+ * `dimension === "attractiveness"`の場合のみ、`participants`から受け手の`joinedGroupId`
+ * (登録時点のスナップショット)を`targetGroupId`として引き継ぐ。
+ * `SimulationState`・rngのいずれも参照/変更しない。
+ */
+export function deriveSpeechActiveEffects(
+  effects: SpeechEffectEvent[],
+  participants: SpeechInterpreterCandidate[],
+  config: SpeechEffectsConfig,
+): SpeechActiveEffect[] {
+  if (!config.enabled) return [];
+
+  const participantById = new Map(participants.map((participant) => [participant.id, participant]));
+  const active: SpeechActiveEffect[] = [];
+  for (const effect of effects) {
+    const receiver = participantById.get(effect.receiverId);
+    const targetGroupId = effect.dimension === "attractiveness" ? receiver?.joinedGroupId : undefined;
+    active.push({
+      id: `active-${effect.id}`,
+      speechEffectEventId: effect.id,
+      receiverId: effect.receiverId,
+      dimension: effect.dimension,
+      targetGroupId,
+      startedAtTick: effect.appliedTick,
+      expiresAtTick: effect.appliedTick + effect.durationTicks,
+      initialStrength: effect.outputValue,
+      currentStrength: effect.outputValue,
+      decay: "linear",
+    });
+  }
+  return active;
 }

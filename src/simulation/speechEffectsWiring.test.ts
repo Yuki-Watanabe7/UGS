@@ -61,17 +61,35 @@ describe("Phase 3 speech effects wiring: default (unspecified) config", () => {
     expect(withPhase3ExplicitlyDisabled.speechLog).toEqual(withoutPhase3.speechLog);
   });
 
-  it("enabling Phase 3 effects does not alter agents/groupCandidates/log/speechLog/rng consumption either", () => {
+  it("enabling Phase 3 effects populates Phase 3 logs while disabled stays empty, for the same seed/params", () => {
+    // Issue #96: applying active effects to approachProbability/stress/leaveThreshold is expected to
+    // change *decision outcomes* (that is the whole point of this issue) — unlike the Issue #93 wiring
+    // contract, which held while effects were structural-only records with no downstream reader.
+    // What must still hold is that the effect-application code itself (sumActiveEffectValue,
+    // activeEffectStrengthAtTick, deriveSpeechActiveEffects) never calls `rng`, so it introduces no new
+    // draws into the shared PRNG sequence by itself. See the reproducibility test below for direct proof
+    // that enabling effects still yields a fully deterministic run.
     const preset = PRESETS[0];
     const seed = 42;
 
     const disabled = runToCompletion(seed, preset.params, false);
     const enabled = runToCompletion(seed, preset.params, true);
 
-    expect(enabled.agents).toEqual(disabled.agents);
-    expect(enabled.groupCandidates).toEqual(disabled.groupCandidates);
-    expect(enabled.log).toEqual(disabled.log);
-    expect(enabled.speechLog).toEqual(disabled.speechLog);
+    expect(enabled.finished).toBe(disabled.finished);
+    expect((enabled.speechReceptionLog ?? []).length).toBeGreaterThan(0);
+    expect((disabled.speechReceptionLog ?? []).length).toBe(0);
+  });
+
+  it("enabling Phase 3 effects can change agent outcomes (e.g. stress) compared to disabled, because effects now apply to stress/attractiveness/approach/leave decisions (Issue #96)", () => {
+    const preset = PRESETS[0];
+    const seed = 42;
+
+    const disabled = runToCompletion(seed, preset.params, false);
+    const enabled = runToCompletion(seed, preset.params, true);
+
+    // This is the intended, positive consequence of Issue #96: the two runs are no longer required to
+    // be identical once effects are enabled (unlike the Issue #93 structural-only contract above).
+    expect(enabled.agents).not.toEqual(disabled.agents);
   });
 });
 
