@@ -11,6 +11,13 @@ import type {
 import type { InterventionRuntimeOptions, InterventionScenarioId } from "./interventions";
 import type { SpeechEvent } from "./speech";
 import { createSpeechEvent, deriveSpeechEvents } from "./speech";
+import type { SpeechEffectsConfig } from "./speechEffects";
+import {
+  deriveSpeechEffects,
+  deriveSpeechInterpretations,
+  deriveSpeechReceptions,
+  resolveSpeechEffectsConfig,
+} from "./speechEffects";
 import {
   applyLightInvitationEffect,
   isUnderLightInvitationBoost,
@@ -74,8 +81,10 @@ export function createInitialState(
   seed: number,
   params: SimParams,
   intervention?: InterventionRuntimeOptions,
+  speechEffects?: Partial<SpeechEffectsConfig>,
 ): SimulationState {
   const scenario = resolveInterventionScenario(intervention);
+  const speechEffectsConfig = resolveSpeechEffectsConfig(speechEffects);
   const effectiveParams = resolveEffectiveParams(params, intervention);
   const agents = createInitialAgents(seed, effectiveParams);
   const log: LogEntry[] = [
@@ -146,6 +155,10 @@ export function createInitialState(
     finished: false,
     interventionId: scenario.id,
     speechLog: [],
+    speechReceptionLog: [],
+    speechInterpretationLog: [],
+    speechEffectLog: [],
+    speechEffectsEnabled: speechEffectsConfig.enabled,
   };
 }
 
@@ -273,6 +286,7 @@ export function stepSimulation(
   params: SimParams,
   rng: SeededRandom,
   intervention?: InterventionRuntimeOptions,
+  speechEffects?: Partial<SpeechEffectsConfig>,
 ): SimulationState {
   if (state.finished) return state;
 
@@ -282,6 +296,11 @@ export function stepSimulation(
     intervention ?? (state.interventionId ? { interventionId: state.interventionId } : undefined);
   const effectiveParams = resolveEffectiveParams(params, resolvedIntervention);
   const interventionId = resolveInterventionScenario(resolvedIntervention).id;
+  // Phase 3効果も同様に、未指定時は直前のstateの設定を引き継ぐ(呼び出し側の渡し忘れで
+  // 途中からOFFに戻ってしまわないようにする)。
+  const speechEffectsConfig = resolveSpeechEffectsConfig(
+    speechEffects ?? (state.speechEffectsEnabled !== undefined ? { enabled: state.speechEffectsEnabled } : undefined),
+  );
 
   const tick = state.tick + 1;
   const agents = state.agents.map((a) => ({ ...a }));
@@ -728,9 +747,25 @@ export function stepSimulation(
   // 発言主体がstate遷移そのものから一意に決まる(rngで選ばれない)ため、
   // 個別のロジック内で都度createSpeechEventを呼ぶ代わりにここでまとめて導出する。
   const derivedSpeechEvents = deriveSpeechEvents(state, nextState);
+  const tickSpeechEvents = [...speechEvents, ...derivedSpeechEvents];
+
+  // Phase 3: 認知 -> 解釈 -> 効果の一方向パイプライン。各段の結果を次の段へ明示的に渡すだけで、
+  // ここで生成される値がこのtick(またはそれ以降)の意思決定に使われることはない
+  // (speechEffectsConfig.enabled === falseの間は3関数とも空配列を返す)。
+  const tickReceptions = deriveSpeechReceptions(
+    tickSpeechEvents,
+    nextState.agents.map((a) => a.id),
+    speechEffectsConfig,
+  );
+  const tickInterpretations = deriveSpeechInterpretations(tickReceptions, tickSpeechEvents, speechEffectsConfig);
+  const tickEffects = deriveSpeechEffects(tickInterpretations, tickSpeechEvents, speechEffectsConfig);
 
   return {
     ...nextState,
     speechLog: [...(state.speechLog ?? []), ...speechEvents, ...derivedSpeechEvents],
+    speechReceptionLog: [...(state.speechReceptionLog ?? []), ...tickReceptions],
+    speechInterpretationLog: [...(state.speechInterpretationLog ?? []), ...tickInterpretations],
+    speechEffectLog: [...(state.speechEffectLog ?? []), ...tickEffects],
+    speechEffectsEnabled: speechEffectsConfig.enabled,
   };
 }
