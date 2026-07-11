@@ -12,6 +12,10 @@ import type { SpeechEvent, SpeechReason } from "./speech";
 const TEMPLATES: Record<SpeechReason, string> = {
   initiativeFormedCore: "もう一軒行く?",
   cliqueFormedCore: "もう一軒行く?",
+  formingGroupRecruitment: "こっちも一緒にどう?",
+  approachWelcome: "おいでおいで、こっちだよ",
+  joinGreeting: "合流できた、よろしく!",
+  leaveDeclaration: "今日はここで帰るね、また今度!",
   lightObserverInvitation: "よかったら一緒に行く?",
 };
 

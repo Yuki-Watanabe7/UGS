@@ -1,16 +1,32 @@
+import type { SimulationState } from "./types";
+
 /**
  * `SpeechEvent`が意味する発言の分類。「その発言が何を伝えるものか」を表す。
- * 現時点で発言生成箇所(engine.ts)が扱うのは、誰かを誘う発言のみ。
+ * Phase 2が扱うのは、誘う("invite")・歓迎する("welcome")・合流を告げる("greet")・
+ * 辞退を告げる("decline")の4種のみ。
  */
-export type SpeechIntent = "invite";
+export type SpeechIntent = "invite" | "welcome" | "greet" | "decline";
 
 /**
  * 発言が発生した構造的な理由。`SpeechEvent.textKey`のテンプレート参照キーにも使う。
  * - "initiativeFormedCore" / "cliqueFormedCore": 核形成時に founder が周囲を誘う発言
  *   (`ExpressionReason`の同名値と対応する状況だが、こちらは実際にエージェントが発した発言を表す)。
+ * - "formingGroupRecruitment": 既にできかけている核に新たな一人が加わる際、founder(その核の
+ *   memberIds[0])が重ねて周囲を誘う発言。
+ * - "approachWelcome": undecidedがforming/confirmedな輪へ接近を始めた際、その輪の代表
+ *   (memberIds[0])が接近者に向けて発する歓迎の発言。
+ * - "joinGreeting": 輪への到着・グループ成立により合流した本人が発する合流挨拶。
+ * - "leaveDeclaration": 曖昧な時間に耐えられず離脱を始めた本人が発する、辞退・帰宅表明。
  * - "lightObserverInvitation": `light-observer-invitation`介入で、observerJoinerに軽く声をかける発言。
  */
-export type SpeechReason = "initiativeFormedCore" | "cliqueFormedCore" | "lightObserverInvitation";
+export type SpeechReason =
+  | "initiativeFormedCore"
+  | "cliqueFormedCore"
+  | "formingGroupRecruitment"
+  | "approachWelcome"
+  | "joinGreeting"
+  | "leaveDeclaration"
+  | "lightObserverInvitation";
 
 /** 発言が届く範囲。特定の1人ではなく周囲へ向けた発言の場合に設定される(`target`とは排他) */
 export type SpeechAudience = "nearby";
@@ -68,4 +84,88 @@ export function createSpeechEvent(input: CreateSpeechEventInput): SpeechEvent {
     audience: input.audience,
     textKey: `speech.${input.reason}`,
   };
+}
+
+/**
+ * 直前/直後のシミュレーション状態を比較し、状態遷移そのものから一意に発言主体・発言内容が
+ * 決まる`SpeechEvent`を導出する純粋関数(`deriveExpressionEvents`と同様の設計だが、
+ * 責務は混在させない。ExpressionEventの生成には一切関与しない)。
+ *
+ * ここで扱うのは、遷移の当事者(またはその輪の代表=`GroupCandidate.memberIds[0]`、
+ * 常に既存のagentを指す)だけからspeakerIdを一意に特定できる4つのreasonのみ。
+ * 核形成(nucleusCreated)・`light-observer-invitation`招待は、rngで選ばれた発言主体を
+ * state差分だけから復元できないため対象外とし、engine.ts側で直接`createSpeechEvent`を呼ぶ。
+ *
+ * `SimulationState`・`SeededRandom`のいずれも受け取らず、mutationもしない。
+ */
+export function deriveSpeechEvents(previousState: SimulationState, nextState: SimulationState): SpeechEvent[] {
+  const events: SpeechEvent[] = [];
+  const previousById = new Map(previousState.agents.map((a) => [a.id, a]));
+
+  for (const agent of nextState.agents) {
+    const previousAgent = previousById.get(agent.id);
+    if (!previousAgent) continue;
+
+    if (previousAgent.state === "undecided" && agent.state === "forming") {
+      // memberIds[0]は常にその核を最初に立てたfounder。自分自身がfounderの場合は
+      // 新規核形成(nucleusCreated)側でengine.tsが既に発言しているのでここでは扱わない。
+      const candidate = nextState.groupCandidates.find(
+        (c) => c.status === "forming" && c.memberIds.includes(agent.id),
+      );
+      const founderId = candidate?.memberIds[0];
+      if (founderId && founderId !== agent.id) {
+        events.push(
+          createSpeechEvent({
+            tick: nextState.tick,
+            speakerId: founderId,
+            intent: "invite",
+            reason: "formingGroupRecruitment",
+            audience: "nearby",
+          }),
+        );
+      }
+    }
+
+    if (previousAgent.state === "undecided" && agent.state === "approaching") {
+      const candidate = nextState.groupCandidates.find((c) => c.id === agent.joinedGroupId);
+      const welcomerId = candidate?.memberIds[0];
+      if (welcomerId) {
+        events.push(
+          createSpeechEvent({
+            tick: nextState.tick,
+            speakerId: welcomerId,
+            intent: "welcome",
+            reason: "approachWelcome",
+            target: agent.id,
+          }),
+        );
+      }
+    }
+
+    if ((previousAgent.state === "approaching" || previousAgent.state === "forming") && agent.state === "joined") {
+      events.push(
+        createSpeechEvent({
+          tick: nextState.tick,
+          speakerId: agent.id,
+          intent: "greet",
+          reason: "joinGreeting",
+          audience: "nearby",
+        }),
+      );
+    }
+
+    if (previousAgent.state === "undecided" && agent.state === "leaving") {
+      events.push(
+        createSpeechEvent({
+          tick: nextState.tick,
+          speakerId: agent.id,
+          intent: "decline",
+          reason: "leaveDeclaration",
+          audience: "nearby",
+        }),
+      );
+    }
+  }
+
+  return events;
 }
