@@ -26,57 +26,92 @@ export type UseActiveExpressionsOptions = {
   maxConcurrent?: number;
 };
 
+/**
+ * `useActiveExpressions`が保持する状態一式。フック本体はこれを`useRef`で保持し、
+ * `advanceExpressionDisplay`にすべての分岐ロジックを委譲する。React/DOMに依存しないため、
+ * Pause/Step/Reset/seed変更・preset変更といったライフサイクル挙動をReactレンダリングなしに
+ * 単体テストできる(`useActiveExpressions.test.ts`参照)。
+ */
+export type ExpressionDisplayDriverState = {
+  resetKey: unknown;
+  prevSimState: SimulationState;
+  expressions: ActiveExpressionsState;
+  displayed: ThoughtBubbleDisplay[];
+};
+
+export function createExpressionDisplayDriverState(
+  simState: SimulationState,
+  resetKey: unknown,
+): ExpressionDisplayDriverState {
+  return { resetKey, prevSimState: simState, expressions: createActiveExpressionsState(), displayed: [] };
+}
+
+/**
+ * `simState`/`resetKey`の変化を1回分だけ反映した新しいdriver状態を返す純粋関数。
+ * 変化がない(Pause中の再呼び出し等)場合は`driver`をそのまま返す(参照が同じであることを
+ * 呼び出し側が「再レンダリング不要」の判定に使えるようにするため)。
+ */
+export function advanceExpressionDisplay(
+  driver: ExpressionDisplayDriverState,
+  simState: SimulationState,
+  resetKey: unknown,
+  seed: number,
+  options: UseActiveExpressionsOptions = {},
+): ExpressionDisplayDriverState {
+  const { enabled = true, maxConcurrent } = options;
+
+  if (driver.resetKey !== resetKey) {
+    return createExpressionDisplayDriverState(simState, resetKey);
+  }
+
+  // Pause中(simStateが変化していない)は何もしない。実時間だけで吹き出しが消えることはない。
+  if (driver.prevSimState === simState) return driver;
+
+  if (!enabled) {
+    // OFF中はderiveExpressionEvents自体を呼ばない(不要な処理の抑制)。prevSimStateだけは
+    // 進めておくことで、再度ONにした際にOFF中の全tick分のイベントが一気に噴き出すのを防ぐ。
+    return {
+      ...driver,
+      prevSimState: simState,
+      displayed: driver.displayed.length === 0 ? driver.displayed : [],
+    };
+  }
+
+  const events = deriveExpressionEvents(driver.prevSimState, simState, { seed });
+
+  const candidates = events.map((event) => {
+    const agent = simState.agents.find((a) => a.id === event.agentId);
+    const isObserverJoiner = agent?.isObserverJoiner ?? false;
+    return toExpressionBubbleCandidate(event, resolveExpressionEventText(event, isObserverJoiner), isObserverJoiner);
+  });
+
+  const expressions = applyExpressionEvents(driver.expressions, candidates, simState.tick, { maxConcurrent });
+  const displayed = Array.from(expressions.active.entries()).map(([agentId, bubble]) => ({
+    agentId,
+    text: bubble.text,
+    isObserverJoiner: bubble.isObserverJoiner,
+    intent: bubble.intent,
+  }));
+
+  return { resetKey, prevSimState: simState, expressions, displayed };
+}
+
 export function useActiveExpressions(
   simState: SimulationState,
   seed: number,
   resetKey: unknown,
   options: UseActiveExpressionsOptions = {},
 ): ThoughtBubbleDisplay[] {
-  const { enabled = true, maxConcurrent } = options;
-  const prevSimStateRef = useRef(simState);
-  const resetKeyRef = useRef(resetKey);
-  const expressionsRef = useRef<ActiveExpressionsState>(createActiveExpressionsState());
-  const [displayed, setDisplayed] = useState<ThoughtBubbleDisplay[]>([]);
+  const { enabled, maxConcurrent } = options;
+  const driverRef = useRef<ExpressionDisplayDriverState>(createExpressionDisplayDriverState(simState, resetKey));
+  const [displayed, setDisplayed] = useState<ThoughtBubbleDisplay[]>(driverRef.current.displayed);
 
   useEffect(() => {
-    if (resetKeyRef.current !== resetKey) {
-      resetKeyRef.current = resetKey;
-      expressionsRef.current = createActiveExpressionsState();
-      prevSimStateRef.current = simState;
-      setDisplayed([]);
-      return;
+    const next = advanceExpressionDisplay(driverRef.current, simState, resetKey, seed, { enabled, maxConcurrent });
+    if (next !== driverRef.current) {
+      driverRef.current = next;
+      setDisplayed(next.displayed);
     }
-
-    if (prevSimStateRef.current === simState) return;
-
-    if (!enabled) {
-      // OFF中はderiveExpressionEvents自体を呼ばない(不要な処理の抑制)。prevSimStateRefだけは
-      // 進めておくことで、再度ONにした際にOFF中の全tick分のイベントが一気に噴き出すのを防ぐ。
-      prevSimStateRef.current = simState;
-      setDisplayed((prev) => (prev.length === 0 ? prev : []));
-      return;
-    }
-
-    const events = deriveExpressionEvents(prevSimStateRef.current, simState, { seed });
-    prevSimStateRef.current = simState;
-
-    const candidates = events.map((event) => {
-      const agent = simState.agents.find((a) => a.id === event.agentId);
-      const isObserverJoiner = agent?.isObserverJoiner ?? false;
-      return toExpressionBubbleCandidate(event, resolveExpressionEventText(event, isObserverJoiner), isObserverJoiner);
-    });
-
-    expressionsRef.current = applyExpressionEvents(expressionsRef.current, candidates, simState.tick, {
-      maxConcurrent,
-    });
-    setDisplayed(
-      Array.from(expressionsRef.current.active.entries()).map(([agentId, bubble]) => ({
-        agentId,
-        text: bubble.text,
-        isObserverJoiner: bubble.isObserverJoiner,
-        intent: bubble.intent,
-      })),
-    );
   }, [simState, seed, resetKey, enabled, maxConcurrent]);
 
   return displayed;

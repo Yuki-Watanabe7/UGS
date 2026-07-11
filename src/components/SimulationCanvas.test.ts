@@ -87,3 +87,33 @@ describe("SimulationCanvas thought bubbles", () => {
     expect(html).toContain("もう帰ろう");
   });
 });
+
+describe("SimulationCanvas responsive rendering", () => {
+  const baseProps = { groupCandidates: [], width: 800, height: 520 };
+
+  it("renders the SVG at width=100% (scales with its container instead of a fixed pixel width, avoiding horizontal scroll on narrow/iPhone-width screens)", () => {
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, { ...baseProps, agents: [makeAgent({})] }),
+    );
+    expect(html).toContain('width="100%"');
+    expect(html).toContain(`viewBox="0 0 ${baseProps.width} ${baseProps.height}"`);
+  });
+
+  it("keeps the same width=100%/viewBox contract regardless of the number of active thought bubbles", () => {
+    const agents = [
+      makeAgent({ id: "agent-a", x: 50, y: 50 }),
+      makeAgent({ id: "agent-b", x: 750, y: 470, isObserverJoiner: true }),
+    ];
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        ...baseProps,
+        agents,
+        thoughts: [
+          { agentId: "agent-a", text: "近くに輪が見当たらないな" },
+          { agentId: "agent-b", text: "そろそろ潮時かもしれない" },
+        ],
+      }),
+    );
+    expect(html).toContain('width="100%"');
+  });
+});
