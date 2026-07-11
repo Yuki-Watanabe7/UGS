@@ -1,6 +1,31 @@
-import type { Agent, ObserverJoinerInspection, SimParams, SimulationState } from "./types";
+import type {
+  Agent,
+  ObserverJoinerInspection,
+  ObserverSpeechHistoryEntry,
+  SimParams,
+  SimulationState,
+} from "./types";
+import type { SpeechEvent } from "./speech";
 import { distance } from "./model";
 import { attractiveness, nearestCandidate } from "./engine";
+
+/**
+ * agentIdが関わる発言を、tick順のまま関わり方(speaker/target/audience)付きで抽出する。
+ * "nearby" audienceの簡略化についてはtypes.tsの`ObserverSpeechHistoryEntry`参照。
+ */
+function buildSpeechHistory(agentId: string, speechLog: SpeechEvent[]): ObserverSpeechHistoryEntry[] {
+  const history: ObserverSpeechHistoryEntry[] = [];
+  for (const event of speechLog) {
+    if (event.speakerId === agentId) {
+      history.push({ event, relation: "speaker" });
+    } else if (event.target === agentId) {
+      history.push({ event, relation: "target" });
+    } else if (event.audience === "nearby") {
+      history.push({ event, relation: "audience" });
+    }
+  }
+  return history;
+}
 
 function buildInspection(
   agent: Agent,
@@ -26,6 +51,7 @@ function buildInspection(
     attractivenessScore: candidate
       ? attractiveness(agent, candidate, state.agents, params, state.interventionId, state.tick)
       : undefined,
+    speechHistory: buildSpeechHistory(agent.id, state.speechLog ?? []),
   };
 }
 
