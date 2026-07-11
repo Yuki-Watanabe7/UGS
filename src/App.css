@@ -215,6 +215,23 @@
   line-height: 1.5;
 }
 
+.expression-display-settings {
+  flex-shrink: 0;
+}
+
+.expression-display-note {
+  font-size: 11.5px;
+  color: #8b93a5;
+  margin: -4px 0 10px;
+  line-height: 1.5;
+}
+
+.expression-display-toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
 .intervention-selector {
   flex-shrink: 0;
   border-color: #3f2f1a;
@@ -756,7 +773,7 @@
  * 3カラムのラッパー(.sidebar-left / .center-stage / .sidebar-right)を display: contents で
  * レイアウト上消し、各パネルを .app-main 直下のflexアイテムとして order で並べ替える。
  * JSXのDOM順(PC向け3カラム)は変えずに、スマホでは
- * 「Canvas → 基本操作 → 凡例 → 観察系パネル → 分析系パネル」の優先順位にする。
+ * 「Canvas → 基本操作 → 心の声表示設定 → 凡例 → 観察系パネル → 分析系パネル」の優先順位にする。
  */
 @media (max-width: 768px) {
   .app-header {
@@ -793,34 +810,38 @@
     order: 2;
   }
 
-  .intervention-selector {
+  .expression-display-settings {
     order: 3;
   }
 
-  .legend {
+  .intervention-selector {
     order: 4;
   }
 
-  .observer-inspector {
+  .legend {
     order: 5;
   }
 
-  .simulation-summary {
+  .observer-inspector {
     order: 6;
   }
 
-  .event-log {
+  .simulation-summary {
     order: 7;
+  }
+
+  .event-log {
+    order: 8;
   }
 
   /* .monte-carlo-panel は介入比較パネルにも付いているため、
      後着の .intervention-comparison-panel 指定で介入比較だけ最後に回す */
   .monte-carlo-panel {
-    order: 8;
+    order: 9;
   }
 
   .intervention-comparison-panel {
-    order: 9;
+    order: 10;
   }
 
   /* viewBoxによる縮小表示は活かしつつ、スマホで縦に大きすぎないよう制限する。
@@ -847,6 +868,11 @@
 
   .slider-field input[type="range"] {
     height: 32px;
+  }
+
+  .expression-display-toggle input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
   }
 
   .monte-carlo-panel button {

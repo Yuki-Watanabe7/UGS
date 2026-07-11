@@ -10,6 +10,7 @@ function makeCandidate(overrides: Partial<ExpressionBubbleCandidate>): Expressio
     agentId: "agent-a",
     text: "テスト",
     isObserverJoiner: false,
+    intent: "watching",
     priority: 1,
     eventTick: 0,
     ttlTicks: 12,

@@ -10,6 +10,13 @@ import { InterventionComparisonPanel } from "./components/InterventionComparison
 import { SimulationCanvas } from "./components/SimulationCanvas";
 import { ObserverJoinerInspector } from "./components/ObserverJoinerInspector";
 import { SimulationSummaryPanel } from "./components/SimulationSummaryPanel";
+import { ExpressionDisplaySettings } from "./components/ExpressionDisplaySettings";
+import {
+  DEFAULT_EXPRESSION_DISPLAY_SETTINGS,
+  EXPRESSION_DISPLAY_DENSITY_MAX_CONCURRENT,
+  filterThoughtsForDisplay,
+  type ExpressionDisplaySettingsState,
+} from "./components/expressionDisplayFilter";
 import { createInitialState, stepSimulation } from "./simulation/engine";
 import { SeededRandom } from "./simulation/random";
 import { getPresetById, PRESETS } from "./simulation/presets";
@@ -43,6 +50,11 @@ function App() {
   // Reset・プリセット変更・seed変更・再実行のたびにインクリメントする。useActiveExpressionsは
   // この値の変化を「新しい実行が始まった」シグナルとして扱い、古い心の声吹き出しを破棄する。
   const [runId, setRunId] = useState(0);
+  // 心の声の表示設定(ON/OFF・表示対象・表示密度)。表示層だけの設定であり、
+  // Reset・プリセット変更・seed変更のいずれでもリセットされない(Issue #66の完了条件)。
+  const [expressionDisplaySettings, setExpressionDisplaySettings] = useState<ExpressionDisplaySettingsState>(
+    DEFAULT_EXPRESSION_DISPLAY_SETTINGS,
+  );
 
   const rngRef = useRef(new SeededRandom(seed));
 
@@ -58,7 +70,11 @@ function App() {
     [],
   );
 
-  const activeThoughts = useActiveExpressions(simState, seed, runId);
+  const activeThoughts = useActiveExpressions(simState, seed, runId, {
+    enabled: expressionDisplaySettings.enabled,
+    maxConcurrent: EXPRESSION_DISPLAY_DENSITY_MAX_CONCURRENT[expressionDisplaySettings.density],
+  });
+  const visibleThoughts = filterThoughtsForDisplay(activeThoughts, expressionDisplaySettings.target);
 
   const hasPendingResetChanges = RESET_REQUIRED_PARAM_KEYS.some(
     (key) => params[key] !== appliedParams[key],
@@ -158,6 +174,10 @@ function App() {
             hasPendingResetChanges={hasPendingResetChanges}
             collapseSliders={isMobile}
           />
+          <ExpressionDisplaySettings
+            settings={expressionDisplaySettings}
+            onSettingsChange={setExpressionDisplaySettings}
+          />
           <InterventionSelector
             interventionId={interventionId}
             onInterventionChange={handleInterventionChange}
@@ -187,7 +207,7 @@ function App() {
             groupCandidates={simState.groupCandidates}
             width={simState.width}
             height={simState.height}
-            thoughts={activeThoughts}
+            thoughts={visibleThoughts}
           />
         </section>
 
