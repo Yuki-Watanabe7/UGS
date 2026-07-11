@@ -372,6 +372,8 @@ export function stepSimulation(
             intent: "invite",
             reason: hasInitiative ? "initiativeFormedCore" : "cliqueFormedCore",
             audience: "nearby",
+            originX: agent.x,
+            originY: agent.y,
           }),
         );
       }
@@ -408,6 +410,8 @@ export function stepSimulation(
           intent: "invite",
           reason: "lightObserverInvitation",
           target: agent.id,
+          originX: inviter.x,
+          originY: inviter.y,
         }),
       );
     }
@@ -752,11 +756,7 @@ export function stepSimulation(
   // Phase 3: 認知 -> 解釈 -> 効果の一方向パイプライン。各段の結果を次の段へ明示的に渡すだけで、
   // ここで生成される値がこのtick(またはそれ以降)の意思決定に使われることはない
   // (speechEffectsConfig.enabled === falseの間は3関数とも空配列を返す)。
-  const tickReceptions = deriveSpeechReceptions(
-    tickSpeechEvents,
-    nextState.agents.map((a) => a.id),
-    speechEffectsConfig,
-  );
+  const tickReceptions = deriveSpeechReceptions(tickSpeechEvents, nextState.agents, speechEffectsConfig);
   const tickInterpretations = deriveSpeechInterpretations(tickReceptions, tickSpeechEvents, speechEffectsConfig);
   const tickEffects = deriveSpeechEffects(tickInterpretations, tickSpeechEvents, speechEffectsConfig);
 

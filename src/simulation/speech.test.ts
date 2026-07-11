@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { createSpeechEvent, deriveSpeechEvents } from "./speech";
+import {
+  createSpeechEvent,
+  DEFAULT_SPEECH_RANGE,
+  DEFAULT_SPEECH_STRENGTH,
+  deriveSpeechEvents,
+  LIGHT_OBSERVER_INVITATION_RANGE,
+} from "./speech";
+import { WORLD_HEIGHT, WORLD_WIDTH } from "./model";
 import type { Agent, SimulationState } from "./types";
 
 describe("createSpeechEvent", () => {
@@ -10,6 +17,8 @@ describe("createSpeechEvent", () => {
       intent: "invite",
       reason: "initiativeFormedCore",
       audience: "nearby",
+      originX: 100,
+      originY: 50,
     });
 
     expect(event).toEqual({
@@ -21,7 +30,60 @@ describe("createSpeechEvent", () => {
       target: undefined,
       audience: "nearby",
       textKey: "speech.initiativeFormedCore",
+      originX: 100,
+      originY: 50,
+      range: DEFAULT_SPEECH_RANGE,
+      strength: DEFAULT_SPEECH_STRENGTH,
+      audibility: DEFAULT_SPEECH_RANGE * DEFAULT_SPEECH_STRENGTH,
     });
+  });
+
+  it("defaults originX/originY to (0, 0) when omitted (backward compatible with callers that don't pass a position)", () => {
+    const event = createSpeechEvent({
+      tick: 1,
+      speakerId: "agent-1",
+      intent: "invite",
+      reason: "initiativeFormedCore",
+      audience: "nearby",
+    });
+
+    expect(event.originX).toBe(0);
+    expect(event.originY).toBe(0);
+  });
+
+  it("uses an explicitly larger default range for lightObserverInvitation so it always reaches its target", () => {
+    const event = createSpeechEvent({
+      tick: 1,
+      speakerId: "helper",
+      intent: "invite",
+      reason: "lightObserverInvitation",
+      target: "observer",
+      originX: 0,
+      originY: 0,
+    });
+
+    expect(event.range).toBe(LIGHT_OBSERVER_INVITATION_RANGE);
+    // The audibility threshold must exceed the world diagonal so the worst-case fallback
+    // selection in selectInvitationAgent (interventions.ts) can never fail to reach its target.
+    expect(event.audibility).toBeGreaterThan(Math.hypot(WORLD_WIDTH, WORLD_HEIGHT));
+  });
+
+  it("allows an explicit range/strength override", () => {
+    const event = createSpeechEvent({
+      tick: 1,
+      speakerId: "agent-1",
+      intent: "invite",
+      reason: "initiativeFormedCore",
+      audience: "nearby",
+      originX: 0,
+      originY: 0,
+      range: 50,
+      strength: 2,
+    });
+
+    expect(event.range).toBe(50);
+    expect(event.strength).toBe(2);
+    expect(event.audibility).toBe(100);
   });
 
   it("supports a targeted (1:1) speech event without an audience", () => {
@@ -105,7 +167,7 @@ function makeState(tick: number, agents: Agent[], groupCandidates: SimulationSta
 
 describe("deriveSpeechEvents", () => {
   it("emits formingGroupRecruitment when a non-founder joins an already-forming candidate", () => {
-    const founder = makeAgent({ id: "founder", state: "forming" });
+    const founder = makeAgent({ id: "founder", state: "forming", x: 120, y: 90 });
     const joiner = makeAgent({ id: "joiner", state: "undecided" });
     const previousState = makeState(4, [founder, joiner]);
     const nextState = makeState(5, [founder, { ...joiner, state: "forming" }], [
@@ -122,6 +184,8 @@ describe("deriveSpeechEvents", () => {
       audience: "nearby",
       target: undefined,
       tick: 5,
+      originX: 120,
+      originY: 90,
     });
   });
 
@@ -136,7 +200,7 @@ describe("deriveSpeechEvents", () => {
   });
 
   it("emits approachWelcome, spoken by the candidate's first member, when someone starts approaching", () => {
-    const member = makeAgent({ id: "member", state: "joined", joinedGroupId: "group-1" });
+    const member = makeAgent({ id: "member", state: "joined", joinedGroupId: "group-1", x: 405, y: 258 });
     const approacher = makeAgent({ id: "approacher", state: "undecided" });
     const previousState = makeState(4, [member, approacher]);
     const nextState = makeState(
@@ -155,11 +219,13 @@ describe("deriveSpeechEvents", () => {
       target: "approacher",
       audience: undefined,
       tick: 5,
+      originX: 405,
+      originY: 258,
     });
   });
 
   it("emits joinGreeting spoken by the agent that just arrived, from either approaching or forming", () => {
-    const arriving = makeAgent({ id: "arriving", state: "approaching", joinedGroupId: "group-1" });
+    const arriving = makeAgent({ id: "arriving", state: "approaching", joinedGroupId: "group-1", x: 390, y: 270 });
     const previousState = makeState(4, [arriving]);
     const nextState = makeState(5, [{ ...arriving, state: "joined" }], [
       { id: "group-1", x: 400, y: 260, memberIds: ["arriving"], status: "confirmed", age: 3 },
@@ -175,11 +241,13 @@ describe("deriveSpeechEvents", () => {
       audience: "nearby",
       target: undefined,
       tick: 5,
+      originX: 390,
+      originY: 270,
     });
   });
 
   it("emits leaveDeclaration spoken by the agent that gives up waiting", () => {
-    const leaver = makeAgent({ id: "leaver", state: "undecided" });
+    const leaver = makeAgent({ id: "leaver", state: "undecided", x: 50, y: 480 });
     const previousState = makeState(4, [leaver]);
     const nextState = makeState(5, [{ ...leaver, state: "leaving" }]);
 
@@ -193,6 +261,8 @@ describe("deriveSpeechEvents", () => {
       audience: "nearby",
       target: undefined,
       tick: 5,
+      originX: 50,
+      originY: 480,
     });
   });
 
