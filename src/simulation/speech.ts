@@ -1,4 +1,5 @@
 import type { SimulationState } from "./types";
+import { WORLD_HEIGHT, WORLD_WIDTH } from "./model";
 
 /**
  * `SpeechEvent`が意味する発言の分類。「その発言が何を伝えるものか」を表す。
@@ -57,6 +58,23 @@ export type SpeechEvent = {
   audience?: SpeechAudience;
   /** 表示文言そのものではなく、テンプレート参照キー。実際の文言解決はUI側の責務(`speechTemplates.ts`) */
   textKey: string;
+  /**
+   * 発言時点の話者位置(x, y)のimmutableなスナップショット(Phase 3.1、Issue #94)。
+   * `speechEffects.ts`の`deriveSpeechReceptions`はこの値を基準に受け手までの距離を計算するため、
+   * 発言後にagentが移動してもこのフィールド自体は変化しない(認知結果が発言後の移動やReplay・
+   * Canvas表示状態で変わらないことの技術的な保証)。
+   */
+  originX: number;
+  originY: number;
+  /** 発言が届きうる基礎距離(到達範囲)。認知判定の実際の閾値は`audibility`(= range * strength)を使う */
+  range: number;
+  /** 発言の強さ。rangeへの倍率として働く(叫ぶ/ささやく等、将来の強弱表現の余地として持たせる) */
+  strength: number;
+  /**
+   * 認知判定に使う実際の閾値距離(= range * strength)。`speechEffects.ts`の`deriveSpeechReceptions`が
+   * 受け手候補との距離と比較する値そのもので、生成時に一度だけ計算される。
+   */
+  audibility: number;
 };
 
 export type CreateSpeechEventInput = {
@@ -74,7 +92,41 @@ export type CreateSpeechEventInput = {
    * `target`が設定されている場合はそちらが既に一意性を持つためidSuffixは無視される。
    */
   idSuffix?: string;
+  /**
+   * 発言時点の話者位置。省略時は(0, 0)にフォールバックする(座標を渡さない既存の呼び出し元
+   * ―表示・テンプレート系のユニットテスト等―との後方互換のため)。`engine.ts`本体の生成経路
+   * (`deriveSpeechEvents`および直接呼び出し)は必ず実座標を渡す。
+   */
+  originX?: number;
+  originY?: number;
+  /** 到達範囲(距離)。省略時はreasonごとの既定値(`resolveRange`参照)を使う */
+  range?: number;
+  /** 発言の強さ。省略時は`DEFAULT_SPEECH_STRENGTH`(1) */
+  strength?: number;
 };
+
+/** 発言の既定到達距離。世界の一部を覆う程度(engine.tsのGROUP_GATHER_RADIUS=60より広め)に設定 */
+export const DEFAULT_SPEECH_RANGE = 200;
+/** 発言の既定の強さ。rangeにそのまま乗算されるため1が基準値 */
+export const DEFAULT_SPEECH_STRENGTH = 1;
+/**
+ * `light-observer-invitation`専用の到達距離(Issue #94: 既存介入が意図したtargetへ確実に届くための
+ * 明示的な設定値)。`selectInvitationAgent`(interventions.ts)は近傍(LIGHT_INVITATION_SEARCH_RADIUS=160)
+ * に候補がいなければ、距離を問わず最寄りの非observerJoinerにフォールバックするため、話者から
+ * observerJoinerまでの距離はワールド対角線近くまで離れうる。ワールド対角線(WORLD_WIDTH×WORLD_HEIGHT)
+ * より確実に広く取ることで、この介入の声かけが常にobserverJoinerに届く(heard: true になる)ことを保証する。
+ */
+export const LIGHT_OBSERVER_INVITATION_RANGE = Math.ceil(Math.hypot(WORLD_WIDTH, WORLD_HEIGHT)) + 50;
+
+/** reasonごとの既定range。表に無いreasonは`DEFAULT_SPEECH_RANGE`を使う */
+const REASON_DEFAULT_RANGE: Partial<Record<SpeechReason, number>> = {
+  lightObserverInvitation: LIGHT_OBSERVER_INVITATION_RANGE,
+};
+
+function resolveRange(reason: SpeechReason, override?: number): number {
+  if (override !== undefined) return override;
+  return REASON_DEFAULT_RANGE[reason] ?? DEFAULT_SPEECH_RANGE;
+}
 
 /**
  * `SpeechEvent`を組み立てる唯一の生成口(発言生成境界)。engine.tsはこの関数を通してのみ
@@ -87,6 +139,8 @@ export type CreateSpeechEventInput = {
  */
 export function createSpeechEvent(input: CreateSpeechEventInput): SpeechEvent {
   const disambiguator = input.target ?? input.idSuffix;
+  const range = resolveRange(input.reason, input.range);
+  const strength = input.strength ?? DEFAULT_SPEECH_STRENGTH;
   return {
     id: `speech-${input.tick}-${input.speakerId}-${input.reason}${disambiguator ? `-${disambiguator}` : ""}`,
     tick: input.tick,
@@ -96,6 +150,11 @@ export function createSpeechEvent(input: CreateSpeechEventInput): SpeechEvent {
     target: input.target,
     audience: input.audience,
     textKey: `speech.${input.reason}`,
+    originX: input.originX ?? 0,
+    originY: input.originY ?? 0,
+    range,
+    strength,
+    audibility: range * strength,
   };
 }
 
@@ -114,6 +173,9 @@ export function createSpeechEvent(input: CreateSpeechEventInput): SpeechEvent {
 export function deriveSpeechEvents(previousState: SimulationState, nextState: SimulationState): SpeechEvent[] {
   const events: SpeechEvent[] = [];
   const previousById = new Map(previousState.agents.map((a) => [a.id, a]));
+  // 発言時点(nextState.tick)の話者位置スナップショットを取るため、話者候補(founder/welcomer)の
+  // 実座標をnextState側から引く。
+  const nextById = new Map(nextState.agents.map((a) => [a.id, a]));
 
   for (const agent of nextState.agents) {
     const previousAgent = previousById.get(agent.id);
@@ -126,15 +188,18 @@ export function deriveSpeechEvents(previousState: SimulationState, nextState: Si
         (c) => c.status === "forming" && c.memberIds.includes(agent.id),
       );
       const founderId = candidate?.memberIds[0];
-      if (founderId && founderId !== agent.id) {
+      const founder = founderId ? nextById.get(founderId) : undefined;
+      if (founder && founder.id !== agent.id) {
         events.push(
           createSpeechEvent({
             tick: nextState.tick,
-            speakerId: founderId,
+            speakerId: founder.id,
             intent: "invite",
             reason: "formingGroupRecruitment",
             audience: "nearby",
             idSuffix: agent.id,
+            originX: founder.x,
+            originY: founder.y,
           }),
         );
       }
@@ -143,14 +208,17 @@ export function deriveSpeechEvents(previousState: SimulationState, nextState: Si
     if (previousAgent.state === "undecided" && agent.state === "approaching") {
       const candidate = nextState.groupCandidates.find((c) => c.id === agent.joinedGroupId);
       const welcomerId = candidate?.memberIds[0];
-      if (welcomerId) {
+      const welcomer = welcomerId ? nextById.get(welcomerId) : undefined;
+      if (welcomer) {
         events.push(
           createSpeechEvent({
             tick: nextState.tick,
-            speakerId: welcomerId,
+            speakerId: welcomer.id,
             intent: "welcome",
             reason: "approachWelcome",
             target: agent.id,
+            originX: welcomer.x,
+            originY: welcomer.y,
           }),
         );
       }
@@ -164,6 +232,8 @@ export function deriveSpeechEvents(previousState: SimulationState, nextState: Si
           intent: "greet",
           reason: "joinGreeting",
           audience: "nearby",
+          originX: agent.x,
+          originY: agent.y,
         }),
       );
     }
@@ -176,6 +246,8 @@ export function deriveSpeechEvents(previousState: SimulationState, nextState: Si
           intent: "decline",
           reason: "leaveDeclaration",
           audience: "nearby",
+          originX: agent.x,
+          originY: agent.y,
         }),
       );
     }

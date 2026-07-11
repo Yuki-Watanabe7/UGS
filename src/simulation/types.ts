@@ -214,9 +214,11 @@ export type SimulationState = {
  * (speaker > target > audienceの優先順で判定。話者と対象/audienceが同一tickで重なることはない)。
  * - "speaker": 自分がその発言の話者
  * - "target": 自分がその発言の明示的なtarget
- * - "audience": `audience === "nearby"`の発言。Phase 2時点では発言時点の実座標近接判定を
- *   保持していないため、"nearby"な発言はobserverJoinerを含む全エージェントにとって
- *   audience対象とみなす簡略化を採る(inspection.ts参照)。
+ * - "audience": `audience === "nearby"`の発言。ここでは引き続き、observerJoinerを含む全エージェントを
+ *   audience対象とみなす簡略化を採る(inspection.ts参照)。Issue #94により実座標近接判定に基づく
+ *   `SpeechReceptionEvent`(`speechEffects.ts`、`SimulationState.speechReceptionLog`)は導入済みだが、
+ *   Inspector表示をそちらに切り替える対応はこのissueのスコープ外(対応しない範囲: UI表示)のため、
+ *   この簡略化は意図的に維持している。
  */
 export type SpeechRelation = "speaker" | "target" | "audience";
 

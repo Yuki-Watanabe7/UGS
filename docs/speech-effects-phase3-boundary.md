@@ -54,6 +54,10 @@ SpeechEvent --(deriveSpeechReceptions)--> SpeechReceptionEvent
 - **距離に基づく具体的な認知判定**: `deriveSpeechReceptions`はPhase 2までの`target`/
   `audience: "nearby"`という二値モデルをそのまま使う。座標・範囲は一切見ない
   (`docs/speech-event-intervention-boundary.md`の4節で予告されていた拡張点)。
+
+  > **Phase 3.1対応済み(Issue #94)**: `SpeechEvent`に発言時点位置(`originX`/`originY`)・
+  > `range`/`strength`/`audibility`を追加し、`deriveSpeechReceptions`は実際の距離としきい値で
+  > `heard`を決定的に判定するようになった。詳細は`docs/speech-reception-distance-model.md`参照。
 - **性格・関係性に基づく解釈式**: `deriveSpeechInterpretations`は発言の`intent`のみを
   入力要因とする固定の対応表(`INTENT_VALENCE`)で解釈する。受け手の`willingness`/
   `influenceAvoidance`等の性格パラメータや`cliqueId`(既存関係性)は一切参照しない。
