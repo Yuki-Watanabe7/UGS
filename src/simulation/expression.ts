@@ -1,4 +1,6 @@
 import type { Agent, SimulationState } from "./types";
+import { nearestCandidate } from "./engine";
+import { getExpressionVariantCount } from "./expressionTemplates";
 
 /**
  * 観察用表現イベントの種別。
@@ -15,7 +17,11 @@ export type ExpressionIntent =
   | "joinedGroup"
   | "givingUpWaiting"
   | "leftEvent"
-  | "noticedInvitation";
+  | "noticedInvitation"
+  | "stressRising"
+  | "consideringLeaving"
+  | "hesitating"
+  | "watching";
 
 /** 表現イベントが発生した構造的な理由。表示文言テンプレートの選択キーとして使う想定 */
 export type ExpressionReason =
@@ -27,7 +33,11 @@ export type ExpressionReason =
   | "arrivedAtConfirmedGroup"
   | "ambiguityStressExceeded"
   | "reachedScreenEdge"
-  | "receivedLightInvitation";
+  | "receivedLightInvitation"
+  | "stressCrossedRisingThreshold"
+  | "stressNearLeaveThreshold"
+  | "nearbyGroupUnapproached"
+  | "noJoinableGroupNearby";
 
 /**
  * 観察専用の構造化表現イベント。SimulationCanvas上で一時的に表示する「心の声」の元データ。
@@ -66,19 +76,50 @@ const DEFAULT_PRIORITY = 1;
 const OBSERVER_PRIORITY = 2;
 const DEFAULT_TTL_TICKS = 12;
 const OBSERVER_TTL_TICKS = 16;
-const TEXT_VARIANT_COUNT = 3;
+
+// undecided状態が続く間、stressがleaveThresholdに対してこの比率を初めて超えたら
+// 「まだ疲れてきた」心の声を一度だけ出す(以後stressが下がって再度超えない限り出さない)
+const STRESS_RISING_RATIO = 0.5;
+// 同様に、この比率を初めて超えたら「そろそろ潮時」の警告を一度だけ出す。
+// 1.0を超えると実際にleaving状態へ遷移し、別のgivingUpWaiting(ambiguityStressExceeded)が出る
+const LEAVE_WARNING_RATIO = 0.85;
+// hesitating/watching(状態遷移を伴わない、継続的な状況に基づく心の声)を
+// 同一agentについて毎tick出さないための周期。agentIdごとの位相をずらして一斉発火を避ける
+const WATCHING_COOLDOWN_TICKS = 8;
 
 /**
- * `seed + tick + agentId + intent`から決定的にバリエーションを選ぶ。
- * 本体PRNG(`SeededRandom`)を消費しない、表示専用の純粋な文字列ハッシュ。
+ * 文字列から決定的な非負ハッシュ値を作る、表示専用の純粋関数。
+ * 本体PRNG(`SeededRandom`)を消費しない。
  */
-function pickTextVariant(context: ExpressionDerivationContext, tick: number, agent: Agent, intent: ExpressionIntent): number {
-  const key = `${context.seed}:${tick}:${agent.id}:${intent}`;
+function hashString(key: string): number {
   let hash = 0;
   for (let i = 0; i < key.length; i++) {
     hash = (hash * 31 + key.charCodeAt(i)) | 0;
   }
-  return Math.abs(hash) % TEXT_VARIANT_COUNT;
+  return Math.abs(hash);
+}
+
+/**
+ * `seed + tick + agentId + reason`から決定的にテンプレートのバリエーションを選ぶ。
+ * 完了条件「同じseed・tick・agent・判断理由では同じ表現が選ばれる」に対応するため、
+ * ハッシュキーは(intentではなく)reasonを使う。バリエーション数はテンプレート側の
+ * 実際の配列長(`expressionTemplates.ts`、observerJoinerかどうかで異なりうる)に従う。
+ */
+function pickTextVariant(
+  context: ExpressionDerivationContext,
+  tick: number,
+  agent: Agent,
+  reason: ExpressionReason,
+): number {
+  const key = `${context.seed}:${tick}:${agent.id}:${reason}`;
+  const variantCount = getExpressionVariantCount(reason, agent.isObserverJoiner);
+  return hashString(key) % variantCount;
+}
+
+/** agentごとに位相をずらした、決定的な(乱数を使わない)cooldownスケジュール判定 */
+function isOnWatchingCooldownSchedule(agentId: string, tick: number): boolean {
+  const phase = hashString(agentId) % WATCHING_COOLDOWN_TICKS;
+  return tick % WATCHING_COOLDOWN_TICKS === phase;
 }
 
 function buildEvent(
@@ -88,7 +129,7 @@ function buildEvent(
   intent: ExpressionIntent,
   reason: ExpressionReason,
 ): ExpressionEvent {
-  const variant = pickTextVariant(context, tick, agent, intent);
+  const variant = pickTextVariant(context, tick, agent, reason);
   return {
     id: `expr-${tick}-${agent.id}-${intent}`,
     tick,
@@ -139,6 +180,45 @@ function deriveStateTransitionEvent(
 }
 
 /**
+ * 状態遷移を伴わない、undecidedが継続している間の心の声を導出する。
+ * `deriveStateTransitionEvent`とは独立した抑制ルールを持つ:
+ * - stress関連(stressRising/consideringLeaving)は「閾値を初めて跨いだ時のみ」
+ *   (`previousAgent`との比較によって、同じ局面での連続発生を防ぐ)
+ * - hesitating/watchingは状態遷移もstress閾値超過も伴わない持続的な状況のため、
+ *   agentIdから決定的に導いた位相でtickごとのcooldownをかける(毎tick出し続けない)
+ */
+function deriveContinuousConditionEvents(
+  context: ExpressionDerivationContext,
+  previousAgent: Agent,
+  agent: Agent,
+  nextState: SimulationState,
+): ExpressionEvent[] {
+  if (previousAgent.state !== "undecided" || agent.state !== "undecided") return [];
+
+  const events: ExpressionEvent[] = [];
+
+  const previousRatio = previousAgent.stress / previousAgent.leaveThreshold;
+  const ratio = agent.stress / agent.leaveThreshold;
+  if (previousRatio < STRESS_RISING_RATIO && ratio >= STRESS_RISING_RATIO) {
+    events.push(buildEvent(context, nextState.tick, agent, "stressRising", "stressCrossedRisingThreshold"));
+  }
+  if (previousRatio < LEAVE_WARNING_RATIO && ratio >= LEAVE_WARNING_RATIO) {
+    events.push(buildEvent(context, nextState.tick, agent, "consideringLeaving", "stressNearLeaveThreshold"));
+  }
+
+  if (isOnWatchingCooldownSchedule(agent.id, nextState.tick)) {
+    const nearby = nearestCandidate(agent, nextState.groupCandidates);
+    events.push(
+      nearby
+        ? buildEvent(context, nextState.tick, agent, "hesitating", "nearbyGroupUnapproached")
+        : buildEvent(context, nextState.tick, agent, "watching", "noJoinableGroupNearby"),
+    );
+  }
+
+  return events;
+}
+
+/**
  * 直前/直後のシミュレーション状態を比較し、観察用表現イベントを導出する純粋関数。
  *
  * 設計上の境界(重要):
@@ -164,6 +244,8 @@ export function deriveExpressionEvents(
       const event = deriveStateTransitionEvent(context, previousAgent, agent, nextState);
       if (event) events.push(event);
     }
+
+    events.push(...deriveContinuousConditionEvents(context, previousAgent, agent, nextState));
 
     if (previousAgent.invitedAtTick === undefined && agent.invitedAtTick !== undefined) {
       events.push(buildEvent(context, nextState.tick, agent, "noticedInvitation", "receivedLightInvitation"));
