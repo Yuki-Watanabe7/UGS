@@ -652,13 +652,24 @@ export function stepSimulation(
     }
   }
 
-  // forming状態のまま、所属していた候補が解散/期限切れになったエージェントはundecidedに戻す
-  // (輪自体が消えたので、意思決定をやり直す)
+  // 所属していた輪が解散/期限切れ/消滅したエージェントはundecidedに戻す
+  // (輪自体が消えたので、意思決定をやり直す)。
+  // - forming: 自分がまだforming候補に属しているかで判定する。
+  // - joined: 未確定(forming)の輪に合流したあとその輪が成立せず消えた場合、
+  //   joinedのまま孤立して「参加済み」に数え続けられてしまうため、所属先が
+  //   まだjoinable(forming/confirmed)で自分を含んでいるかで判定して戻す。
   for (const agent of agents) {
-    if (agent.state !== "forming") continue;
-    const stillForming = candidates.some((c) => c.status === "forming" && c.memberIds.includes(agent.id));
-    if (!stillForming) {
-      agent.state = "undecided";
+    if (agent.state === "forming") {
+      const stillForming = candidates.some((c) => c.status === "forming" && c.memberIds.includes(agent.id));
+      if (!stillForming) {
+        agent.state = "undecided";
+      }
+    } else if (agent.state === "joined") {
+      const candidate = candidates.find((c) => c.id === agent.joinedGroupId);
+      if (!candidate || !isJoinable(candidate) || !candidate.memberIds.includes(agent.id)) {
+        agent.state = "undecided";
+        agent.joinedGroupId = undefined;
+      }
     }
   }
 
