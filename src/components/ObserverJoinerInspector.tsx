@@ -3,12 +3,22 @@ import type {
   AgentState,
   GroupCandidateStatus,
   ObserverJoinerInspection,
+  ObserverSpeechEffectDetail,
   ObserverSpeechHistoryEntry,
   SimParams,
   SimulationState,
   SpeechRelation,
 } from "../simulation/types";
 import { buildAgentLabelMap, formatSpeechDebugMeta, formatSpeechLogMessage } from "./speechDisplay";
+import {
+  formatActiveEffectStatusLine,
+  formatAggregatedEffectSummary,
+  formatContributionLine,
+  formatEffectLine,
+  formatInterpretationFactorLine,
+  formatInterpretationLine,
+  formatReceptionLine,
+} from "./speechEffectsDisplay";
 
 type Props = {
   state: SimulationState;
@@ -49,11 +59,76 @@ function formatDistance(value: number): string {
   return value.toFixed(1);
 }
 
+/**
+ * `entry`(発言1件)の認知/解釈/効果の因果詳細を折りたたみ表示する(Issue #98)。
+ * どの段まで進んだか(認知されなかった/解釈が中立だった/効果が既に失効した等)を、
+ * 各段の有無から文言として明示する — 「非認知・効果なしの理由も確認できる」の受入条件に対応。
+ */
+function SpeechEffectDetailBlock({
+  detail,
+  labelById,
+}: {
+  detail: ObserverSpeechEffectDetail;
+  labelById: Map<string, string>;
+}) {
+  if (!detail.reception && !detail.interpretation && !detail.effect) {
+    return (
+      <p className="observer-inspector-effect-empty">
+        発言効果の記録なし(Phase 3効果が無効、またはこのagentが認知対象になっていない)
+      </p>
+    );
+  }
+
+  return (
+    <details className="observer-inspector-effect-details">
+      <summary>発言効果の詳細</summary>
+
+      {detail.reception ? (
+        <div className="observer-inspector-effect-line">{formatReceptionLine(detail.reception, labelById)}</div>
+      ) : (
+        <div className="observer-inspector-effect-line">認知記録なし</div>
+      )}
+
+      {detail.reception && !detail.reception.heard && (
+        <p className="observer-inspector-effect-reason">非認知理由: 圏外({detail.reception.reason})</p>
+      )}
+
+      {detail.reception?.heard && !detail.interpretation && (
+        <p className="observer-inspector-effect-reason">届いたが解釈記録なし</p>
+      )}
+
+      {detail.interpretation && (
+        <>
+          <div className="observer-inspector-effect-line">{formatInterpretationLine(detail.interpretation, labelById)}</div>
+          <ul className="observer-inspector-factor-list">
+            {detail.interpretation.factors.map((factor) => (
+              <li key={factor.key}>{formatInterpretationFactorLine(factor)}</li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {detail.interpretation && detail.interpretation.valence === "neutral" && !detail.effect && (
+        <p className="observer-inspector-effect-reason">解釈が中立だったため効果は発生しなかった</p>
+      )}
+
+      {detail.effect && (
+        <>
+          <div className="observer-inspector-effect-line">{formatEffectLine(detail.effect, labelById)}</div>
+          <div className="observer-inspector-effect-line">{formatActiveEffectStatusLine(detail.activeEffectStatus)}</div>
+        </>
+      )}
+    </details>
+  );
+}
+
 function SpeechHistoryEntry({
   entry,
+  detail,
   labelById,
 }: {
   entry: ObserverSpeechHistoryEntry;
+  detail?: ObserverSpeechEffectDetail;
   labelById: Map<string, string>;
 }) {
   return (
@@ -63,6 +138,53 @@ function SpeechHistoryEntry({
         {formatSpeechLogMessage(entry.event, labelById)}
       </div>
       <div className="observer-inspector-speech-meta">{formatSpeechDebugMeta(entry.event, labelById)}</div>
+      {detail && <SpeechEffectDetailBlock detail={detail} labelById={labelById} />}
+    </div>
+  );
+}
+
+/**
+ * 現在このagentに作用しているPhase 3効果を、dimensionごとの集約値+個別寄与(speechEventIdの列挙)で
+ * 表示する(Issue #98)。複数の発言が同じdimensionへ寄与している場合、正/負/重複の内訳を分けて示す。
+ */
+function ActiveEffectSummaryList({
+  summaries,
+  labelById,
+}: {
+  summaries: ObserverJoinerInspection["activeEffectSummaries"];
+  labelById: Map<string, string>;
+}) {
+  if (summaries.length === 0) {
+    return <p className="observer-inspector-speech-empty">現在作用中の発言効果はありません。</p>;
+  }
+  return (
+    <div className="observer-inspector-speech-list">
+      {summaries.map((summary) => (
+        <div key={`${summary.dimension}-${summary.targetGroupId ?? ""}`} className="observer-inspector-speech-entry">
+          <div className="observer-inspector-speech-message">{formatAggregatedEffectSummary(summary)}</div>
+          {summary.positiveContributions.length > 0 && (
+            <ul className="observer-inspector-factor-list">
+              {summary.positiveContributions.map((c) => (
+                <li key={c.speechActiveEffectId}>+ {formatContributionLine(c, labelById)}</li>
+              ))}
+            </ul>
+          )}
+          {summary.negativeContributions.length > 0 && (
+            <ul className="observer-inspector-factor-list">
+              {summary.negativeContributions.map((c) => (
+                <li key={c.speechActiveEffectId}>- {formatContributionLine(c, labelById)}</li>
+              ))}
+            </ul>
+          )}
+          {summary.duplicateContributions.length > 0 && (
+            <ul className="observer-inspector-factor-list">
+              {summary.duplicateContributions.map((c) => (
+                <li key={c.speechActiveEffectId}>(重複・不採用) {formatContributionLine(c, labelById)}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -133,9 +255,26 @@ function InspectionCard({
             <span>{formatDistance(inspection.nearestGroupDistance as number)}</span>
           </div>
           <div className="observer-inspector-row">
-            <span>attractiveness</span>
+            <span>attractiveness(適用後)</span>
             <span>{formatRatio(inspection.attractivenessScore as number)}</span>
           </div>
+          {inspection.attractivenessScoreBeforeEffects !== undefined &&
+            inspection.attractivenessScoreBeforeEffects !== inspection.attractivenessScore && (
+              <>
+                <div className="observer-inspector-row">
+                  <span>attractiveness(適用前)</span>
+                  <span>{formatRatio(inspection.attractivenessScoreBeforeEffects)}</span>
+                </div>
+                <div className="observer-inspector-row">
+                  <span>うち発言効果による補正</span>
+                  <span>
+                    {formatRatio(
+                      (inspection.attractivenessScore as number) - inspection.attractivenessScoreBeforeEffects,
+                    )}
+                  </span>
+                </div>
+              </>
+            )}
         </>
       ) : (
         <div className="observer-inspector-row">
@@ -153,11 +292,23 @@ function InspectionCard({
         <p className="observer-inspector-speech-empty">まだ関連する発言はありません。</p>
       ) : (
         <div className="observer-inspector-speech-list">
-          {inspection.speechHistory.map((entry) => (
-            <SpeechHistoryEntry key={entry.event.id} entry={entry} labelById={labelById} />
+          {inspection.speechHistory.map((entry, i) => (
+            <SpeechHistoryEntry
+              key={entry.event.id}
+              entry={entry}
+              detail={inspection.speechEffectDetails[i]}
+              labelById={labelById}
+            />
           ))}
         </div>
       )}
+
+      <div className="observer-inspector-divider" />
+
+      <div className="observer-inspector-row observer-inspector-row--header">
+        <span>現在作用中の発言効果</span>
+      </div>
+      <ActiveEffectSummaryList summaries={inspection.activeEffectSummaries} labelById={labelById} />
     </div>
   );
 }

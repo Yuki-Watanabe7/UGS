@@ -20,7 +20,8 @@ export function buildAgentLabelMap(agents: Agent[]): Map<string, string> {
   return new Map(agents.map((agent) => [agent.id, agent.label]));
 }
 
-function resolveLabel(agentId: string, labelById: Map<string, string>): string {
+/** agentId → 表示ラベルの解決。EventLog/ObserverJoinerInspectorに加え、speechEffectsDisplayでも共有する */
+export function resolveLabel(agentId: string, labelById: Map<string, string>): string {
   return labelById.get(agentId) ?? agentId;
 }
 

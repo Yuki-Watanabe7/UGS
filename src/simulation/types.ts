@@ -1,6 +1,7 @@
 import type { InterventionRuntimeOptions, InterventionScenarioId } from "./interventions";
 import type { SpeechEvent } from "./speech";
 import type {
+  AggregatedActiveEffect,
   SpeechActiveEffect,
   SpeechEffectEvent,
   SpeechInterpretationEvent,
@@ -241,6 +242,37 @@ export type ObserverSpeechHistoryEntry = {
 };
 
 /**
+ * `SpeechActiveEffect`のうち、現在も`SimulationState.activeSpeechEffects`に残っている分の
+ * 状態(Issue #98)。効果は生成された(`SpeechEffectEvent`は存在する)が既に失効/再発言による
+ * 置換(`registerActiveSpeechEffects`)で取り除かれている場合、この型は生成されず`undefined`になる。
+ */
+export type ObserverActiveEffectStatus = {
+  initialStrength: number;
+  currentStrength: number;
+  startedAtTick: number;
+  expiresAtTick: number;
+  /** 現在tick時点での残りtick数(`expiresAtTick - tick`、0未満にはならない) */
+  remainingTicks: number;
+};
+
+/**
+ * observerJoinerに関わる発言1件(`ObserverSpeechHistoryEntry`と`speechEventId`で対応する)について、
+ * 認知(`SpeechReceptionEvent`)→解釈(`SpeechInterpretationEvent`)→効果(`SpeechEffectEvent`)→
+ * 現在の適用状況(`ObserverActiveEffectStatus`)の因果チェーンを1件ずつひも付けたもの(Issue #98)。
+ * 各段は、Phase 3効果が無効(`speechEffectsEnabled: false`)、またはその段に到達しなかった場合
+ * (圏外で認知されなかった/解釈がneutralで効果が生成されなかった/効果が既に失効・置換された)は
+ * `undefined`になる。「非認知・効果なしの理由」は、後続の段がすべて`undefined`であることと
+ * `reception.reason`/`interpretation.valence`から読み取れる。
+ */
+export type ObserverSpeechEffectDetail = {
+  speechEventId: string;
+  reception?: SpeechReceptionEvent;
+  interpretation?: SpeechInterpretationEvent;
+  effect?: SpeechEffectEvent;
+  activeEffectStatus?: ObserverActiveEffectStatus;
+};
+
+/**
  * observerJoiner一人分の観察用データ。UI(inspector表示)から安全に参照できるよう、
  * engine.ts内部のロジック結果を読み取り専用の形にまとめたもの。
  * 最寄りの合流可能な輪(joinableなGroupCandidate)が存在しない場合、
@@ -262,8 +294,25 @@ export type ObserverJoinerInspection = {
   nearestGroupMemberCount?: number;
   nearestGroupDistance?: number;
   attractivenessScore?: number;
+  /**
+   * `attractivenessScore`からPhase 3の発言効果(welcome由来のattractiveness補正)を除いた基準値
+   * (Issue #98)。`nearestGroupId`が存在する場合のみ設定される。`attractivenessScore`との差が
+   * 「発言効果によって最寄りの輪の魅力度がどれだけ補正されたか」を表す(適用前値/適用後値)。
+   */
+  attractivenessScoreBeforeEffects?: number;
   /** このobserverJoinerが話者/target/audienceのいずれかとして関わった発言の履歴。tick順 */
   speechHistory: ObserverSpeechHistoryEntry[];
+  /**
+   * `speechHistory`と同じ発言集合について、認知/解釈/効果の因果詳細を`speechEventId`でひも付けた
+   * もの(`speechHistory`と同じ順序・同じ長さ、Issue #98)。
+   */
+  speechEffectDetails: ObserverSpeechEffectDetail[];
+  /**
+   * 現在このagentに作用しているPhase 3効果を、dimension(・attractivenessならtargetGroupId)ごとに
+   * 集約したもの(Issue #97の`aggregateActiveEffects`をそのまま利用)。集約値だけでなく、
+   * 寄与した各`speechEventId`ごとの個別寄与(正/負/重複)も保持する(Issue #98)。
+   */
+  activeEffectSummaries: AggregatedActiveEffect[];
 };
 
 /**

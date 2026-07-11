@@ -47,8 +47,11 @@ function App() {
   const [seed, setSeed] = useState(INITIAL_SEED);
   const [interventionId, setInterventionId] = useState<InterventionScenarioId>("none");
   const [running, setRunning] = useState(false);
+  // Issue #98: 状態ログ/observerJoiner InspectorでPhase 3(発言効果)の因果を確認できるようにするため、
+  // ここでデフォルト有効化する。以後のstepSimulation呼び出しは`state.speechEffectsEnabled`から
+  // この設定を引き継ぐ(engine.ts参照)ので、都度渡し直す必要はない。
   const [simState, setSimState] = useState<SimulationState>(() =>
-    createInitialState(INITIAL_SEED, PRESETS[0].params, { interventionId: "none" }),
+    createInitialState(INITIAL_SEED, PRESETS[0].params, { interventionId: "none" }, { enabled: true }),
   );
   // 現在のsimStateの生成に実際に使われたparams。Reset必須パラメータが
   // これとparamsとで食い違っている間は、変更がまだ反映されていないとみなす。
@@ -72,7 +75,12 @@ function App() {
   const resetSimulation = useCallback(
     (nextSeed: number, nextParams: SimParams, nextInterventionId: InterventionScenarioId) => {
       rngRef.current = new SeededRandom(nextSeed);
-      const initialState = createInitialState(nextSeed, nextParams, { interventionId: nextInterventionId });
+      const initialState = createInitialState(
+        nextSeed,
+        nextParams,
+        { interventionId: nextInterventionId },
+        { enabled: true },
+      );
       setSimState(initialState);
       setAppliedParams(nextParams);
       setRunId((id) => id + 1);
