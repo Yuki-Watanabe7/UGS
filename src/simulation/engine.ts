@@ -11,12 +11,15 @@ import type {
 import type { InterventionRuntimeOptions, InterventionScenarioId } from "./interventions";
 import type { SpeechEvent } from "./speech";
 import { createSpeechEvent, deriveSpeechEvents } from "./speech";
-import type { SpeechEffectsConfig } from "./speechEffects";
+import type { SpeechActiveEffect, SpeechEffectsConfig } from "./speechEffects";
 import {
+  advanceActiveSpeechEffects,
+  deriveSpeechActiveEffects,
   deriveSpeechEffects,
   deriveSpeechInterpretations,
   deriveSpeechReceptions,
   resolveSpeechEffectsConfig,
+  sumActiveEffectValue,
 } from "./speechEffects";
 import {
   applyLightInvitationEffect,
@@ -159,6 +162,7 @@ export function createInitialState(
     speechInterpretationLog: [],
     speechEffectLog: [],
     speechEffectsEnabled: speechEffectsConfig.enabled,
+    activeSpeechEffects: [],
   };
 }
 
@@ -231,6 +235,7 @@ export function attractiveness(
   params: SimParams,
   interventionId?: InterventionScenarioId,
   tick?: number,
+  activeEffects: SpeechActiveEffect[] = [],
 ): number {
   const dominant = dominantClique(candidate, agents);
   const isDominantMember = dominant !== undefined && agent.cliqueId === dominant.cliqueId;
@@ -240,6 +245,15 @@ export function attractiveness(
   const dominanceBeyondHalf = dominant ? clamp((dominant.ratio - 0.5) * 2, 0, 1) : 0;
   const cliqueTieBonus = isDominantMember ? params.existingTieStrength * 0.5 : 0;
   const outsiderPenalty = isDominantMember ? 0 : params.existingTieStrength * dominanceBeyondHalf * 0.75;
+  // Issue #96: "welcome"由来のSpeechActiveEffectは、受け手のjoinedGroupIdスナップショット
+  // (=`SpeechActiveEffect.targetGroupId`)と一致するcandidateへのattractivenessにのみ加算される
+  const speechAttractivenessBonus = sumActiveEffectValue(
+    activeEffects,
+    agent.id,
+    "attractiveness",
+    tick ?? 0,
+    candidate.id,
+  );
 
   if (candidate.status === "confirmed") {
     const base = agent.willingness * (0.5 + 0.5 * agent.conformity);
@@ -251,7 +265,13 @@ export function attractiveness(
     // 参加コストが下がる。未確定の輪(forming)へは影響しない
     const lateJoinOkBonus = interventionId === "late-join-ok" ? LATE_JOIN_OK_CONFIRMED_BONUS : 0;
     return clamp(
-      base + lateJoinBonus + predecidedVenueBonus + lateJoinOkBonus + cliqueTieBonus - outsiderPenalty,
+      base +
+        lateJoinBonus +
+        predecidedVenueBonus +
+        lateJoinOkBonus +
+        cliqueTieBonus -
+        outsiderPenalty +
+        speechAttractivenessBonus,
       0,
       1.5,
     );
@@ -267,7 +287,7 @@ export function attractiveness(
     ? 1 - agent.influenceAvoidance * MEETING_POINT_INFLUENCE_AVOIDANCE_RESIDUAL
     : 1 - agent.influenceAvoidance * (lightInvitationBoosted ? LIGHT_INVITATION_INFLUENCE_AVOIDANCE_RESIDUAL : 1);
   const base = agent.willingness * agent.conformity * influenceAvoidanceFactor;
-  return clamp(base + cliqueTieBonus * 0.5 - outsiderPenalty * 0.5, 0, 1.5);
+  return clamp(base + cliqueTieBonus * 0.5 - outsiderPenalty * 0.5 + speechAttractivenessBonus, 0, 1.5);
 }
 
 function stepAgentMotion(agent: Agent, target?: { x: number; y: number }, speed = APPROACH_SPEED): void {
@@ -307,6 +327,13 @@ export function stepSimulation(
   let candidates = state.groupCandidates.map((c) => ({ ...c, memberIds: [...c.memberIds] }));
   const log: LogEntry[] = [];
   const speechEvents: SpeechEvent[] = [];
+
+  // Issue #96: 前tickまでに登録済みのSpeechActiveEffectを、このtick時点の強度へ減衰させ、
+  // 期限切れのものを破棄する(tick順序: 期限切れ効果の破棄 -> このtickの状態・行動判断への参照)。
+  // speechEffectsConfig.enabled === falseの間は常に空配列(既存挙動に一切影響しない)。
+  const activeEffects: SpeechActiveEffect[] = speechEffectsConfig.enabled
+    ? advanceActiveSpeechEffects(state.activeSpeechEffects ?? [], tick)
+    : [];
 
   // 1. 核形成: undecidedな人が forming になるかどうか
   // 核を作れるのは主導性が十分高い人、または既存の仲良しグループが
@@ -424,7 +451,7 @@ export function stepSimulation(
     const candidate = nearestCandidate(agent, candidates);
     if (!candidate) continue;
 
-    const score = attractiveness(agent, candidate, agents, effectiveParams, interventionId, tick);
+    const score = attractiveness(agent, candidate, agents, effectiveParams, interventionId, tick, activeEffects);
     // `anonymous-low-pressure-intent`: 参加意向を直接発言しなくてよいため、未確定の輪(forming)
     // へ近づくこと自体の抵抗が少し下がる。成立済みグループへの接近は対象外(late-join-ok側の役割)
     const anonymousIntentApproachMultiplier =
@@ -437,8 +464,10 @@ export function stepSimulation(
       interventionId === "light-observer-invitation" && isUnderLightInvitationBoost(agent, tick)
         ? LIGHT_INVITATION_APPROACH_MULTIPLIER
         : 1;
+    // Issue #96: "invite"由来のSpeechActiveEffect(周囲の未定な人への後押し)を加算する
+    const speechApproachBonus = sumActiveEffectValue(activeEffects, agent.id, "approachProbability", tick);
     const approachProbability = clamp(
-      score * 0.35 * anonymousIntentApproachMultiplier * lightInvitationApproachMultiplier,
+      score * 0.35 * anonymousIntentApproachMultiplier * lightInvitationApproachMultiplier + speechApproachBonus,
       0,
       0.9,
     );
@@ -574,9 +603,17 @@ export function stepSimulation(
         Math.max(0.2, effectiveParams.ambiguityDuration);
     }
 
+    // Issue #96: "greet"由来のSpeechActiveEffect(周囲の合流を見て感じる安心感)を蓄積率へ加算する
+    // (負の値になり、増分を打ち消す方向に働く。最終的なstressそのものは下の`clamp(...,0,1)`が保証する)
+    increment += sumActiveEffectValue(activeEffects, agent.id, "stress", tick);
+
     agent.stress = clamp(agent.stress + increment, 0, 1);
 
-    if (agent.stress > agent.leaveThreshold) {
+    // Issue #96: "decline"由来のSpeechActiveEffect(周囲の離脱を見て感じる踏ん切りの伝染)を
+    // 実効しきい値へ加算する。`agent.leaveThreshold`本体(personality値)は変更しない
+    const effectiveLeaveThreshold = agent.leaveThreshold + sumActiveEffectValue(activeEffects, agent.id, "leaveThreshold", tick);
+
+    if (agent.stress > effectiveLeaveThreshold) {
       agent.state = "leaving";
       if (agent.isObserverJoiner) {
         pushLog(
@@ -753,9 +790,13 @@ export function stepSimulation(
   const derivedSpeechEvents = deriveSpeechEvents(state, nextState);
   const tickSpeechEvents = [...speechEvents, ...derivedSpeechEvents];
 
-  // Phase 3: 認知 -> 解釈 -> 効果の一方向パイプライン。各段の結果を次の段へ明示的に渡すだけで、
-  // ここで生成される値がこのtick(またはそれ以降)の意思決定に使われることはない
-  // (speechEffectsConfig.enabled === falseの間は3関数とも空配列を返す)。
+  // Phase 3: 認知 -> 解釈 -> 効果登録/更新の一方向パイプライン。各段の結果を次の段へ明示的に渡す。
+  // このtickで生成される`SpeechActiveEffect`(下の`tickActiveEffects`)は`nextState.activeSpeechEffects`
+  // に登録されるだけで、このtick自体の状態・行動判断(既に上のstep 1-9で完了済み)には使われない。
+  // 次tick以降の`stepSimulation`呼び出しが冒頭で`advanceActiveSpeechEffects`によりこれを読み出し、
+  // 減衰させながら参照する(受入条件のtick順序: 生成 -> 認知 -> 解釈 -> 効果登録/更新 -> [次tickで]
+  // 状態・行動判断への参照 -> 期限切れ効果の破棄。speechEffectsConfig.enabled === falseの間は
+  // 全関数が空配列を返し、既存挙動に一切影響しない)。
   const tickReceptions = deriveSpeechReceptions(tickSpeechEvents, nextState.agents, speechEffectsConfig);
   const tickInterpretations = deriveSpeechInterpretations(
     tickReceptions,
@@ -765,6 +806,7 @@ export function stepSimulation(
     speechEffectsConfig,
   );
   const tickEffects = deriveSpeechEffects(tickInterpretations, tickSpeechEvents, speechEffectsConfig);
+  const tickActiveEffects = deriveSpeechActiveEffects(tickEffects, nextState.agents, speechEffectsConfig);
 
   return {
     ...nextState,
@@ -773,5 +815,6 @@ export function stepSimulation(
     speechInterpretationLog: [...(state.speechInterpretationLog ?? []), ...tickInterpretations],
     speechEffectLog: [...(state.speechEffectLog ?? []), ...tickEffects],
     speechEffectsEnabled: speechEffectsConfig.enabled,
+    activeSpeechEffects: [...activeEffects, ...tickActiveEffects],
   };
 }

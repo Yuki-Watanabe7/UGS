@@ -3,13 +3,22 @@ import { createSpeechEvent, DEFAULT_SPEECH_RANGE } from "./speech";
 import type { SpeechEvent } from "./speech";
 import { WORLD_HEIGHT, WORLD_WIDTH } from "./model";
 import {
+  activeEffectStrengthAtTick,
+  advanceActiveSpeechEffects,
   DEFAULT_SPEECH_EFFECTS_CONFIG,
+  deriveSpeechActiveEffects,
   deriveSpeechEffects,
   deriveSpeechInterpretations,
   deriveSpeechReceptions,
   resolveSpeechEffectsConfig,
+  sumActiveEffectValue,
 } from "./speechEffects";
-import type { SpeechEffectsConfig, SpeechInterpreterCandidate, SpeechReceiverCandidate } from "./speechEffects";
+import type {
+  SpeechActiveEffect,
+  SpeechEffectsConfig,
+  SpeechInterpreterCandidate,
+  SpeechReceiverCandidate,
+} from "./speechEffects";
 
 const ENABLED: SpeechEffectsConfig = { enabled: true };
 const DISABLED: SpeechEffectsConfig = { enabled: false };
@@ -536,7 +545,8 @@ describe("deriveSpeechEffects", () => {
       reason: "initiativeFormedCore",
       occurredTick: 3,
       appliedTick: 3,
-      dimension: "stress",
+      // Issue #96: invite is fixed to the approachProbability dimension (see INTENT_DIMENSION).
+      dimension: "approachProbability",
     });
     expect(typeof effects[0].outputValue).toBe("number");
     expect(typeof effects[0].durationTicks).toBe("number");
@@ -577,5 +587,294 @@ describe("deriveSpeechEffects", () => {
     const first = deriveSpeechEffects(interpretations, [invite], ENABLED);
     const second = deriveSpeechEffects(interpretations, [invite], ENABLED);
     expect(first).toEqual(second);
+  });
+});
+
+describe("deriveSpeechEffects: per-intent dimension mapping (Issue #96)", () => {
+  /** invite/welcome/greet/declineそれぞれ1件を1受け手(id: "a")について効果まで導出する共通セットアップ */
+  function effectForIntent(speech: SpeechEvent) {
+    const receptions = deriveSpeechReceptions(
+      [speech],
+      [makeCandidate({ id: speech.speakerId }), makeCandidate({ id: "a", x: 10, y: 0 })],
+      ENABLED,
+    );
+    const participants = [
+      makeInterpreter({ id: speech.speakerId }),
+      makeInterpreter({ id: "a", conformity: 0.6, influenceAvoidance: 0.3, stress: 0.2, state: "undecided" }),
+    ];
+    const interpretations = deriveSpeechInterpretations(receptions, [speech], participants, 0.5, ENABLED);
+    const effects = deriveSpeechEffects(interpretations, [speech], ENABLED);
+    expect(effects).toHaveLength(1);
+    return effects[0];
+  }
+
+  it.each([
+    ["invite", "initiativeFormedCore", "audience", "approachProbability", "positive"],
+    ["welcome", "approachWelcome", "target", "attractiveness", "positive"],
+    ["greet", "joinGreeting", "audience", "stress", "positive"],
+    ["decline", "leaveDeclaration", "audience", "leaveThreshold", "negative"],
+  ] as const)(
+    "%s (%s) is fixed to the %s dimension with a %s-valence-derived sign",
+    (intent, reason, relationHint, dimension, valence) => {
+      const speech = createSpeechEvent({
+        tick: 5,
+        speakerId: "speaker",
+        intent,
+        reason,
+        ...(relationHint === "target" ? { target: "a" } : { audience: "nearby" as const }),
+        originX: 0,
+        originY: 0,
+      });
+      const effect = effectForIntent(speech);
+      expect(effect.dimension).toBe(dimension);
+      // stress dimension has an inverted sign relative to valence (positive news lowers the stress
+      // accumulation rate, i.e. a negative outputValue); the other 3 dimensions keep valence's sign.
+      if (dimension === "stress") {
+        expect(effect.outputValue).toBeLessThan(0);
+      } else if (valence === "positive") {
+        expect(effect.outputValue).toBeGreaterThan(0);
+      } else {
+        expect(effect.outputValue).toBeLessThan(0);
+      }
+    },
+  );
+
+  it("produces no effect at all for a neutral-valence interpretation (dampened below the neutral threshold)", () => {
+    const decline = createSpeechEvent({
+      tick: 5,
+      speakerId: "speaker",
+      intent: "decline",
+      reason: "leaveDeclaration",
+      audience: "nearby",
+      originX: 0,
+      originY: 0,
+    });
+    const receptions = deriveSpeechReceptions(
+      [decline],
+      [makeCandidate({ id: "speaker" }), makeCandidate({ id: "a", x: 10, y: 0 })],
+      ENABLED,
+    );
+    // conformity: 0, influenceAvoidance: 1, state: "joined" stacks enough dampening factors to round
+    // the interpretation down to "neutral" (see the equivalent case in deriveSpeechInterpretations above).
+    const participants = [
+      makeInterpreter({ id: "speaker" }),
+      makeInterpreter({ id: "a", conformity: 0, influenceAvoidance: 1, stress: 0, state: "joined" }),
+    ];
+    const interpretations = deriveSpeechInterpretations(receptions, [decline], participants, 1, ENABLED);
+    expect(interpretations[0].valence).toBe("neutral");
+    expect(deriveSpeechEffects(interpretations, [decline], ENABLED)).toEqual([]);
+  });
+});
+
+describe("SpeechActiveEffect: decay and application (Issue #96)", () => {
+  function makeActiveEffect(overrides: Partial<SpeechActiveEffect> = {}): SpeechActiveEffect {
+    return {
+      id: "active-effect-1",
+      speechEffectEventId: "effect-1",
+      receiverId: "a",
+      dimension: "stress",
+      startedAtTick: 10,
+      expiresAtTick: 16,
+      initialStrength: -0.06,
+      currentStrength: -0.06,
+      decay: "linear",
+      ...overrides,
+    };
+  }
+
+  describe("activeEffectStrengthAtTick", () => {
+    it("returns the full initialStrength at startedAtTick", () => {
+      const effect = makeActiveEffect();
+      expect(activeEffectStrengthAtTick(effect, 10)).toBe(-0.06);
+    });
+
+    it("decays linearly toward 0 as tick approaches expiresAtTick", () => {
+      const effect = makeActiveEffect();
+      // Halfway through the 6-tick span (10 -> 16), half the strength should remain.
+      expect(activeEffectStrengthAtTick(effect, 13)).toBeCloseTo(-0.03, 10);
+    });
+
+    it("returns exactly 0 at and after expiresAtTick", () => {
+      const effect = makeActiveEffect();
+      expect(activeEffectStrengthAtTick(effect, 16)).toBe(0);
+      expect(activeEffectStrengthAtTick(effect, 100)).toBe(0);
+    });
+
+    it("is a deterministic, tick-only computation (no rng involved, identical inputs produce identical output)", () => {
+      const effect = makeActiveEffect();
+      expect(activeEffectStrengthAtTick(effect, 12)).toBe(activeEffectStrengthAtTick(effect, 12));
+    });
+  });
+
+  describe("advanceActiveSpeechEffects", () => {
+    it("drops effects whose expiresAtTick has been reached, keeping the rest with an updated currentStrength", () => {
+      const stillActive = makeActiveEffect({ id: "still-active" });
+      const expired = makeActiveEffect({ id: "expired", startedAtTick: 0, expiresAtTick: 5 });
+      const advanced = advanceActiveSpeechEffects([stillActive, expired], 12);
+
+      expect(advanced.map((e) => e.id)).toEqual(["still-active"]);
+      expect(advanced[0].currentStrength).toBeCloseTo(activeEffectStrengthAtTick(stillActive, 12), 10);
+    });
+
+    it("returns an empty array when given an empty array", () => {
+      expect(advanceActiveSpeechEffects([], 5)).toEqual([]);
+    });
+  });
+
+  describe("sumActiveEffectValue", () => {
+    it("sums only effects matching receiverId and dimension, ignoring the rest", () => {
+      const effects: SpeechActiveEffect[] = [
+        makeActiveEffect({ id: "e1", receiverId: "a", dimension: "stress", initialStrength: -0.02 }),
+        makeActiveEffect({ id: "e2", receiverId: "a", dimension: "stress", initialStrength: -0.01 }),
+        makeActiveEffect({ id: "e3", receiverId: "b", dimension: "stress", initialStrength: -0.5 }),
+        makeActiveEffect({ id: "e4", receiverId: "a", dimension: "leaveThreshold", initialStrength: 0.5 }),
+      ];
+      // At startedAtTick (10), full initialStrength applies: -0.02 + -0.01 = -0.03
+      expect(sumActiveEffectValue(effects, "a", "stress", 10)).toBeCloseTo(-0.03, 10);
+    });
+
+    it("for the attractiveness dimension, only sums effects whose targetGroupId matches the given group", () => {
+      const effects: SpeechActiveEffect[] = [
+        makeActiveEffect({ id: "e1", dimension: "attractiveness", targetGroupId: "group-1", initialStrength: 0.3 }),
+        makeActiveEffect({ id: "e2", dimension: "attractiveness", targetGroupId: "group-2", initialStrength: 0.4 }),
+      ];
+      expect(sumActiveEffectValue(effects, "a", "attractiveness", 10, "group-1")).toBeCloseTo(0.3, 10);
+      expect(sumActiveEffectValue(effects, "a", "attractiveness", 10, "group-2")).toBeCloseTo(0.4, 10);
+      expect(sumActiveEffectValue(effects, "a", "attractiveness", 10, "group-3")).toBe(0);
+    });
+
+    it("returns 0 when no effects match", () => {
+      expect(sumActiveEffectValue([], "a", "stress", 10)).toBe(0);
+    });
+  });
+
+  describe("deriveSpeechActiveEffects", () => {
+    const baseEffect = {
+      id: "effect-1",
+      speechEventId: "speech-1",
+      interpretationEventId: "interpretation-1",
+      receiverId: "a",
+      reason: "initiativeFormedCore" as const,
+      occurredTick: 4,
+      appliedTick: 4,
+      outputValue: 0.2,
+      durationTicks: 5,
+    };
+
+    it("returns an empty array when disabled", () => {
+      const effects = [{ ...baseEffect, dimension: "approachProbability" as const }];
+      expect(deriveSpeechActiveEffects(effects, [makeInterpreter({ id: "a" })], DISABLED)).toEqual([]);
+    });
+
+    it("produces exactly one SpeechActiveEffect per SpeechEffectEvent, carrying start/expire/initial/current strength", () => {
+      const effects = [{ ...baseEffect, dimension: "approachProbability" as const }];
+      const active = deriveSpeechActiveEffects(effects, [makeInterpreter({ id: "a" })], ENABLED);
+
+      expect(active).toHaveLength(1);
+      expect(active[0]).toMatchObject({
+        speechEffectEventId: "effect-1",
+        receiverId: "a",
+        dimension: "approachProbability",
+        startedAtTick: 4,
+        expiresAtTick: 9,
+        initialStrength: 0.2,
+        currentStrength: 0.2,
+        decay: "linear",
+        targetGroupId: undefined,
+      });
+    });
+
+    it("for the attractiveness dimension, sets targetGroupId from the receiver's joinedGroupId snapshot", () => {
+      const effects = [{ ...baseEffect, dimension: "attractiveness" as const }];
+      const active = deriveSpeechActiveEffects(
+        effects,
+        [makeInterpreter({ id: "a", joinedGroupId: "group-42" })],
+        ENABLED,
+      );
+      expect(active[0].targetGroupId).toBe("group-42");
+    });
+
+    it("leaves targetGroupId undefined for non-attractiveness dimensions even if the receiver has a joinedGroupId", () => {
+      const effects = [{ ...baseEffect, dimension: "stress" as const }];
+      const active = deriveSpeechActiveEffects(
+        effects,
+        [makeInterpreter({ id: "a", joinedGroupId: "group-42" })],
+        ENABLED,
+      );
+      expect(active[0].targetGroupId).toBeUndefined();
+    });
+  });
+});
+
+describe("Issue #96 integration: single speech, single receiver, end-to-end from SpeechEvent to applied active effect", () => {
+  it("traces a single 'invite' speech through reception -> interpretation -> effect -> active effect, staying linked by id and decaying deterministically", () => {
+    const speech = createSpeechEvent({
+      tick: 10,
+      speakerId: "founder",
+      intent: "invite",
+      reason: "initiativeFormedCore",
+      audience: "nearby",
+      originX: 0,
+      originY: 0,
+    });
+
+    // 1. 認知
+    const receptions = deriveSpeechReceptions(
+      [speech],
+      [makeCandidate({ id: "founder" }), makeCandidate({ id: "receiver", x: 10, y: 0 })],
+      ENABLED,
+    );
+    expect(receptions).toHaveLength(1);
+
+    // 2. 解釈
+    const participants: SpeechInterpreterCandidate[] = [
+      makeInterpreter({ id: "founder" }),
+      makeInterpreter({ id: "receiver", conformity: 0.8, influenceAvoidance: 0.2, stress: 0.1, state: "undecided" }),
+    ];
+    const interpretations = deriveSpeechInterpretations(receptions, [speech], participants, 0.5, ENABLED);
+    expect(interpretations).toHaveLength(1);
+    expect(interpretations[0].valence).toBe("positive");
+
+    // 3. 効果登録(構造化記録)
+    const effects = deriveSpeechEffects(interpretations, [speech], ENABLED);
+    expect(effects).toHaveLength(1);
+    expect(effects[0].dimension).toBe("approachProbability");
+    expect(effects[0].outputValue).toBeGreaterThan(0);
+
+    // 4. active effect生成(実際に判断式へ適用されうる持続効果)
+    const activeEffects = deriveSpeechActiveEffects(effects, participants, ENABLED);
+    expect(activeEffects).toHaveLength(1);
+    const active = activeEffects[0];
+
+    // id連鎖: active -> effect -> interpretation -> reception -> speech まで、全段が一意に遡れる
+    expect(active.speechEffectEventId).toBe(effects[0].id);
+    expect(effects[0].interpretationEventId).toBe(interpretations[0].id);
+    expect(interpretations[0].receptionEventId).toBe(receptions[0].id);
+    expect(interpretations[0].speechEventId).toBe(speech.id);
+    expect(active.receiverId).toBe("receiver");
+    expect(active.initialStrength).toBe(effects[0].outputValue);
+    expect(active.currentStrength).toBe(active.initialStrength);
+    expect(active.startedAtTick).toBe(10);
+    expect(active.expiresAtTick).toBe(10 + effects[0].durationTicks);
+    expect(active.decay).toBe("linear");
+
+    // 5. 参照: 発言直後(startedAtTick)ではフル強度、期間の途中では線形に減衰、期限切れ後は0
+    expect(sumActiveEffectValue(activeEffects, "receiver", "approachProbability", active.startedAtTick)).toBe(
+      active.initialStrength,
+    );
+    const midTick = Math.round((active.startedAtTick + active.expiresAtTick) / 2);
+    const midValue = sumActiveEffectValue(activeEffects, "receiver", "approachProbability", midTick);
+    expect(midValue).toBeGreaterThan(0);
+    expect(midValue).toBeLessThan(active.initialStrength);
+    expect(sumActiveEffectValue(activeEffects, "receiver", "approachProbability", active.expiresAtTick)).toBe(0);
+
+    // 6. 期限切れ効果の破棄: expiresAtTick以降はadvanceActiveSpeechEffectsで取り除かれる
+    expect(advanceActiveSpeechEffects(activeEffects, active.expiresAtTick)).toEqual([]);
+    expect(advanceActiveSpeechEffects(activeEffects, active.startedAtTick + 1)).toHaveLength(1);
+
+    // 7. 他の受け手・他の次元には一切影響しない(このtickでは"receiver"以外の参加者は存在しないが、
+    //    dimension/receiverIdのどちらかが一致しなければ加算されないことを明示的に確認する)
+    expect(sumActiveEffectValue(activeEffects, "receiver", "stress", active.startedAtTick)).toBe(0);
+    expect(sumActiveEffectValue(activeEffects, "someone-else", "approachProbability", active.startedAtTick)).toBe(0);
   });
 });
