@@ -58,9 +58,14 @@ SpeechEvent --(deriveSpeechReceptions)--> SpeechReceptionEvent
   > **Phase 3.1対応済み(Issue #94)**: `SpeechEvent`に発言時点位置(`originX`/`originY`)・
   > `range`/`strength`/`audibility`を追加し、`deriveSpeechReceptions`は実際の距離としきい値で
   > `heard`を決定的に判定するようになった。詳細は`docs/speech-reception-distance-model.md`参照。
-- **性格・関係性に基づく解釈式**: `deriveSpeechInterpretations`は発言の`intent`のみを
-  入力要因とする固定の対応表(`INTENT_VALENCE`)で解釈する。受け手の`willingness`/
-  `influenceAvoidance`等の性格パラメータや`cliqueId`(既存関係性)は一切参照しない。
+- ~~**性格・関係性に基づく解釈式**: `deriveSpeechInterpretations`は発言の`intent`のみを
+  入力要因とする固定の対応表(`INTENT_VALENCE`)で解釈する。受け手の性格パラメータや
+  `cliqueId`(既存関係性)は一切参照しない。~~
+
+  > **対応済み(Issue #95)**: `deriveSpeechInterpretations`は受け手の`conformity`/
+  > `influenceAvoidance`・話者との関係(同一clique/`existingTieStrength`)・現在の`stress`/`state`・
+  > target/nearbyの別・`SpeechEvent.strength`を要因とする決定的な数値モデルに置き換わった。
+  > 詳細は`docs/speech-interpretation-model.md`参照。
 - **stressや参加判断への効果適用**: `deriveSpeechEffects`が生成する`outputValue`/
   `durationTicks`は「作用しうる値」の構造化された記録に留まり、実際に`Agent.stress`や
   `attractiveness()`・接近確率等へ適用する処理はどこにも存在しない。`engine.ts`は
