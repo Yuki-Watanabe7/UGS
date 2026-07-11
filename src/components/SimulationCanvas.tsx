@@ -1,7 +1,9 @@
 import type { Agent, GroupCandidate } from "../simulation/types";
 import type { ExpressionIntent } from "../simulation/expression";
+import type { SpeechIntent } from "../simulation/speech";
 import { ThoughtBubble } from "./ThoughtBubble";
-import { computeThoughtBubbleLayouts } from "./thoughtBubbleLayout";
+import { SpeechBubble } from "./SpeechBubble";
+import { computeThoughtBubbleLayouts, type ThoughtBubblePlacementInput } from "./thoughtBubbleLayout";
 
 /**
  * 表示すべき心の声1件分。文言生成・寿命管理は呼び出し側(表示管理レイヤー)の責務で、ここでは受け取るだけ。
@@ -15,6 +17,18 @@ export type ThoughtBubbleDisplay = {
   intent?: ExpressionIntent;
 };
 
+/**
+ * 表示すべき発言(`SpeechEvent`)1件分。`agentId`は発言者(`SpeechEvent.speakerId`)を指し、
+ * 吹き出しは発言者の位置に追従する。文言(宛先の補助表現込み)・寿命管理は呼び出し側
+ * (`useActiveSpeechBubbles`)の責務。
+ */
+export type SpeechBubbleDisplay = {
+  agentId: string;
+  text: string;
+  isObserverJoiner?: boolean;
+  intent?: SpeechIntent;
+};
+
 type Props = {
   agents: Agent[];
   groupCandidates: GroupCandidate[];
@@ -22,6 +36,8 @@ type Props = {
   height: number;
   /** 現在表示すべき心の声。未指定/空配列なら既存のCanvas表示から変化しない */
   thoughts?: ThoughtBubbleDisplay[];
+  /** 現在表示すべき発言。未指定/空配列なら発言吹き出しは表示しない */
+  speeches?: SpeechBubbleDisplay[];
 };
 
 function stateColor(agent: Agent): string {
@@ -77,14 +93,26 @@ function candidateLabel(candidate: GroupCandidate): string {
   }
 }
 
+type BubblePlacementInput = ThoughtBubblePlacementInput & { isObserverJoiner?: boolean };
+
 /**
  * 表示すべき心の声を、対応するagentが存在するものだけ配置用の入力へ変換する。
+ * `excludeAgentIds`に含まれるagentId(=現在発言吹き出しを表示中のagent)は除外する
+ * (「心の声と発言が競合したら発言を優先する」方針。呼び出し元(`SimulationCanvas`)が
+ * `speeches`の話者agentIdを渡す)。
  * observerJoinerを先頭に寄せて`computeThoughtBubbleLayouts`へ渡すことで、
  * 重ならない候補位置(above/below/right/left)をobserverJoiner優先で確保させる
  * (吹き出しの表示可否そのものの優先度制御はuseActiveExpressions側の責務)。
  */
-function buildThoughtPlacementInputs(agents: Agent[], thoughts: ThoughtBubbleDisplay[], width: number, height: number) {
+function buildThoughtPlacementInputs(
+  agents: Agent[],
+  thoughts: ThoughtBubbleDisplay[],
+  width: number,
+  height: number,
+  excludeAgentIds: ReadonlySet<string>,
+): BubblePlacementInput[] {
   return thoughts
+    .filter((thought) => !excludeAgentIds.has(thought.agentId))
     .map((thought) => {
       const agent = agents.find((a) => a.id === thought.agentId);
       if (!agent) return undefined;
@@ -103,9 +131,43 @@ function buildThoughtPlacementInputs(agents: Agent[], thoughts: ThoughtBubbleDis
     .sort((a, b) => Number(b.isObserverJoiner) - Number(a.isObserverJoiner));
 }
 
-export function SimulationCanvas({ agents, groupCandidates, width, height, thoughts = [] }: Props) {
-  const thoughtInputs = buildThoughtPlacementInputs(agents, thoughts, width, height);
-  const thoughtLayouts = computeThoughtBubbleLayouts(thoughtInputs);
+/**
+ * 表示すべき発言を、対応するagentが存在するものだけ配置用の入力へ変換する。
+ * 心の声と同様、observerJoinerを先頭に寄せる。
+ */
+function buildSpeechPlacementInputs(
+  agents: Agent[],
+  speeches: SpeechBubbleDisplay[],
+  width: number,
+  height: number,
+): BubblePlacementInput[] {
+  return speeches
+    .map((speech) => {
+      const agent = agents.find((a) => a.id === speech.agentId);
+      if (!agent) return undefined;
+      return {
+        agentId: speech.agentId,
+        agentX: agent.x,
+        agentY: agent.y,
+        agentRadius: radiusFor(agent),
+        text: speech.text,
+        canvasWidth: width,
+        canvasHeight: height,
+        isObserverJoiner: agent.isObserverJoiner,
+      };
+    })
+    .filter((input): input is NonNullable<typeof input> => input !== undefined)
+    .sort((a, b) => Number(b.isObserverJoiner) - Number(a.isObserverJoiner));
+}
+
+export function SimulationCanvas({ agents, groupCandidates, width, height, thoughts = [], speeches = [] }: Props) {
+  const speakingAgentIds = new Set(speeches.map((speech) => speech.agentId));
+  const speechInputs = buildSpeechPlacementInputs(agents, speeches, width, height);
+  const thoughtInputs = buildThoughtPlacementInputs(agents, thoughts, width, height, speakingAgentIds);
+  // 発言を先に並べてcomputeThoughtBubbleLayoutsへ渡すことで、重ならない候補位置の
+  // 確保を発言吹き出し優先で行う(心の声と発言の間の重なりも避けるため、同じ衝突回避に
+  // 両方をまとめて通す)。
+  const bubbleLayouts = computeThoughtBubbleLayouts([...speechInputs, ...thoughtInputs]);
 
   return (
     <div className="panel canvas-panel">
@@ -153,10 +215,16 @@ export function SimulationCanvas({ agents, groupCandidates, width, height, thoug
           );
         })}
 
-        {thoughtInputs.map((input) => {
-          const layout = thoughtLayouts.get(input.agentId);
+        {speechInputs.map((input) => {
+          const layout = bubbleLayouts.get(input.agentId);
           if (!layout) return null;
-          return <ThoughtBubble key={input.agentId} layout={layout} isObserverJoiner={input.isObserverJoiner} />;
+          return <SpeechBubble key={`speech-${input.agentId}`} layout={layout} isObserverJoiner={input.isObserverJoiner} />;
+        })}
+
+        {thoughtInputs.map((input) => {
+          const layout = bubbleLayouts.get(input.agentId);
+          if (!layout) return null;
+          return <ThoughtBubble key={`thought-${input.agentId}`} layout={layout} isObserverJoiner={input.isObserverJoiner} />;
         })}
       </svg>
     </div>

@@ -232,6 +232,23 @@
   gap: 8px;
 }
 
+.speech-bubble-display-settings {
+  flex-shrink: 0;
+}
+
+.speech-bubble-display-note {
+  font-size: 11.5px;
+  color: #8b93a5;
+  margin: -4px 0 10px;
+  line-height: 1.5;
+}
+
+.speech-bubble-display-toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
 .intervention-selector {
   flex-shrink: 0;
   border-color: #3f2f1a;
@@ -497,6 +514,39 @@
 
 .thought-bubble-text {
   fill: #0f172a;
+  font-size: 10px;
+  text-anchor: middle;
+}
+
+/* 発言吹き出し。他エージェントに認知される実際の発言のため、心の声(点線枠+丸のしっぽ+
+   括弧付き表示)とは実線枠+三角形の矢羽根しっぽ+💬アイコン付き文言の3点で視覚的に区別する
+   (色だけに依存しない判別。Issue #82)。クリック等の操作を持たないため pointer-events は無効化する */
+.speech-bubble {
+  pointer-events: none;
+}
+
+.speech-bubble-box {
+  fill: rgba(254, 249, 231, 0.97);
+  stroke: #b45309;
+  stroke-width: 1.6;
+}
+
+.speech-bubble.observer .speech-bubble-box {
+  stroke: #f97316;
+}
+
+.speech-bubble-tail {
+  fill: rgba(254, 249, 231, 0.97);
+  stroke: #b45309;
+  stroke-width: 1.6;
+}
+
+.speech-bubble.observer .speech-bubble-tail {
+  stroke: #f97316;
+}
+
+.speech-bubble-text {
+  fill: #422006;
   font-size: 10px;
   text-anchor: middle;
 }
@@ -863,34 +913,38 @@
     order: 3;
   }
 
-  .intervention-selector {
+  .speech-bubble-display-settings {
     order: 4;
   }
 
-  .legend {
+  .intervention-selector {
     order: 5;
   }
 
-  .observer-inspector {
+  .legend {
     order: 6;
   }
 
-  .simulation-summary {
+  .observer-inspector {
     order: 7;
   }
 
-  .event-log {
+  .simulation-summary {
     order: 8;
+  }
+
+  .event-log {
+    order: 9;
   }
 
   /* .monte-carlo-panel は介入比較パネルにも付いているため、
      後着の .intervention-comparison-panel 指定で介入比較だけ最後に回す */
   .monte-carlo-panel {
-    order: 9;
+    order: 10;
   }
 
   .intervention-comparison-panel {
-    order: 10;
+    order: 11;
   }
 
   /* viewBoxによる縮小表示は活かしつつ、スマホで縦に大きすぎないよう制限する。
@@ -919,7 +973,8 @@
     height: 32px;
   }
 
-  .expression-display-toggle input[type="checkbox"] {
+  .expression-display-toggle input[type="checkbox"],
+  .speech-bubble-display-toggle input[type="checkbox"] {
     width: 20px;
     height: 20px;
   }

@@ -17,6 +17,11 @@ import {
   filterThoughtsForDisplay,
   type ExpressionDisplaySettingsState,
 } from "./components/expressionDisplayFilter";
+import { SpeechBubbleDisplaySettings } from "./components/SpeechBubbleDisplaySettings";
+import {
+  DEFAULT_SPEECH_BUBBLE_DISPLAY_SETTINGS,
+  type SpeechBubbleDisplaySettingsState,
+} from "./components/speechBubbleDisplayFilter";
 import { createInitialState, stepSimulation } from "./simulation/engine";
 import { SeededRandom } from "./simulation/random";
 import { getPresetById, PRESETS } from "./simulation/presets";
@@ -24,6 +29,7 @@ import { getInterventionById } from "./simulation/interventions";
 import type { InterventionScenarioId } from "./simulation/interventions";
 import type { SimParams, SimulationState } from "./simulation/types";
 import { useActiveExpressions } from "./hooks/useActiveExpressions";
+import { useActiveSpeechBubbles } from "./hooks/useActiveSpeechBubbles";
 import { useIsMobile } from "./hooks/useIsMobile";
 
 const TICK_INTERVAL_MS = 250;
@@ -55,6 +61,11 @@ function App() {
   const [expressionDisplaySettings, setExpressionDisplaySettings] = useState<ExpressionDisplaySettingsState>(
     DEFAULT_EXPRESSION_DISPLAY_SETTINGS,
   );
+  // 発言吹き出しの表示設定(ON/OFF)。心の声と同様、表示層だけの設定でありReset・プリセット変更・
+  // seed変更のいずれでもリセットされない。
+  const [speechBubbleDisplaySettings, setSpeechBubbleDisplaySettings] = useState<SpeechBubbleDisplaySettingsState>(
+    DEFAULT_SPEECH_BUBBLE_DISPLAY_SETTINGS,
+  );
 
   const rngRef = useRef(new SeededRandom(seed));
 
@@ -75,6 +86,10 @@ function App() {
     maxConcurrent: EXPRESSION_DISPLAY_DENSITY_MAX_CONCURRENT[expressionDisplaySettings.density],
   });
   const visibleThoughts = filterThoughtsForDisplay(activeThoughts, expressionDisplaySettings.target);
+
+  const visibleSpeeches = useActiveSpeechBubbles(simState, runId, {
+    enabled: speechBubbleDisplaySettings.enabled,
+  });
 
   const hasPendingResetChanges = RESET_REQUIRED_PARAM_KEYS.some(
     (key) => params[key] !== appliedParams[key],
@@ -178,6 +193,10 @@ function App() {
             settings={expressionDisplaySettings}
             onSettingsChange={setExpressionDisplaySettings}
           />
+          <SpeechBubbleDisplaySettings
+            settings={speechBubbleDisplaySettings}
+            onSettingsChange={setSpeechBubbleDisplaySettings}
+          />
           <InterventionSelector
             interventionId={interventionId}
             onInterventionChange={handleInterventionChange}
@@ -208,6 +227,7 @@ function App() {
             width={simState.width}
             height={simState.height}
             thoughts={visibleThoughts}
+            speeches={visibleSpeeches}
           />
         </section>
 
