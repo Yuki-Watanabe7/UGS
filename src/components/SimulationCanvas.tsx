@@ -1,10 +1,20 @@
 import type { Agent, GroupCandidate } from "../simulation/types";
+import { ThoughtBubble } from "./ThoughtBubble";
+import { computeThoughtBubbleLayout } from "./thoughtBubbleLayout";
+
+/** 表示すべき心の声1件分。文言生成・寿命管理は呼び出し側(表示管理レイヤー)の責務で、ここでは受け取るだけ */
+export type ThoughtBubbleDisplay = {
+  agentId: string;
+  text: string;
+};
 
 type Props = {
   agents: Agent[];
   groupCandidates: GroupCandidate[];
   width: number;
   height: number;
+  /** 現在表示すべき心の声。未指定/空配列なら既存のCanvas表示から変化しない */
+  thoughts?: ThoughtBubbleDisplay[];
 };
 
 function stateColor(agent: Agent): string {
@@ -60,7 +70,7 @@ function candidateLabel(candidate: GroupCandidate): string {
   }
 }
 
-export function SimulationCanvas({ agents, groupCandidates, width, height }: Props) {
+export function SimulationCanvas({ agents, groupCandidates, width, height, thoughts = [] }: Props) {
   return (
     <div className="panel canvas-panel">
       <svg
@@ -105,6 +115,20 @@ export function SimulationCanvas({ agents, groupCandidates, width, height }: Pro
               </text>
             </g>
           );
+        })}
+
+        {thoughts.map((thought) => {
+          const agent = agents.find((a) => a.id === thought.agentId);
+          if (!agent) return null;
+          const layout = computeThoughtBubbleLayout({
+            agentX: agent.x,
+            agentY: agent.y,
+            agentRadius: radiusFor(agent),
+            text: thought.text,
+            canvasWidth: width,
+            canvasHeight: height,
+          });
+          return <ThoughtBubble key={thought.agentId} layout={layout} isObserverJoiner={agent.isObserverJoiner} />;
         })}
       </svg>
     </div>

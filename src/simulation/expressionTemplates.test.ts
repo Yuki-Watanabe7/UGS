@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   getExpressionVariantCount,
+  resolveExpressionEventText,
   resolveExpressionText,
   resolveExpressionVariants,
 } from "./expressionTemplates";
-import type { ExpressionReason } from "./expression";
+import type { ExpressionEvent, ExpressionReason } from "./expression";
 
 const ALL_REASONS: ExpressionReason[] = [
   "initiativeFormedCore",
@@ -71,5 +72,40 @@ describe("getExpressionVariantCount / resolveExpressionText", () => {
   it("resolveExpressionText wraps out-of-range indices instead of throwing", () => {
     const variants = resolveExpressionVariants("nearbyGroupUnapproached", false);
     expect(resolveExpressionText("nearbyGroupUnapproached", false, variants.length)).toBe(variants[0]);
+  });
+});
+
+describe("resolveExpressionEventText", () => {
+  function makeEvent(overrides: Partial<ExpressionEvent>): ExpressionEvent {
+    return {
+      id: "expr-1-agent-a-watching",
+      tick: 1,
+      agentId: "agent-a",
+      kind: "thought",
+      intent: "watching",
+      reason: "noJoinableGroupNearby",
+      textKey: "thought.noJoinableGroupNearby.v0",
+      priority: 1,
+      recommendedTtlTicks: 12,
+      ...overrides,
+    };
+  }
+
+  it("extracts the variant index from textKey and resolves the matching text", () => {
+    const variants = resolveExpressionVariants("noJoinableGroupNearby", false);
+    const event = makeEvent({ textKey: "thought.noJoinableGroupNearby.v1" });
+    expect(resolveExpressionEventText(event, false)).toBe(variants[1]);
+  });
+
+  it("uses observerJoiner wording when isObserverJoiner is true", () => {
+    const observerVariants = resolveExpressionVariants("ambiguityStressExceeded", true);
+    const event = makeEvent({ reason: "ambiguityStressExceeded", textKey: "thought.ambiguityStressExceeded.v0" });
+    expect(resolveExpressionEventText(event, true)).toBe(observerVariants[0]);
+  });
+
+  it("falls back to variant 0 when textKey has no trailing variant number", () => {
+    const variants = resolveExpressionVariants("noJoinableGroupNearby", false);
+    const event = makeEvent({ textKey: "thought.noJoinableGroupNearby" });
+    expect(resolveExpressionEventText(event, false)).toBe(variants[0]);
   });
 });
