@@ -36,6 +36,17 @@ import {
 import { SeededRandom } from "./random";
 import { WORLD_WIDTH, WORLD_HEIGHT, clamp, distance, createInitialAgents } from "./model";
 import { formatTick } from "./time";
+// Issue #115: 発言生成の後段調整(乖離を反映した対外発言の選択)のためだけの依存。
+// socialExpression.ts側もattractiveness等のためにengine.tsをimportする循環参照になるが、
+// どちらもモジュール初期化時には相手側の値を評価しない(関数呼び出し時のみ参照する)ため安全。
+// engineの状態遷移・行動判断式そのものへの接続は引き続き存在しない。
+import type { SocialExpressionConfig } from "./socialExpression";
+import {
+  applyPublicExpressionsToSpeech,
+  derivePrivateEvaluations,
+  derivePublicExpressions,
+  resolveSocialExpressionConfig,
+} from "./socialExpression";
 
 const APPROACH_SPEED = 14;
 const WANDER_SPEED = 0.5;
@@ -86,9 +97,11 @@ export function createInitialState(
   params: SimParams,
   intervention?: InterventionRuntimeOptions,
   speechEffects?: Partial<SpeechEffectsConfig>,
+  socialExpression?: Partial<SocialExpressionConfig>,
 ): SimulationState {
   const scenario = resolveInterventionScenario(intervention);
   const speechEffectsConfig = resolveSpeechEffectsConfig(speechEffects);
+  const socialExpressionConfig = resolveSocialExpressionConfig(socialExpression);
   const effectiveParams = resolveEffectiveParams(params, intervention);
   const agents = createInitialAgents(seed, effectiveParams);
   const log: LogEntry[] = [
@@ -163,6 +176,7 @@ export function createInitialState(
     speechInterpretationLog: [],
     speechEffectLog: [],
     speechEffectsEnabled: speechEffectsConfig.enabled,
+    socialExpressionEnabled: socialExpressionConfig.enabled,
     activeSpeechEffects: [],
   };
 }
@@ -308,6 +322,7 @@ export function stepSimulation(
   rng: SeededRandom,
   intervention?: InterventionRuntimeOptions,
   speechEffects?: Partial<SpeechEffectsConfig>,
+  socialExpression?: Partial<SocialExpressionConfig>,
 ): SimulationState {
   if (state.finished) return state;
 
@@ -321,6 +336,11 @@ export function stepSimulation(
   // 途中からOFFに戻ってしまわないようにする)。
   const speechEffectsConfig = resolveSpeechEffectsConfig(
     speechEffects ?? (state.speechEffectsEnabled !== undefined ? { enabled: state.speechEffectsEnabled } : undefined),
+  );
+  // Phase 4(Issue #115)の乖離反映発言も同じfall backパターンで引き継ぐ。
+  const socialExpressionConfig = resolveSocialExpressionConfig(
+    socialExpression ??
+      (state.socialExpressionEnabled !== undefined ? { enabled: state.socialExpressionEnabled } : undefined),
   );
 
   const tick = state.tick + 1;
@@ -789,7 +809,32 @@ export function stepSimulation(
   // 発言主体がstate遷移そのものから一意に決まる(rngで選ばれない)ため、
   // 個別のロジック内で都度createSpeechEventを呼ぶ代わりにここでまとめて導出する。
   const derivedSpeechEvents = deriveSpeechEvents(state, nextState);
-  const tickSpeechEvents = [...speechEvents, ...derivedSpeechEvents];
+  const baseSpeechEvents = [...speechEvents, ...derivedSpeechEvents];
+
+  // Phase 4(Issue #115): 発言選択の入力を本心(状態遷移そのもの)から対外表現(乖離適用後)へ
+  // 切り替える。tick内の順序は「基礎生成(上のcreateSpeechEvent直接呼び出し+deriveSpeechEvents)
+  // -> 乖離調整(intent置換/抑制/乖離リンク付与) -> Phase 3認知パイプライン」で固定。
+  // 発話時点の対外表現は、このtickの判断に使ったのと同じ入力(遷移後のagents・実効化済みの
+  // activeEffects)から導出する。導出・調整ともrngを一切消費しないため、ON/OFFやここでの
+  // SpeechEvent列の変化によってPRNG消費列自体は変わらない(socialExpressionConfig.enabled === false
+  // では全関数が入力をそのまま返し/空配列を返し、既存挙動に一切影響しない)。
+  const expressionState: SimulationState = {
+    ...nextState,
+    speechEffectsEnabled: speechEffectsConfig.enabled,
+    activeSpeechEffects: activeEffects,
+  };
+  const tickPrivateEvaluations = derivePrivateEvaluations(expressionState, params, socialExpressionConfig);
+  const tickPublicExpressions = derivePublicExpressions(
+    tickPrivateEvaluations,
+    expressionState,
+    params,
+    socialExpressionConfig,
+  );
+  const tickSpeechEvents = applyPublicExpressionsToSpeech(
+    baseSpeechEvents,
+    tickPublicExpressions,
+    socialExpressionConfig,
+  );
 
   // Phase 3: 認知 -> 解釈 -> 効果登録/更新の一方向パイプライン。各段の結果を次の段へ明示的に渡す。
   // このtickで生成される`SpeechActiveEffect`(下の`tickActiveEffects`)は`nextState.activeSpeechEffects`
@@ -811,11 +856,13 @@ export function stepSimulation(
 
   return {
     ...nextState,
-    speechLog: [...(state.speechLog ?? []), ...speechEvents, ...derivedSpeechEvents],
+    // Issue #115: 記録・Phase 3入力とも乖離調整後のSpeechEvent列を使う(調整前の基礎列は残さない)
+    speechLog: [...(state.speechLog ?? []), ...tickSpeechEvents],
     speechReceptionLog: [...(state.speechReceptionLog ?? []), ...tickReceptions],
     speechInterpretationLog: [...(state.speechInterpretationLog ?? []), ...tickInterpretations],
     speechEffectLog: [...(state.speechEffectLog ?? []), ...tickEffects],
     speechEffectsEnabled: speechEffectsConfig.enabled,
+    socialExpressionEnabled: socialExpressionConfig.enabled,
     // Issue #97: 単純な配列結合ではなく、同一話者・同一intentの再発言を置換(更新)として扱う
     // 決定的な合成規則を通す(詳細はspeechEffects.tsの`registerActiveSpeechEffects`参照)。
     activeSpeechEffects: registerActiveSpeechEffects(activeEffects, tickActiveEffects),

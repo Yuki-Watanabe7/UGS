@@ -1,4 +1,5 @@
 import type { SimulationState } from "./types";
+import type { ExpressedStance } from "./socialExpression";
 import { WORLD_HEIGHT, WORLD_WIDTH } from "./model";
 
 /**
@@ -33,6 +34,32 @@ export type SpeechReason =
 export type SpeechAudience = "nearby";
 
 /**
+ * Issue #115: 発話時点の対外表現(乖離適用後の`PublicExpression`、`socialExpression.ts`)への
+ * 参照スナップショット。後段(#116の真実性評価)が、この発言が本心とずれていたかを
+ * 発言記録だけから評価できるようにするための最小限のフィールド。
+ * `PublicExpression`自体は`SimulationState`に保持されない(呼び出し側が都度導出する)ため、
+ * id参照に加えて評価に必要なスタンス・乖離有無を発話時点の値として複製して保持する。
+ */
+export type SpeechExpressionLink = {
+  /** 発話時点の`PublicExpression.id`(`public-${tick}-${agentId}`、決定的に再導出可能) */
+  publicExpressionId: string;
+  /** 導出元の`PrivateEvaluation.id`(本心側への因果追跡リンク) */
+  privateEvaluationId: string;
+  /** 発話時点で本心と対外表現に乖離があったか(`PublicExpression.divergent`) */
+  divergent: boolean;
+  /** 発話時点の本心側スタンス(例: "positive"=参加希望) */
+  privateStance: ExpressedStance;
+  /** 発話時点の対外表現側スタンス(例: "none"=無表明) */
+  expressedStance: ExpressedStance;
+  /**
+   * 乖離調整前の基礎intent(状態遷移由来の「本心がそのまま発言になる」場合のintent)。
+   * `SpeechEvent.intent`と異なる場合、この発言は乖離により内容が変わった発言
+   * (例: 遠慮によりinviteがgreetへ軟化)であることを表す。
+   */
+  baseIntent: SpeechIntent;
+};
+
+/**
  * エージェントが実際に行う「発言」を表す第一級のシミュレーションイベント。
  *
  * Phase 1の`ExpressionEvent`(`expression.ts`)との責務差:
@@ -48,8 +75,11 @@ export type SpeechAudience = "nearby";
  *
  * Phase 4の三層モデル(`socialExpression.ts`)における位置づけ: `SpeechEvent`は
  * 対外表現(`PublicExpression`)側が実際の発言として観測されたものにあたる(本心側の観察表現は
- * `ExpressionEvent`)。Issue #113の時点では本心と対外表現に乖離はなく、乖離した発言の生成は
- * Issue #114/#115のスコープ。
+ * `ExpressionEvent`)。Issue #115により、Phase 4有効時は生成された発言が発話時点の対外表現
+ * (乖離適用後)に基づいて調整され(`applyPublicExpressionsToSpeech`、socialExpression.ts)、
+ * `expression`フィールドで発話時点の本心とのずれを追跡できる。この調整は`createSpeechEvent`/
+ * `deriveSpeechEvents`(いずれも本心=行動=発言前提の基礎生成)の後段で適用されるため、
+ * 本ファイルの生成関数自体は引き続き乖離を知らない。
  */
 export type SpeechEvent = {
   id: string;
@@ -80,6 +110,12 @@ export type SpeechEvent = {
    * 受け手候補との距離と比較する値そのもので、生成時に一度だけ計算される。
    */
   audibility: number;
+  /**
+   * Issue #115: 発話時点の対外表現への参照(Phase 4三層モデル有効時のみ設定される)。
+   * `createSpeechEvent`では設定されず、`applyPublicExpressionsToSpeech`(socialExpression.ts)が
+   * 乖離調整の際に付与する。無効時(デフォルト)は常にundefined(従来のSpeechEventと完全互換)。
+   */
+  expression?: SpeechExpressionLink;
 };
 
 export type CreateSpeechEventInput = {

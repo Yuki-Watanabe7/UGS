@@ -221,6 +221,12 @@ export type SimulationState = {
    */
   speechEffectsEnabled?: boolean;
   /**
+   * Issue #115: このstateの生成/更新時点でPhase 4三層モデル(`socialExpression.ts`)の乖離判定と
+   * 発言生成への統合が有効だったかどうか。`speechEffectsEnabled`と同様、呼び出し側が引き継ぎ忘れても
+   * 直前の設定を維持するためのfall back用。未指定(既存stateの読み込み等)は無効相当として扱う。
+   */
+  socialExpressionEnabled?: boolean;
+  /**
    * Issue #96: 現在有効な`SpeechActiveEffect`(発言由来の一時的な補正)の一覧。`speechEffectLog`と
    * 異なり、これは時系列の蓄積ログではなく「今このtickで作用している効果」のスナップショットで、
    * `engine.ts`が毎tick、期限切れのものを取り除き・強度を減衰させ・新規登録分を加えた配列で置き換える

@@ -5,6 +5,7 @@ import { attractiveness, isJoinable, nearestCandidate } from "./engine";
 import type { InterventionRuntimeOptions } from "./interventions";
 import { resolveEffectiveParams, resolveInterventionScenario } from "./interventions";
 import { DEFAULT_SPEECH_RANGE } from "./speech";
+import type { SpeechEvent, SpeechIntent } from "./speech";
 import { clamp } from "./model";
 
 /**
@@ -26,9 +27,11 @@ import { clamp } from "./model";
  *
  * 処理境界(重要):
  * - 本ファイルの導出関数はすべて純関数であり、`SimulationState`を読み取るのみで一切mutationしない。
- * - 本体の`SeededRandom`を受け取らない/消費しない(導出の有無でPRNG列は変わらない)。
- * - `engine.ts`は本ファイルをimportしない(観察専用の一方向依存。`expression.ts`と同じ位置づけ)。
- *   engineの判断式への接続はIssue #115以降のスコープ。
+ * - 本体の`SeededRandom`を受け取らない/消費しない(導出・発言調整の有無でPRNG列は変わらない)。
+ * - Issue #115により、`engine.ts`は発言生成(`SpeechEvent`のintent調整・抑制・乖離リンク付与、
+ *   `applyPublicExpressionsToSpeech`)のためだけに本ファイルをimportする。engineの状態遷移・
+ *   行動判断式(attractiveness/接近確率/stress/leave判定)への接続は引き続き存在しない
+ *   (Phase 3の`SpeechActiveEffect`経由の間接的な影響のみ)。
  * - 導出結果は`SimulationState`に保持されない(呼び出し側が必要なtickで都度導出する)。
  *
  * 詳細は`docs/social-expression-phase4-boundary.md`参照。
@@ -448,4 +451,89 @@ export function derivePublicExpressions(
     });
   }
   return expressions;
+}
+
+/**
+ * Issue #115: 状態遷移由来の基礎intent(本心=行動=発言前提)を、発話時点の対外表現側スタンスに
+ * 応じて置き換える固定ルール。戻り値undefinedは「発言自体を抑制する(SpeechEventを生成しない)」。
+ * 新しいintentは導入せず、既存4 intentの範囲内で表現する(Issue #115の受入条件)。
+ *
+ * | 基礎intent | expressedStance: positive | none | negative |
+ * | --- | --- | --- | --- |
+ * | invite | invite | greet(積極的な誘いを控えめな声がけへ軟化) | 抑制 |
+ * | welcome | welcome | welcome(本心が消極的でも表現がnegativeでなければ建前の歓迎) | 抑制 |
+ * | greet | greet | greet | greet(合流の事実を告げるだけの中立的発言のため不変) |
+ * | decline | decline | decline | decline(離脱の事実を告げる発言のため不変) |
+ *
+ * 「本心とずれた発言」の代表例はintentの置換ではなく維持側に現れることに注意:
+ * - 社交辞令の辞退: 本心が参加希望(privateStance: "positive")のまま離脱する人のdecline
+ *   (observerJoinerの典型)。intentはdeclineのまま、ずれは`SpeechExpressionLink.divergent`で追跡する。
+ * - 建前の歓迎: 本心が消極的(privateStance: "negative")な代表者のwelcome。同上。
+ */
+export function selectExpressedIntent(baseIntent: SpeechIntent, expressedStance: ExpressedStance): SpeechIntent | undefined {
+  if (baseIntent === "invite") {
+    if (expressedStance === "positive") return "invite";
+    if (expressedStance === "none") return "greet";
+    return undefined;
+  }
+  if (baseIntent === "welcome") {
+    return expressedStance === "negative" ? undefined : "welcome";
+  }
+  return baseIntent;
+}
+
+/**
+ * Issue #115: このtickで生成された`SpeechEvent`群を、発話時点の対外表現(乖離適用後の
+ * `PublicExpression`)に基づいて調整する純関数。「発言選択の入力を本心から対外表現へ切り替える」
+ * 統合点であり、`engine.ts`が基礎生成(`createSpeechEvent`直接呼び出し+`deriveSpeechEvents`)の
+ * 後段・Phase 3認知パイプラインへの入力前に一度だけ適用する。
+ *
+ * 規則:
+ * - `config.enabled === false`(デフォルト)では入力配列をそのまま返す(既存挙動と完全互換。
+ *   イベントオブジェクトの複製もフィールド付与も行わない)。
+ * - `reason === "lightObserverInvitation"`(介入由来の声かけ)は調整の対象外としてそのまま通す。
+ *   介入シナリオの意図(observerJoinerへ確実に声が届く)が話者個人の乖離より優先される
+ *   (`docs/speech-event-intervention-boundary.md`参照)。
+ * - それ以外の発言は、話者の`PublicExpression`から`selectExpressedIntent`でintentを決定し、
+ *   抑制(undefined)なら配列から除外、それ以外は`expression`(発話時点の乖離スナップショット参照)を
+ *   付与した複製へ置き換える。`id`は基礎生成時のまま変更しない(生成元の一意性を保ち、
+ *   二重生成が起こらないことを既存のid衝突検査のまま検証できるようにする)。
+ * - 話者の`PublicExpression`が見つからない場合(防御的、通常は起こらない)は調整せず通す。
+ * - rngを受け取らない/消費しない。調整の有無・ON/OFFでPRNG消費列は変わらない。
+ */
+export function applyPublicExpressionsToSpeech(
+  speechEvents: SpeechEvent[],
+  publicExpressions: PublicExpression[],
+  config: SocialExpressionConfig,
+): SpeechEvent[] {
+  if (!config.enabled) return speechEvents;
+
+  const expressionByAgent = new Map(publicExpressions.map((expression) => [expression.agentId, expression]));
+  const adjusted: SpeechEvent[] = [];
+  for (const event of speechEvents) {
+    if (event.reason === "lightObserverInvitation") {
+      adjusted.push(event);
+      continue;
+    }
+    const expression = expressionByAgent.get(event.speakerId);
+    if (!expression) {
+      adjusted.push(event);
+      continue;
+    }
+    const intent = selectExpressedIntent(event.intent, expression.expressedStance);
+    if (intent === undefined) continue; // 抑制: この発言は発せられなかったことになる
+    adjusted.push({
+      ...event,
+      intent,
+      expression: {
+        publicExpressionId: expression.id,
+        privateEvaluationId: expression.privateEvaluationId,
+        divergent: expression.divergent,
+        privateStance: expression.privateStance,
+        expressedStance: expression.expressedStance,
+        baseIntent: event.intent,
+      },
+    });
+  }
+  return adjusted;
 }
