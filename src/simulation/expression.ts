@@ -48,6 +48,10 @@ export type ExpressionReason =
  *   シミュレーション上の発言ではなく他エージェントに認知されず、状態遷移や乱数列に影響しない。
  *   表示後は`recommendedTtlTicks`に従って消えることを想定した使い捨てデータであり、
  *   `SimulationState`には保持しない(保持責務は表示管理側の別issueで扱う)。
+ *
+ * Phase 4の三層モデル(`socialExpression.ts`)における位置づけ: `ExpressionEvent`は
+ * 本心(`PrivateEvaluation`)側を観察者向けに言語化した演出データにあたる(対外表現側の
+ * 観測は`SpeechEvent`)。三層モデルの導入後もこの非介入性・非保持の性質は変わらない。
  */
 export type ExpressionEvent = {
   id: string;

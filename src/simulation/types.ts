@@ -10,6 +10,11 @@ import type {
   SpeechReceptionEvent,
 } from "./speechEffects";
 
+/**
+ * エージェントの行動状態。Phase 4の三層モデル(`socialExpression.ts`)では、この状態遷移・移動
+ * そのものが「行動(actualAction)」層にあたる(本心=`PrivateEvaluation`、対外表現=`PublicExpression`
+ * と対比される第三の層。actualActionを表す新しい型は導入せず、常にこの既存状態を指す)。
+ */
 export type AgentState =
   | "undecided"
   | "forming"
