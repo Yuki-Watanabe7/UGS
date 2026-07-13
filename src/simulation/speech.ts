@@ -45,6 +45,11 @@ export type SpeechAudience = "nearby";
  * この発言を「聞いた」他エージェントのstress/attractiveness/参加・離脱判断を変化させる介入効果は
  * 一切持たない(それらはPhase 3で扱う)。`createSpeechEvent`はこの境界を越えず、`SimulationState`や
  * 他エージェントを一切参照・変更しない純粋な生成関数として保つこと。
+ *
+ * Phase 4の三層モデル(`socialExpression.ts`)における位置づけ: `SpeechEvent`は
+ * 対外表現(`PublicExpression`)側が実際の発言として観測されたものにあたる(本心側の観察表現は
+ * `ExpressionEvent`)。Issue #113の時点では本心と対外表現に乖離はなく、乖離した発言の生成は
+ * Issue #114/#115のスコープ。
  */
 export type SpeechEvent = {
   id: string;
