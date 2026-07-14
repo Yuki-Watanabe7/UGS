@@ -416,6 +416,11 @@ export function deriveSpeechReceptions(
  * Issue #116以前と完全に一致する。どちらの場合も`factors`の`relationshipTrust`要因の`contribution`に
  * 実際に使われたtrust値が入る。
  *
+ * tie補正(Issue #117): `resolveTieCorrection`が渡された場合(Phase 4 tie有効時)、整合性履歴由来の
+ * 関係性補正を`relFactor`(関係性係数)へ加算する。未指定(デフォルト)なら`relationFactor`の
+ * 従来値(target=1.0, nearby=0.7)のまま — この場合の結果はIssue #117以前と完全に一致する。
+ * `factors`の`receptionRelation`要因には加算後の実効relFactorが記録される。
+ *
  * `heard: false`の受信(圏外で聞こえなかった)は解釈対象にしない(Issue #94: `deriveSpeechReceptions`が
  * 距離に基づき`heard`を判定するようになったことに伴う、聞いていないものは解釈しないという整合性維持)。
  * 話者または受け手が`participants`に見つからない場合(防御的、通常は起こらない)も対象にしない。
@@ -430,6 +435,7 @@ export function deriveSpeechInterpretations(
   existingTieStrength: number,
   config: SpeechEffectsConfig,
   resolveTrust?: SpeechTrustResolver,
+  resolveTieCorrection?: SpeechTrustResolver,
 ): SpeechInterpretationEvent[] {
   if (!config.enabled) return [];
 
@@ -456,7 +462,13 @@ export function deriveSpeechInterpretations(
       : relationshipTrust(sameClique, existingTieStrength);
     const sFactor = stressFactor(receiver.stress, base.direction);
     const stateFactor = STATE_RELEVANCE[receiver.state];
-    const relFactor = relationFactor(reception.relation);
+    // Issue #117: 整合性履歴由来のtie補正を関係性係数relFactorへ加算する(反映方式は加算固定)。
+    // resolver未指定(tie無効)なら従来のrelationFactor値のまま。負の補正で乗数が0未満へ転じて
+    // valenceが反転しないよう[0, 2]へclampする。
+    const baseRelFactor = relationFactor(reception.relation);
+    const relFactor = resolveTieCorrection
+      ? clamp(baseRelFactor + resolveTieCorrection(reception.receiverId, speech.speakerId, sameClique), 0, 2)
+      : baseRelFactor;
     const strFactor = strengthFactor(speech.strength);
 
     const rawMagnitude = base.magnitude * cFactor * iFactor * trust * sFactor * stateFactor * relFactor * strFactor;

@@ -156,5 +156,8 @@ Phase 3の因果チェーンは
 
 - 発言の真実性評価・信頼更新: #116(実装済み。`speechTrust.ts`が、#115の乖離スナップショットからの
   真実性導出と、受け手→話者pair単位の動的trust更新を担う。`docs/speech-trust-model.md`参照)
+- 整合性履歴に基づく関係性変化: #117(実装済み。`relationshipTie.ts`が、発言intentと話者の行動の
+  整合性履歴からtie補正を導き、`attractiveness()`の同clique bonus/outsider penaltyと解釈モデルの
+  `relFactor`へ加算反映する。`docs/relationship-tie-model.md`参照)
 - 整合性履歴に基づく関係性変化: #117
 - テンプレート: #118、UI・Inspector表示: #119、受入テスト・Monte Carlo比較: #120、README: #121

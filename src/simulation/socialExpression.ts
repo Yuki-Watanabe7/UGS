@@ -6,6 +6,7 @@ import type { InterventionRuntimeOptions } from "./interventions";
 import { resolveEffectiveParams, resolveInterventionScenario } from "./interventions";
 import { DEFAULT_SPEECH_RANGE } from "./speech";
 import type { SpeechEvent, SpeechIntent } from "./speech";
+import { aggregateGroupTieCorrection, deriveTieCorrections } from "./relationshipTie";
 import { clamp } from "./model";
 
 /**
@@ -261,6 +262,10 @@ export function derivePrivateEvaluations(
   const effectiveParams = resolveEffectiveParams(params, intervention);
   const interventionId = resolveInterventionScenario(intervention).id;
   const activeEffects: SpeechActiveEffect[] = state.speechEffectsEnabled ? (state.activeSpeechEffects ?? []) : [];
+  // Issue #117: engineのstep 2 attractivenessと同じ入力で本心スナップショットを取るため、
+  // 整合性履歴由来のtie補正も同じ経路(state.tieHistory)から解決する(tie無効時は空マップ=補正0で、
+  // attractivenessは従来式のまま=Issue #117以前と同値)。
+  const tieCorrections = state.relationshipTieEnabled ? deriveTieCorrections(state.tieHistory ?? {}) : {};
   const joinableCandidates = state.groupCandidates.filter(isJoinable);
 
   return state.agents.map((agent) => {
@@ -277,6 +282,7 @@ export function derivePrivateEvaluations(
         interventionId,
         state.tick,
         activeEffects,
+        aggregateGroupTieCorrection(agent.id, candidate.memberIds, tieCorrections),
       ),
       isNearest: candidate.id === nearest?.id,
     }));

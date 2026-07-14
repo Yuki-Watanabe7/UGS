@@ -15,6 +15,11 @@ import type {
   SpeechTrustUpdateEvent,
   SpeechTruthfulnessRecord,
 } from "./speechTrust";
+import type {
+  RelationshipTieState,
+  RelationshipTieUpdateEvent,
+  TieObservationCommitment,
+} from "./relationshipTie";
 
 /**
  * エージェントの行動状態。Phase 4の三層モデル(`socialExpression.ts`)では、この状態遷移・移動
@@ -266,6 +271,29 @@ export type SimulationState = {
    * `engine.ts`が毎tick、観測が完了したものを取り除き・このtickの発言分を追記した配列で置き換える。
    */
   speechTrustCommitments?: SpeechTrustCommitment[];
+  /**
+   * Issue #117: このstateの生成/更新時点でPhase 4の整合性履歴に基づく関係性補正(`relationshipTie.ts`)が
+   * 有効だったかどうか。他のPhase 3/4フラグと同じfall back規則。
+   */
+  relationshipTieEnabled?: boolean;
+  /**
+   * Issue #117: pair単位(受け手→話者の方向つき)の整合性履歴。キーは`tiePairKey`。件数上限まで
+   * 蓄積され、tie補正値はこの履歴から常に決定的に再導出される(補正値そのものはstateに保持しない)。
+   * `relationshipTieEnabled`がfalseの間は常に空(既存挙動に一切影響しない)。
+   */
+  tieHistory?: RelationshipTieState;
+  /**
+   * Issue #117: tie補正が変化したことの構造化記録(いつ・誰の何の発言を観測し・どの遷移で
+   * 一致/不一致と判定し・補正がどれだけ変化したか)の時系列蓄積ログ。意思決定の入力には使われない
+   * (判断への反映は`tieHistory`由来の補正のみ)。
+   */
+  relationshipTieUpdateLog?: RelationshipTieUpdateEvent[];
+  /**
+   * Issue #117: 未観測の整合性コミットメント(発言intentに対する話者のその後Ntick以内の行動を
+   * まだ観測していない発言)の進行状態。`speechTrustCommitments`と同種のスナップショットで、
+   * `engine.ts`が毎tick、観測完了・時間窓失効したものを取り除き・このtickの発言分を追記して置き換える。
+   */
+  tieCommitments?: TieObservationCommitment[];
 };
 
 /**
