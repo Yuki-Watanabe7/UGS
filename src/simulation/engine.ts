@@ -47,6 +47,23 @@ import {
   derivePublicExpressions,
   resolveSocialExpressionConfig,
 } from "./socialExpression";
+import type { SpeechTrustConfig } from "./speechTrust";
+import {
+  createSpeechTrustResolver,
+  deriveSpeechTrustUpdates,
+  deriveSpeechTruthfulness,
+  registerSpeechTrustCommitments,
+  resolveSpeechTrustConfig,
+} from "./speechTrust";
+import type { RelationshipTieConfig } from "./relationshipTie";
+import {
+  aggregateGroupTieCorrection,
+  createTieCorrectionResolver,
+  deriveTieCorrections,
+  deriveTieObservations,
+  registerTieCommitments,
+  resolveRelationshipTieConfig,
+} from "./relationshipTie";
 
 const APPROACH_SPEED = 14;
 const WANDER_SPEED = 0.5;
@@ -98,10 +115,14 @@ export function createInitialState(
   intervention?: InterventionRuntimeOptions,
   speechEffects?: Partial<SpeechEffectsConfig>,
   socialExpression?: Partial<SocialExpressionConfig>,
+  speechTrust?: Partial<SpeechTrustConfig>,
+  relationshipTie?: Partial<RelationshipTieConfig>,
 ): SimulationState {
   const scenario = resolveInterventionScenario(intervention);
   const speechEffectsConfig = resolveSpeechEffectsConfig(speechEffects);
   const socialExpressionConfig = resolveSocialExpressionConfig(socialExpression);
+  const speechTrustConfig = resolveSpeechTrustConfig(speechTrust);
+  const relationshipTieConfig = resolveRelationshipTieConfig(relationshipTie);
   const effectiveParams = resolveEffectiveParams(params, intervention);
   const agents = createInitialAgents(seed, effectiveParams);
   const log: LogEntry[] = [
@@ -178,6 +199,15 @@ export function createInitialState(
     speechEffectsEnabled: speechEffectsConfig.enabled,
     socialExpressionEnabled: socialExpressionConfig.enabled,
     activeSpeechEffects: [],
+    speechTrustEnabled: speechTrustConfig.enabled,
+    speechTrust: {},
+    speechTrustUpdateLog: [],
+    speechTruthfulnessLog: [],
+    speechTrustCommitments: [],
+    relationshipTieEnabled: relationshipTieConfig.enabled,
+    tieHistory: {},
+    relationshipTieUpdateLog: [],
+    tieCommitments: [],
   };
 }
 
@@ -251,6 +281,7 @@ export function attractiveness(
   interventionId?: InterventionScenarioId,
   tick?: number,
   activeEffects: SpeechActiveEffect[] = [],
+  tieCorrection = 0,
 ): number {
   const dominant = dominantClique(candidate, agents);
   const isDominantMember = dominant !== undefined && agent.cliqueId === dominant.cliqueId;
@@ -258,8 +289,13 @@ export function attractiveness(
   // 部外者(observerJoiner含む)には既存関係性の強さに応じて入りにくくなる
   // (占有率50%で影響なし、100%かつ既存関係性MAXでほぼ門前払いになるまで滑らかに強まる)
   const dominanceBeyondHalf = dominant ? clamp((dominant.ratio - 0.5) * 2, 0, 1) : 0;
-  const cliqueTieBonus = isDominantMember ? params.existingTieStrength * 0.5 : 0;
-  const outsiderPenalty = isDominantMember ? 0 : params.existingTieStrength * dominanceBeyondHalf * 0.75;
+  // Issue #117: 整合性履歴由来のtie補正(`tieCorrection`、既定0で従来挙動)を、同clique bonus /
+  // outsider penaltyへ加算方式で反映する。正の補正は(同一cliqueならbonus増、部外者ならpenalty減で)
+  // 常に魅力度を上げ、負は下げる。`existingTieStrength`基礎値そのものは変更しない。
+  const cliqueTieBonus = isDominantMember ? Math.max(0, params.existingTieStrength * 0.5 + tieCorrection) : 0;
+  const outsiderPenalty = isDominantMember
+    ? 0
+    : Math.max(0, params.existingTieStrength * dominanceBeyondHalf * 0.75 - tieCorrection);
   // Issue #96: "welcome"由来のSpeechActiveEffectは、受け手のjoinedGroupIdスナップショット
   // (=`SpeechActiveEffect.targetGroupId`)と一致するcandidateへのattractivenessにのみ加算される
   const speechAttractivenessBonus = sumActiveEffectValue(
@@ -323,6 +359,8 @@ export function stepSimulation(
   intervention?: InterventionRuntimeOptions,
   speechEffects?: Partial<SpeechEffectsConfig>,
   socialExpression?: Partial<SocialExpressionConfig>,
+  speechTrust?: Partial<SpeechTrustConfig>,
+  relationshipTie?: Partial<RelationshipTieConfig>,
 ): SimulationState {
   if (state.finished) return state;
 
@@ -342,6 +380,19 @@ export function stepSimulation(
     socialExpression ??
       (state.socialExpressionEnabled !== undefined ? { enabled: state.socialExpressionEnabled } : undefined),
   );
+  // Phase 4(Issue #116)のtrust更新も同じfall backパターンで引き継ぐ。
+  const speechTrustConfig = resolveSpeechTrustConfig(
+    speechTrust ?? (state.speechTrustEnabled !== undefined ? { enabled: state.speechTrustEnabled } : undefined),
+  );
+  // Phase 4(Issue #117)の整合性履歴に基づく関係性補正も同じfall backパターンで引き継ぐ。
+  const relationshipTieConfig = resolveRelationshipTieConfig(
+    relationshipTie ??
+      (state.relationshipTieEnabled !== undefined ? { enabled: state.relationshipTieEnabled } : undefined),
+  );
+  // Issue #117: step 2(接近判定)のattractivenessが参照する、前tickまでの整合性履歴由来のtie補正。
+  // このtickで新たに観測される整合性は下のtail(deriveTieObservations)で履歴へ加わり、次tick以降に効く
+  // (Phase 3のactiveEffectsと同じ「今回生成→次回参照」の時間関係)。tie無効時は常に空=補正0。
+  const incomingTieCorrections = relationshipTieConfig.enabled ? deriveTieCorrections(state.tieHistory ?? {}) : {};
 
   const tick = state.tick + 1;
   const agents = state.agents.map((a) => ({ ...a }));
@@ -472,7 +523,19 @@ export function stepSimulation(
     const candidate = nearestCandidate(agent, candidates);
     if (!candidate) continue;
 
-    const score = attractiveness(agent, candidate, agents, effectiveParams, interventionId, tick, activeEffects);
+    // Issue #117: この観測者が輪の構成員に対して積み上げた整合性履歴由来の集約tie補正
+    // (tie無効時は空マップ=常に0で、attractivenessは従来式のまま)
+    const tieCorrection = aggregateGroupTieCorrection(agent.id, candidate.memberIds, incomingTieCorrections);
+    const score = attractiveness(
+      agent,
+      candidate,
+      agents,
+      effectiveParams,
+      interventionId,
+      tick,
+      activeEffects,
+      tieCorrection,
+    );
     // `anonymous-low-pressure-intent`: 参加意向を直接発言しなくてよいため、未確定の輪(forming)
     // へ近づくこと自体の抵抗が少し下がる。成立済みグループへの接近は対象外(late-join-ok側の役割)
     const anonymousIntentApproachMultiplier =
@@ -818,10 +881,15 @@ export function stepSimulation(
   // activeEffects)から導出する。導出・調整ともrngを一切消費しないため、ON/OFFやここでの
   // SpeechEvent列の変化によってPRNG消費列自体は変わらない(socialExpressionConfig.enabled === false
   // では全関数が入力をそのまま返し/空配列を返し、既存挙動に一切影響しない)。
+  // Issue #117: derivePrivateEvaluationsの観察スナップショットも、step 2の判断が使ったのと同じ入力
+  // (前tickまでの整合性履歴由来のtie補正=incomingTieCorrectionsの由来元)を参照するよう、
+  // 前tickの`tieHistory`をそのまま渡す(このtickの新規観測を反映した履歴ではない)。
   const expressionState: SimulationState = {
     ...nextState,
     speechEffectsEnabled: speechEffectsConfig.enabled,
     activeSpeechEffects: activeEffects,
+    relationshipTieEnabled: relationshipTieConfig.enabled,
+    tieHistory: state.tieHistory ?? {},
   };
   const tickPrivateEvaluations = derivePrivateEvaluations(expressionState, params, socialExpressionConfig);
   const tickPublicExpressions = derivePublicExpressions(
@@ -836,6 +904,39 @@ export function stepSimulation(
     socialExpressionConfig,
   );
 
+  // Phase 4(Issue #116) trust観測: 前tickまでの未観測コミットメント(過去の発言intentに対する
+  // 話者のその後の行動)を、このtickの状態遷移(state.agents -> agents)と突き合わせてtrustを更新する。
+  // tick内の順序は「trust更新(過去の発言の観測) -> このtickの発言の解釈(更新後trustを参照) ->
+  // このtickの発言のコミットメント登録(下)」で固定。発言とその発言自体を生んだ遷移
+  // (例: leaving遷移とdecline発言)が同一tickで自己解決しないのは、登録が観測より後だから。
+  // rngは一切使わない(有効/無効・更新の有無でPRNG消費列は変わらない)。
+  const trustStep = deriveSpeechTrustUpdates(
+    state.speechTrustCommitments ?? [],
+    state.agents,
+    agents,
+    state.speechTrust ?? {},
+    effectiveParams.existingTieStrength,
+    tick,
+    speechTrustConfig,
+  );
+  // 話者側の真実性記録: 乖離スナップショット(Issue #115)を持つ発言のみが評価対象。
+  // trust更新とは独立した純粋な記録であり、受け手の解釈・trust更新の入力にはならない。
+  const tickTruthfulness = deriveSpeechTruthfulness(tickSpeechEvents, speechTrustConfig);
+
+  // Phase 4(Issue #117) 整合性観測: 前tickまでの未観測コミットメント(過去の発言intentに対する
+  // 話者のその後の行動)を、このtickの状態遷移(state.agents -> agents)と突き合わせて整合性履歴を
+  // 更新する。trust更新と同じtick順序(観測 -> このtickの解釈が更新後の補正を参照 -> このtickの発言の
+  // コミットメント登録)。窓(N tick)を過ぎた未観測コミットメントはここで失効する。rngは使わない。
+  const tieStep = deriveTieObservations(
+    state.tieCommitments ?? [],
+    state.tieHistory ?? {},
+    state.agents,
+    agents,
+    tick,
+    relationshipTieConfig,
+  );
+  const updatedTieCorrections = relationshipTieConfig.enabled ? deriveTieCorrections(tieStep.history) : {};
+
   // Phase 3: 認知 -> 解釈 -> 効果登録/更新の一方向パイプライン。各段の結果を次の段へ明示的に渡す。
   // このtickで生成される`SpeechActiveEffect`(下の`tickActiveEffects`)は`nextState.activeSpeechEffects`
   // に登録されるだけで、このtick自体の状態・行動判断(既に上のstep 1-9で完了済み)には使われない。
@@ -844,12 +945,22 @@ export function stepSimulation(
   // 状態・行動判断への参照 -> 期限切れ効果の破棄。speechEffectsConfig.enabled === falseの間は
   // 全関数が空配列を返し、既存挙動に一切影響しない)。
   const tickReceptions = deriveSpeechReceptions(tickSpeechEvents, nextState.agents, speechEffectsConfig);
+  // Issue #116: trust有効時のみ、解釈のtrust係数を動的trust(このtickの観測適用後)から解決する。
+  // 無効時はundefined(従来の静的relationshipTrust式)で、解釈結果はIssue #116以前と完全一致する。
+  const trustResolver = speechTrustConfig.enabled
+    ? createSpeechTrustResolver(trustStep.trust, effectiveParams.existingTieStrength)
+    : undefined;
+  // Issue #117: tie有効時のみ、解釈の関係性係数relFactorへ整合性履歴由来の補正(このtickの観測適用後)を
+  // 加算する。無効時はundefined(従来のrelationFactor値)で、解釈結果はIssue #117以前と完全一致する。
+  const tieResolver = relationshipTieConfig.enabled ? createTieCorrectionResolver(updatedTieCorrections) : undefined;
   const tickInterpretations = deriveSpeechInterpretations(
     tickReceptions,
     tickSpeechEvents,
     nextState.agents,
     effectiveParams.existingTieStrength,
     speechEffectsConfig,
+    trustResolver,
+    tieResolver,
   );
   const tickEffects = deriveSpeechEffects(tickInterpretations, tickSpeechEvents, speechEffectsConfig);
   const tickActiveEffects = deriveSpeechActiveEffects(tickEffects, nextState.agents, speechEffectsConfig);
@@ -866,5 +977,22 @@ export function stepSimulation(
     // Issue #97: 単純な配列結合ではなく、同一話者・同一intentの再発言を置換(更新)として扱う
     // 決定的な合成規則を通す(詳細はspeechEffects.tsの`registerActiveSpeechEffects`参照)。
     activeSpeechEffects: registerActiveSpeechEffects(activeEffects, tickActiveEffects),
+    speechTrustEnabled: speechTrustConfig.enabled,
+    speechTrust: trustStep.trust,
+    speechTrustUpdateLog: [...(state.speechTrustUpdateLog ?? []), ...trustStep.updates],
+    speechTruthfulnessLog: [...(state.speechTruthfulnessLog ?? []), ...tickTruthfulness],
+    // このtickの発言のコミットメント登録は観測(deriveSpeechTrustUpdates)より後に行う(上記の順序固定)。
+    // hearer(観測資格)は発話時点の認知結果(heard: true)のスナップショット。
+    speechTrustCommitments: registerSpeechTrustCommitments(
+      trustStep.commitments,
+      tickSpeechEvents,
+      tickReceptions,
+      speechTrustConfig,
+    ),
+    relationshipTieEnabled: relationshipTieConfig.enabled,
+    tieHistory: tieStep.history,
+    relationshipTieUpdateLog: [...(state.relationshipTieUpdateLog ?? []), ...tieStep.updates],
+    // trustと同じく、このtickの発言のコミットメント登録は観測(deriveTieObservations)より後に行う。
+    tieCommitments: registerTieCommitments(tieStep.commitments, tickSpeechEvents, tickReceptions, relationshipTieConfig),
   };
 }
