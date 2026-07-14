@@ -3,12 +3,16 @@ import type {
   AgentState,
   GroupCandidateStatus,
   ObserverJoinerInspection,
+  ObserverSocialExpressionSnapshot,
   ObserverSpeechEffectDetail,
   ObserverSpeechHistoryEntry,
+  ObserverTieSummary,
+  ObserverTrustSummary,
   SimParams,
   SimulationState,
   SpeechRelation,
 } from "../simulation/types";
+import type { ExpressedStance, PublicExpressionFactorKey } from "../simulation/socialExpression";
 import { buildAgentLabelMap, formatSpeechDebugMeta, formatSpeechLogMessage } from "./speechDisplay";
 import {
   formatActiveEffectStatusLine,
@@ -47,6 +51,26 @@ const GROUP_STATUS_LABEL: Record<GroupCandidateStatus, string> = {
   dissolved: "解散済み",
   expired: "期限切れ",
 };
+
+const STANCE_LABEL: Record<ExpressedStance, string> = {
+  positive: "積極的",
+  none: "無表明",
+  negative: "消極的",
+};
+
+const FACTOR_KEY_LABEL: Record<PublicExpressionFactorKey, string> = {
+  reserve: "遠慮",
+  conformityPressure: "同調圧力",
+  impressionManagement: "印象管理",
+};
+
+const TIE_OBSERVATION_LABEL: Record<"consistent" | "inconsistent", string> = {
+  consistent: "一致",
+  inconsistent: "不一致",
+};
+
+// Inspectorの履歴表示は直近この件数までに絞る(観察を妨げないための上限。Issue #98の折りたたみ方針を踏襲)
+const HISTORY_DISPLAY_LIMIT = 5;
 
 // leaveMarginがこの値を下回ったら、まだ離脱していなくても注意表示にする
 const LEAVE_MARGIN_WARNING_THRESHOLD = 0.15;
@@ -189,6 +213,147 @@ function ActiveEffectSummaryList({
   );
 }
 
+/**
+ * Issue #119: 現在tickの本心(private)と対外表現(expressed)、乖離の有無・要因内訳を表示する。
+ * 本心と建前のずれ(divergent)と、その次元ごとの要因(遠慮・同調圧力・印象管理)の寄与を明示する。
+ */
+function SocialExpressionSection({ snapshot }: { snapshot?: ObserverSocialExpressionSnapshot }) {
+  if (!snapshot) {
+    return <p className="observer-inspector-speech-empty">本心/建前の記録なし(三層モデルが無効)。</p>;
+  }
+  return (
+    <>
+      <div className={`observer-inspector-row${snapshot.divergent ? " observer-inspector-row--warning" : ""}`}>
+        <span>本心 / 建前(参加意欲)</span>
+        <span>
+          {STANCE_LABEL[snapshot.privateStance]} → {STANCE_LABEL[snapshot.expressedStance]}
+          {snapshot.divergent ? " ⚠ 乖離あり" : ""}
+        </span>
+      </div>
+      <div className="observer-inspector-row">
+        <span>参加意欲(本心→建前)</span>
+        <span>
+          {formatRatio(snapshot.privateJoinDesire)} → {formatRatio(snapshot.expressedJoinDesire)}
+        </span>
+      </div>
+      <div className="observer-inspector-row">
+        <span>離脱傾向(本心→建前)</span>
+        <span>
+          {snapshot.privateLeaveInclination.toFixed(2)} → {snapshot.expressedLeaveInclination.toFixed(2)}
+        </span>
+      </div>
+      {snapshot.divergent && (
+        <details className="observer-inspector-effect-details">
+          <summary>乖離の要因内訳</summary>
+          {snapshot.divergences
+            .filter((divergence) => Math.abs(divergence.delta) > 1e-9)
+            .map((divergence) => (
+              <div key={divergence.dimension} className="observer-inspector-effect-line">
+                {divergence.dimension === "joinDesire" ? "参加意欲" : "離脱傾向"}: 乖離量 {divergence.delta.toFixed(2)}
+                <ul className="observer-inspector-factor-list">
+                  {divergence.factors
+                    .filter((factor) => Math.abs(factor.contribution) > 1e-9)
+                    .map((factor) => (
+                      <li key={factor.key}>
+                        {FACTOR_KEY_LABEL[factor.key]}: {factor.contribution >= 0 ? "+" : ""}
+                        {factor.contribution.toFixed(2)}
+                      </li>
+                    ))}
+                </ul>
+              </div>
+            ))}
+        </details>
+      )}
+    </>
+  );
+}
+
+/** Issue #119: 話者ごとの動的trust現在値と直近の更新履歴(受け手→話者) */
+function TrustSummaryList({
+  summaries,
+  labelById,
+}: {
+  summaries: ObserverTrustSummary[];
+  labelById: Map<string, string>;
+}) {
+  if (summaries.length === 0) {
+    return <p className="observer-inspector-speech-empty">この観測者に紐づくtrust更新はまだありません。</p>;
+  }
+  return (
+    <div className="observer-inspector-speech-list">
+      {summaries.map((summary) => {
+        const recent = summary.updates.slice(-HISTORY_DISPLAY_LIMIT);
+        return (
+          <div key={summary.speakerId} className="observer-inspector-speech-entry">
+            <div className="observer-inspector-row">
+              <span>{labelById.get(summary.speakerId) ?? summary.speakerId} への信頼</span>
+              <span>
+                {formatRatio(summary.trust)}
+                {summary.isDynamic ? "" : "(初期値)"}
+              </span>
+            </div>
+            {recent.length > 0 && (
+              <details className="observer-inspector-effect-details">
+                <summary>更新履歴({summary.updates.length}件)</summary>
+                {recent.map((update) => (
+                  <div key={update.id} className="observer-inspector-effect-line">
+                    t{update.tick} {TIE_OBSERVATION_LABEL[update.observation]}(
+                    {update.observedFromState}→{update.observedToState}): {formatRatio(update.previousTrust)} →{" "}
+                    {formatRatio(update.newTrust)}
+                  </div>
+                ))}
+              </details>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Issue #119: 話者ごとの関係性補正の現在値・寄与した整合性観測・更新履歴(受け手→話者) */
+function TieSummaryList({
+  summaries,
+  labelById,
+}: {
+  summaries: ObserverTieSummary[];
+  labelById: Map<string, string>;
+}) {
+  if (summaries.length === 0) {
+    return <p className="observer-inspector-speech-empty">この観測者に紐づく関係性補正はまだありません。</p>;
+  }
+  return (
+    <div className="observer-inspector-speech-list">
+      {summaries.map((summary) => {
+        const recentObservations = summary.observations.slice(-HISTORY_DISPLAY_LIMIT);
+        return (
+          <div key={summary.speakerId} className="observer-inspector-speech-entry">
+            <div className="observer-inspector-row">
+              <span>{labelById.get(summary.speakerId) ?? summary.speakerId} との関係性補正</span>
+              <span>
+                {summary.correction >= 0 ? "+" : ""}
+                {summary.correction.toFixed(2)}
+              </span>
+            </div>
+            {recentObservations.length > 0 && (
+              <details className="observer-inspector-effect-details">
+                <summary>寄与した観測({summary.observations.length}件)</summary>
+                {recentObservations.map((observation) => (
+                  <div key={`${observation.speechEventId}-${observation.observedTick}`} className="observer-inspector-effect-line">
+                    t{observation.speechTick}の{observation.intent} → t{observation.observedTick}{" "}
+                    {TIE_OBSERVATION_LABEL[observation.observation]}({observation.observedToState}): {observation.weight >= 0 ? "+" : ""}
+                    {observation.weight.toFixed(2)}
+                  </div>
+                ))}
+              </details>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function InspectionCard({
   inspection,
   labelById,
@@ -309,6 +474,27 @@ function InspectionCard({
         <span>現在作用中の発言効果</span>
       </div>
       <ActiveEffectSummaryList summaries={inspection.activeEffectSummaries} labelById={labelById} />
+
+      <div className="observer-inspector-divider" />
+
+      <div className="observer-inspector-row observer-inspector-row--header">
+        <span>本心・建前・乖離(Phase 4)</span>
+      </div>
+      <SocialExpressionSection snapshot={inspection.socialExpression} />
+
+      <div className="observer-inspector-divider" />
+
+      <div className="observer-inspector-row observer-inspector-row--header">
+        <span>話者ごとの信頼(trust)</span>
+      </div>
+      <TrustSummaryList summaries={inspection.trustSummaries} labelById={labelById} />
+
+      <div className="observer-inspector-divider" />
+
+      <div className="observer-inspector-row observer-inspector-row--header">
+        <span>話者ごとの関係性補正</span>
+      </div>
+      <TieSummaryList summaries={inspection.tieSummaries} labelById={labelById} />
     </div>
   );
 }

@@ -18,8 +18,10 @@ import type {
 import type {
   RelationshipTieState,
   RelationshipTieUpdateEvent,
+  TieConsistencyObservation,
   TieObservationCommitment,
 } from "./relationshipTie";
+import type { ExpressedStance, PublicExpressionDivergence } from "./socialExpression";
 
 /**
  * エージェントの行動状態。Phase 4の三層モデル(`socialExpression.ts`)では、この状態遷移・移動
@@ -387,6 +389,67 @@ export type ObserverJoinerInspection = {
    * 寄与した各`speechEventId`ごとの個別寄与(正/負/重複)も保持する(Issue #98)。
    */
   activeEffectSummaries: AggregatedActiveEffect[];
+  /**
+   * Issue #119: 現在tickの本心(`PrivateEvaluation`)と対外表現(`PublicExpression`)、乖離の有無・
+   * 要因内訳。Phase 4三層モデル(socialExpression)が有効な場合のみ設定される(無効/導出不能なら
+   * undefined)。
+   */
+  socialExpression?: ObserverSocialExpressionSnapshot;
+  /**
+   * Issue #119: このobserverJoiner(受け手)から見た、話者ごとの動的trust現在値と更新履歴。
+   * trustが一度でも更新された、または現在値が保持されている話者のみを含む(speakerId昇順)。
+   */
+  trustSummaries: ObserverTrustSummary[];
+  /**
+   * Issue #119: このobserverJoiner(受け手)から見た、話者ごとの関係性補正の現在値と、
+   * 寄与した整合性観測(発言・行動の組)・更新履歴。整合性履歴を持つ話者のみを含む(speakerId昇順)。
+   */
+  tieSummaries: ObserverTieSummary[];
+};
+
+/**
+ * Issue #119: observerJoiner一人分の、現在tickの本心/対外表現/乖離のスナップショット。
+ * `derivePrivateEvaluations`/`derivePublicExpressions`(socialExpression.ts)の結果から組み立てる。
+ */
+export type ObserverSocialExpressionSnapshot = {
+  /** 本心の参加意欲(`PrivateEvaluation.joinDesire`) */
+  privateJoinDesire: number;
+  /** 対外表現の参加意欲(`PublicExpression.expressedJoinDesire`、乖離適用後) */
+  expressedJoinDesire: number;
+  /** 本心側スタンス(positive/none/negative) */
+  privateStance: ExpressedStance;
+  /** 対外表現側スタンス */
+  expressedStance: ExpressedStance;
+  /** 本心の離脱傾向(`PrivateEvaluation.leaveInclination`) */
+  privateLeaveInclination: number;
+  /** 対外表現の離脱傾向(乖離適用後) */
+  expressedLeaveInclination: number;
+  /** いずれかの次元で乖離があるか */
+  divergent: boolean;
+  /** 次元ごとの乖離判定結果(要因内訳付き、固定順: joinDesire→leaveInclination) */
+  divergences: PublicExpressionDivergence[];
+};
+
+/** Issue #119: 話者ごとの動的trust現在値と更新履歴(受け手→話者の方向つき) */
+export type ObserverTrustSummary = {
+  speakerId: string;
+  /** 現在のtrust値([0,1])。動的更新済みならその値 */
+  trust: number;
+  /** 動的更新が発生済み(`state.speechTrust`にpairが登録済み)か */
+  isDynamic: boolean;
+  /** この受け手→話者のtrust更新履歴(tick昇順) */
+  updates: SpeechTrustUpdateEvent[];
+};
+
+/** Issue #119: 話者ごとの関係性補正の現在値・寄与した整合性観測・更新履歴(受け手→話者の方向つき) */
+export type ObserverTieSummary = {
+  speakerId: string;
+  /** 現在の関係性補正値(整合性履歴から導出、`[-MAX, MAX]`) */
+  correction: number;
+  /** 補正へ寄与した整合性観測(発言・行動の組。tick昇順) */
+  observations: TieConsistencyObservation[];
+  /** この受け手→話者のtie補正更新履歴(tick昇順) */
+  updates: RelationshipTieUpdateEvent[];
 };
 
 /**

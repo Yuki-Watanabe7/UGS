@@ -2,16 +2,147 @@ import type {
   Agent,
   ObserverActiveEffectStatus,
   ObserverJoinerInspection,
+  ObserverSocialExpressionSnapshot,
   ObserverSpeechEffectDetail,
   ObserverSpeechHistoryEntry,
+  ObserverTieSummary,
+  ObserverTrustSummary,
   SimParams,
   SimulationState,
 } from "./types";
 import type { SpeechEvent } from "./speech";
 import type { AggregatedActiveEffect, SpeechActiveEffect, SpeechEffectDimension, SpeechEffectEvent } from "./speechEffects";
 import { aggregateActiveEffects } from "./speechEffects";
+import type { PublicExpression } from "./socialExpression";
+import { derivePrivateEvaluations, derivePublicExpressions } from "./socialExpression";
+import { correctionFromHistory } from "./relationshipTie";
 import { distance } from "./model";
 import { attractiveness, nearestCandidate } from "./engine";
+
+/**
+ * Issue #119: 全observerJoinerで共有するPhase 4(本心/対外表現)の導出結果。
+ * `derivePrivateEvaluations`/`derivePublicExpressions`は全agentを一度に評価するため、
+ * observerJoiner 1人ごとに呼び直さず`buildObserverJoinerInspection`で一度だけ導出して使い回す。
+ */
+type Phase4Context = {
+  publicExpressionByAgent: Map<string, PublicExpression>;
+  privateJoinDesireByAgent: Map<string, number>;
+  privateLeaveInclinationByAgent: Map<string, number>;
+};
+
+/**
+ * `state`が示すtick時点の本心/対外表現を(socialExpression有効時のみ)全agdについて導出し、
+ * agentIdで引ける形にまとめる。無効時は空のmapのみを持つcontextを返す(スナップショットはundefinedになる)。
+ */
+function buildPhase4Context(state: SimulationState, params: SimParams): Phase4Context {
+  const config = { enabled: state.socialExpressionEnabled ?? false };
+  const privates = derivePrivateEvaluations(state, params, config);
+  const publics = derivePublicExpressions(privates, state, params, config);
+  return {
+    publicExpressionByAgent: new Map(publics.map((expression) => [expression.agentId, expression])),
+    privateJoinDesireByAgent: new Map(privates.map((evaluation) => [evaluation.agentId, evaluation.joinDesire])),
+    privateLeaveInclinationByAgent: new Map(
+      privates.map((evaluation) => [evaluation.agentId, evaluation.leaveInclination]),
+    ),
+  };
+}
+
+/** `agentId`の本心/対外表現/乖離スナップショットを組み立てる(導出不能ならundefined) */
+function buildSocialExpressionSnapshot(
+  agentId: string,
+  context: Phase4Context,
+): ObserverSocialExpressionSnapshot | undefined {
+  const expression = context.publicExpressionByAgent.get(agentId);
+  const privateJoinDesire = context.privateJoinDesireByAgent.get(agentId);
+  const privateLeaveInclination = context.privateLeaveInclinationByAgent.get(agentId);
+  if (!expression || privateJoinDesire === undefined || privateLeaveInclination === undefined) return undefined;
+  return {
+    privateJoinDesire,
+    expressedJoinDesire: expression.expressedJoinDesire,
+    privateStance: expression.privateStance,
+    expressedStance: expression.expressedStance,
+    privateLeaveInclination,
+    expressedLeaveInclination: expression.expressedLeaveInclination,
+    divergent: expression.divergent,
+    divergences: expression.divergences,
+  };
+}
+
+/** `key`(= `${observerId}->${speakerId}`)から話者IDを取り出す。合致しなければundefined */
+function speakerIdFromPairKey(key: string, observerId: string): string | undefined {
+  const prefix = `${observerId}->`;
+  return key.startsWith(prefix) ? key.slice(prefix.length) : undefined;
+}
+
+/**
+ * このobserverJoiner(受け手)から見た、話者ごとの動的trust現在値と更新履歴を組み立てる(Issue #119)。
+ * `state.speechTrust`に現在値を持つ話者、または`state.speechTrustUpdateLog`に更新履歴を持つ話者を
+ * speakerId昇順で列挙する(どちらも無ければ空)。
+ */
+function buildTrustSummaries(observerId: string, state: SimulationState): ObserverTrustSummary[] {
+  const trust = state.speechTrust ?? {};
+  const updateLog = state.speechTrustUpdateLog ?? [];
+
+  const updatesBySpeaker = new Map<string, ObserverTrustSummary["updates"]>();
+  for (const update of updateLog) {
+    if (update.observerId !== observerId) continue;
+    const list = updatesBySpeaker.get(update.speakerId) ?? [];
+    list.push(update);
+    updatesBySpeaker.set(update.speakerId, list);
+  }
+
+  const dynamicValueBySpeaker = new Map<string, number>();
+  for (const [key, value] of Object.entries(trust)) {
+    const speakerId = speakerIdFromPairKey(key, observerId);
+    if (speakerId !== undefined) dynamicValueBySpeaker.set(speakerId, value);
+  }
+
+  const speakerIds = new Set<string>([...dynamicValueBySpeaker.keys(), ...updatesBySpeaker.keys()]);
+  return [...speakerIds]
+    .sort()
+    .map((speakerId) => {
+      const updates = updatesBySpeaker.get(speakerId) ?? [];
+      const dynamicValue = dynamicValueBySpeaker.get(speakerId);
+      // 動的値があればそれ、無ければ(理論上稀)最新の更新後値へフォールバック
+      const trustValue = dynamicValue ?? updates[updates.length - 1]?.newTrust ?? 0;
+      return { speakerId, trust: trustValue, isDynamic: dynamicValue !== undefined, updates };
+    });
+}
+
+/**
+ * このobserverJoiner(受け手)から見た、話者ごとの関係性補正の現在値・寄与した整合性観測・更新履歴を
+ * 組み立てる(Issue #119)。`state.tieHistory`に整合性履歴を持つ話者、または`relationshipTieUpdateLog`に
+ * 更新履歴を持つ話者をspeakerId昇順で列挙する。
+ */
+function buildTieSummaries(observerId: string, state: SimulationState): ObserverTieSummary[] {
+  const history = state.tieHistory ?? {};
+  const updateLog = state.relationshipTieUpdateLog ?? [];
+
+  const updatesBySpeaker = new Map<string, ObserverTieSummary["updates"]>();
+  for (const update of updateLog) {
+    if (update.observerId !== observerId) continue;
+    const list = updatesBySpeaker.get(update.speakerId) ?? [];
+    list.push(update);
+    updatesBySpeaker.set(update.speakerId, list);
+  }
+
+  const observationsBySpeaker = new Map<string, ObserverTieSummary["observations"]>();
+  for (const [key, observations] of Object.entries(history)) {
+    const speakerId = speakerIdFromPairKey(key, observerId);
+    if (speakerId !== undefined && observations.length > 0) observationsBySpeaker.set(speakerId, observations);
+  }
+
+  const speakerIds = new Set<string>([...observationsBySpeaker.keys(), ...updatesBySpeaker.keys()]);
+  return [...speakerIds].sort().map((speakerId) => {
+    const observations = observationsBySpeaker.get(speakerId) ?? [];
+    return {
+      speakerId,
+      correction: correctionFromHistory(observations),
+      observations,
+      updates: updatesBySpeaker.get(speakerId) ?? [],
+    };
+  });
+}
 
 /**
  * agentIdが関わる発言を、tick順のまま関わり方(speaker/target/audience)付きで抽出する。
@@ -130,6 +261,7 @@ function buildInspection(
   agent: Agent,
   state: SimulationState,
   params: SimParams,
+  phase4: Phase4Context,
 ): ObserverJoinerInspection {
   const candidate = nearestCandidate(agent, state.groupCandidates);
   const speechHistory = buildSpeechHistory(agent.id, state.speechLog ?? []);
@@ -167,6 +299,9 @@ function buildInspection(
     speechHistory,
     speechEffectDetails: buildSpeechEffectDetails(agent.id, speechHistory, state),
     activeEffectSummaries: buildActiveEffectSummaries(agent.id, state),
+    socialExpression: buildSocialExpressionSnapshot(agent.id, phase4),
+    trustSummaries: buildTrustSummaries(agent.id, state),
+    tieSummaries: buildTieSummaries(agent.id, state),
   };
 }
 
@@ -179,5 +314,8 @@ export function buildObserverJoinerInspection(
   state: SimulationState,
   params: SimParams,
 ): ObserverJoinerInspection[] {
-  return state.agents.filter((agent) => agent.isObserverJoiner).map((agent) => buildInspection(agent, state, params));
+  const phase4 = buildPhase4Context(state, params);
+  return state.agents
+    .filter((agent) => agent.isObserverJoiner)
+    .map((agent) => buildInspection(agent, state, params, phase4));
 }

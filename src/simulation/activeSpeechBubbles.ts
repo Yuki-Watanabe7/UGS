@@ -26,6 +26,12 @@ export type SpeechBubbleCandidate = {
   priority: number;
   eventTick: number;
   ttlTicks: number;
+  /**
+   * Issue #119: 乖離場面での本心(心の声)側の文言。発言(建前=`text`)と対になる。
+   * 乖離発言(`SpeechEvent.expression.divergent`かつ`resolveDivergentExpression`が場面を返す)の場合のみ
+   * 設定され、Canvasが同一話者について発言吹き出しと本心吹き出しを同時表示するために使う。
+   */
+  innerThought?: string;
 };
 
 export type ActiveSpeechBubble = SpeechBubbleCandidate & {
@@ -50,11 +56,15 @@ export function createActiveSpeechBubblesState(): ActiveSpeechBubblesState {
   return { active: new Map(), pending: new Map() };
 }
 
-/** `SpeechEvent`と、解決済みの表示文言(宛先補助表現込み)・observerJoiner判定から候補データを組み立てる */
+/**
+ * `SpeechEvent`と、解決済みの表示文言(宛先補助表現込み)・observerJoiner判定から候補データを組み立てる。
+ * `innerThought`(Issue #119)は乖離場面での本心側文言。非乖離発言ではundefinedのまま。
+ */
 export function toSpeechBubbleCandidate(
   event: SpeechEvent,
   text: string,
   isObserverJoiner: boolean,
+  innerThought?: string,
 ): SpeechBubbleCandidate {
   return {
     agentId: event.speakerId,
@@ -64,6 +74,7 @@ export function toSpeechBubbleCandidate(
     priority: isObserverJoiner ? OBSERVER_SPEECH_PRIORITY : DEFAULT_SPEECH_PRIORITY,
     eventTick: event.tick,
     ttlTicks: isObserverJoiner ? OBSERVER_SPEECH_TTL_TICKS : DEFAULT_SPEECH_TTL_TICKS,
+    innerThought,
   };
 }
 
