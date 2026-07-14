@@ -204,6 +204,15 @@ export type SpeechInterpreterCandidate = Pick<
 >;
 
 /**
+ * Issue #116: `deriveSpeechInterpretations`のtrust係数を、静的`relationshipTrust`の代わりに
+ * pair単位の動的trust(`speechTrust.ts`)から解決するための関数型。未指定(undefined)なら
+ * 従来どおり静的式を使う(後方互換)。実装は`createSpeechTrustResolver`(speechTrust.ts)が唯一で、
+ * 本ファイルはtrust状態の持ち方・更新規則を一切知らない(解決関数として受け取るだけ)。
+ * 戻り値は防御的に0〜1へclampして使う。
+ */
+export type SpeechTrustResolver = (receiverId: string, speakerId: string, sameClique: boolean) => number;
+
+/**
  * intentごとの基礎的な意味と作用方向(Issue #95の受入条件)。invite/welcomeは接近可能性・安心感を
  * 上げる方向、greetは周囲の社会的手がかりを補強する方向(同じく正方向だが控えめ)、declineは対象の輪の
  * 魅力度を下げ曖昧さ/stressを上げうる方向。ここでの`magnitude`は他要因による減衰前の上限値であり、
@@ -234,12 +243,13 @@ function influenceAvoidanceFactor(influenceAvoidance: number, relation: SpeechRe
 }
 
 /**
- * 話者への基礎信頼スコア。現在の関係性(同一clique/`existingTieStrength`)から決定的に導出する固定値
- * (可変の信頼学習は対応しない範囲)。同一cliqueなら既存関係性が強いほど信頼が上がり、そうでなければ
- * 既存関係性が強い場ほど部外者への基礎信頼が下がる(`engine.ts`の`attractiveness`が使う
- * outsiderPenaltyと同じ非対称性)。
+ * 話者への基礎信頼スコア。現在の関係性(同一clique/`existingTieStrength`)から決定的に導出する固定値。
+ * 同一cliqueなら既存関係性が強いほど信頼が上がり、そうでなければ既存関係性が強い場ほど部外者への
+ * 基礎信頼が下がる(`engine.ts`の`attractiveness`が使うoutsiderPenaltyと同じ非対称性)。
+ * Issue #116以降は、この静的式は同時にpair単位の動的trust(`speechTrust.ts`)の**初期値**でもある
+ * (動的trustが無効・または当該pairに更新が一度も発生していない間は、常にこの値が使われる)。
  */
-function relationshipTrust(sameClique: boolean, existingTieStrength: number): number {
+export function relationshipTrust(sameClique: boolean, existingTieStrength: number): number {
   const tie = clamp(existingTieStrength, 0, 1);
   const trust = sameClique ? 0.5 + 0.5 * tie : 0.5 - 0.4 * tie;
   return clamp(trust, 0, 1);
@@ -398,7 +408,13 @@ export function deriveSpeechReceptions(
  * (`conformity`/`influenceAvoidance`)・話者との関係(同一clique/`existingTieStrength`から導出する
  * 基礎信頼)・現在の`stress`/`state`・target/nearbyの別・`SpeechEvent.strength`を乗算的な係数として
  * 反映し、決定的に`valence`/`intensity`/`factors`を計算する。`SimulationState`・rngのいずれも
- * 参照/変更しない。可変の「信頼学習」は導入せず、`existingTieStrength`は呼び出し時点の固定値として使う。
+ * 参照/変更しない。
+ *
+ * trust係数(Issue #116): `resolveTrust`が渡された場合(Phase 4 trust有効時)、pair単位の動的trust
+ * (`speechTrust.ts`)をtrust係数として使う。未指定(デフォルト)なら従来どおり、呼び出し時点の
+ * `existingTieStrength`から静的に導出する固定値(`relationshipTrust`)を使う — この場合の結果は
+ * Issue #116以前と完全に一致する。どちらの場合も`factors`の`relationshipTrust`要因の`contribution`に
+ * 実際に使われたtrust値が入る。
  *
  * `heard: false`の受信(圏外で聞こえなかった)は解釈対象にしない(Issue #94: `deriveSpeechReceptions`が
  * 距離に基づき`heard`を判定するようになったことに伴う、聞いていないものは解釈しないという整合性維持)。
@@ -413,6 +429,7 @@ export function deriveSpeechInterpretations(
   participants: SpeechInterpreterCandidate[],
   existingTieStrength: number,
   config: SpeechEffectsConfig,
+  resolveTrust?: SpeechTrustResolver,
 ): SpeechInterpretationEvent[] {
   if (!config.enabled) return [];
 
@@ -434,7 +451,9 @@ export function deriveSpeechInterpretations(
 
     const cFactor = conformityFactor(receiver.conformity);
     const iFactor = influenceAvoidanceFactor(receiver.influenceAvoidance, reception.relation);
-    const trust = relationshipTrust(sameClique, existingTieStrength);
+    const trust = resolveTrust
+      ? clamp(resolveTrust(reception.receiverId, speech.speakerId, sameClique), 0, 1)
+      : relationshipTrust(sameClique, existingTieStrength);
     const sFactor = stressFactor(receiver.stress, base.direction);
     const stateFactor = STATE_RELEVANCE[receiver.state];
     const relFactor = relationFactor(reception.relation);

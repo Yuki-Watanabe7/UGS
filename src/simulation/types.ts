@@ -9,6 +9,12 @@ import type {
   SpeechInterpretationEvent,
   SpeechReceptionEvent,
 } from "./speechEffects";
+import type {
+  SpeechTrustCommitment,
+  SpeechTrustState,
+  SpeechTrustUpdateEvent,
+  SpeechTruthfulnessRecord,
+} from "./speechTrust";
 
 /**
  * エージェントの行動状態。Phase 4の三層モデル(`socialExpression.ts`)では、この状態遷移・移動
@@ -233,6 +239,33 @@ export type SimulationState = {
    * (`speechEffectsEnabled`がfalseの間は常に空配列)。
    */
   activeSpeechEffects?: SpeechActiveEffect[];
+  /**
+   * Issue #116: このstateの生成/更新時点でPhase 4 trust更新(`speechTrust.ts`)が有効だったかどうか。
+   * `speechEffectsEnabled`/`socialExpressionEnabled`と同じfall back規則。
+   */
+  speechTrustEnabled?: boolean;
+  /**
+   * Issue #116: pair単位(受け手→話者の方向つき)の動的trust。キーは`speechTrustPairKey`。
+   * 更新が一度でも発生したpairのみ保持され、未登場のpairは静的`relationshipTrust`が初期値として
+   * 解決される。`speechTrustEnabled`がfalseの間は常に空(既存挙動に一切影響しない)。
+   */
+  speechTrust?: SpeechTrustState;
+  /**
+   * Issue #116: trust更新の構造化記録(いつ・何を観測して・どれだけ変化したか)の時系列蓄積ログ。
+   * 意思決定の入力には使われない(判断への反映は`speechTrust`経由の解釈trust係数のみ)。
+   */
+  speechTrustUpdateLog?: SpeechTrustUpdateEvent[];
+  /**
+   * Issue #116: 発言の真実性(発話時点の本心と対外表現の一致度)の時系列蓄積ログ。
+   * 話者側の純粋な記録であり、trust更新・他エージェントの判断の入力には使われない。
+   */
+  speechTruthfulnessLog?: SpeechTruthfulnessRecord[];
+  /**
+   * Issue #116: 未観測の発言コミットメント(発言intentに対する話者のその後の行動をまだ観測して
+   * いない発言)の進行状態。ログではなく`activeSpeechEffects`と同種の「現在のスナップショット」で、
+   * `engine.ts`が毎tick、観測が完了したものを取り除き・このtickの発言分を追記した配列で置き換える。
+   */
+  speechTrustCommitments?: SpeechTrustCommitment[];
 };
 
 /**

@@ -47,6 +47,14 @@ import {
   derivePublicExpressions,
   resolveSocialExpressionConfig,
 } from "./socialExpression";
+import type { SpeechTrustConfig } from "./speechTrust";
+import {
+  createSpeechTrustResolver,
+  deriveSpeechTrustUpdates,
+  deriveSpeechTruthfulness,
+  registerSpeechTrustCommitments,
+  resolveSpeechTrustConfig,
+} from "./speechTrust";
 
 const APPROACH_SPEED = 14;
 const WANDER_SPEED = 0.5;
@@ -98,10 +106,12 @@ export function createInitialState(
   intervention?: InterventionRuntimeOptions,
   speechEffects?: Partial<SpeechEffectsConfig>,
   socialExpression?: Partial<SocialExpressionConfig>,
+  speechTrust?: Partial<SpeechTrustConfig>,
 ): SimulationState {
   const scenario = resolveInterventionScenario(intervention);
   const speechEffectsConfig = resolveSpeechEffectsConfig(speechEffects);
   const socialExpressionConfig = resolveSocialExpressionConfig(socialExpression);
+  const speechTrustConfig = resolveSpeechTrustConfig(speechTrust);
   const effectiveParams = resolveEffectiveParams(params, intervention);
   const agents = createInitialAgents(seed, effectiveParams);
   const log: LogEntry[] = [
@@ -178,6 +188,11 @@ export function createInitialState(
     speechEffectsEnabled: speechEffectsConfig.enabled,
     socialExpressionEnabled: socialExpressionConfig.enabled,
     activeSpeechEffects: [],
+    speechTrustEnabled: speechTrustConfig.enabled,
+    speechTrust: {},
+    speechTrustUpdateLog: [],
+    speechTruthfulnessLog: [],
+    speechTrustCommitments: [],
   };
 }
 
@@ -323,6 +338,7 @@ export function stepSimulation(
   intervention?: InterventionRuntimeOptions,
   speechEffects?: Partial<SpeechEffectsConfig>,
   socialExpression?: Partial<SocialExpressionConfig>,
+  speechTrust?: Partial<SpeechTrustConfig>,
 ): SimulationState {
   if (state.finished) return state;
 
@@ -341,6 +357,10 @@ export function stepSimulation(
   const socialExpressionConfig = resolveSocialExpressionConfig(
     socialExpression ??
       (state.socialExpressionEnabled !== undefined ? { enabled: state.socialExpressionEnabled } : undefined),
+  );
+  // Phase 4(Issue #116)のtrust更新も同じfall backパターンで引き継ぐ。
+  const speechTrustConfig = resolveSpeechTrustConfig(
+    speechTrust ?? (state.speechTrustEnabled !== undefined ? { enabled: state.speechTrustEnabled } : undefined),
   );
 
   const tick = state.tick + 1;
@@ -836,6 +856,25 @@ export function stepSimulation(
     socialExpressionConfig,
   );
 
+  // Phase 4(Issue #116) trust観測: 前tickまでの未観測コミットメント(過去の発言intentに対する
+  // 話者のその後の行動)を、このtickの状態遷移(state.agents -> agents)と突き合わせてtrustを更新する。
+  // tick内の順序は「trust更新(過去の発言の観測) -> このtickの発言の解釈(更新後trustを参照) ->
+  // このtickの発言のコミットメント登録(下)」で固定。発言とその発言自体を生んだ遷移
+  // (例: leaving遷移とdecline発言)が同一tickで自己解決しないのは、登録が観測より後だから。
+  // rngは一切使わない(有効/無効・更新の有無でPRNG消費列は変わらない)。
+  const trustStep = deriveSpeechTrustUpdates(
+    state.speechTrustCommitments ?? [],
+    state.agents,
+    agents,
+    state.speechTrust ?? {},
+    effectiveParams.existingTieStrength,
+    tick,
+    speechTrustConfig,
+  );
+  // 話者側の真実性記録: 乖離スナップショット(Issue #115)を持つ発言のみが評価対象。
+  // trust更新とは独立した純粋な記録であり、受け手の解釈・trust更新の入力にはならない。
+  const tickTruthfulness = deriveSpeechTruthfulness(tickSpeechEvents, speechTrustConfig);
+
   // Phase 3: 認知 -> 解釈 -> 効果登録/更新の一方向パイプライン。各段の結果を次の段へ明示的に渡す。
   // このtickで生成される`SpeechActiveEffect`(下の`tickActiveEffects`)は`nextState.activeSpeechEffects`
   // に登録されるだけで、このtick自体の状態・行動判断(既に上のstep 1-9で完了済み)には使われない。
@@ -844,12 +883,18 @@ export function stepSimulation(
   // 状態・行動判断への参照 -> 期限切れ効果の破棄。speechEffectsConfig.enabled === falseの間は
   // 全関数が空配列を返し、既存挙動に一切影響しない)。
   const tickReceptions = deriveSpeechReceptions(tickSpeechEvents, nextState.agents, speechEffectsConfig);
+  // Issue #116: trust有効時のみ、解釈のtrust係数を動的trust(このtickの観測適用後)から解決する。
+  // 無効時はundefined(従来の静的relationshipTrust式)で、解釈結果はIssue #116以前と完全一致する。
+  const trustResolver = speechTrustConfig.enabled
+    ? createSpeechTrustResolver(trustStep.trust, effectiveParams.existingTieStrength)
+    : undefined;
   const tickInterpretations = deriveSpeechInterpretations(
     tickReceptions,
     tickSpeechEvents,
     nextState.agents,
     effectiveParams.existingTieStrength,
     speechEffectsConfig,
+    trustResolver,
   );
   const tickEffects = deriveSpeechEffects(tickInterpretations, tickSpeechEvents, speechEffectsConfig);
   const tickActiveEffects = deriveSpeechActiveEffects(tickEffects, nextState.agents, speechEffectsConfig);
@@ -866,5 +911,17 @@ export function stepSimulation(
     // Issue #97: 単純な配列結合ではなく、同一話者・同一intentの再発言を置換(更新)として扱う
     // 決定的な合成規則を通す(詳細はspeechEffects.tsの`registerActiveSpeechEffects`参照)。
     activeSpeechEffects: registerActiveSpeechEffects(activeEffects, tickActiveEffects),
+    speechTrustEnabled: speechTrustConfig.enabled,
+    speechTrust: trustStep.trust,
+    speechTrustUpdateLog: [...(state.speechTrustUpdateLog ?? []), ...trustStep.updates],
+    speechTruthfulnessLog: [...(state.speechTruthfulnessLog ?? []), ...tickTruthfulness],
+    // このtickの発言のコミットメント登録は観測(deriveSpeechTrustUpdates)より後に行う(上記の順序固定)。
+    // hearer(観測資格)は発話時点の認知結果(heard: true)のスナップショット。
+    speechTrustCommitments: registerSpeechTrustCommitments(
+      trustStep.commitments,
+      tickSpeechEvents,
+      tickReceptions,
+      speechTrustConfig,
+    ),
   };
 }
