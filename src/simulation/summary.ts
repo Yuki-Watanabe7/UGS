@@ -3,6 +3,7 @@ import type {
   AgentState,
   LogEntry,
   ObserverJoinerRunSummary,
+  Phase4RunSummary,
   SimulationEventType,
   SimulationState,
   SimulationSummary,
@@ -172,5 +173,33 @@ export function buildSpeechEffectsRunSummary(state: SimulationState): SpeechEffe
     hadInterpretationOrEffect,
     dimensionTotals,
     transitionInfluenced,
+  };
+}
+
+/**
+ * SimulationStateから、Phase 4(本心/建前の乖離・trust・関係性補正)固有の観察指標
+ * (`Phase4RunSummary`)を導出する(Issue #120)。`state.speechLog`(`SpeechEvent.expression`)・
+ * `speechTrustUpdateLog`・`relationshipTieUpdateLog`のみを読み取り、SimulationStateはmutationしない。
+ * socialExpression/speechTrust/relationshipTieがいずれもfalse(または未指定)の場合、
+ * これらのログは常に空のため、全フィールドが0(=乖離・trust変化・tie変化なし)になる。
+ */
+export function buildPhase4RunSummary(state: SimulationState): Phase4RunSummary {
+  const expressedSpeech = (state.speechLog ?? []).filter((event) => event.expression !== undefined);
+  const divergenceCount = expressedSpeech.filter((event) => event.expression!.divergent).length;
+
+  const trustChangeAmount = (state.speechTrustUpdateLog ?? []).reduce(
+    (sum, update) => sum + Math.abs(update.delta),
+    0,
+  );
+  const tieChangeAmount = (state.relationshipTieUpdateLog ?? []).reduce(
+    (sum, update) => sum + Math.abs(update.delta),
+    0,
+  );
+
+  return {
+    divergenceCount,
+    expressedSpeechCount: expressedSpeech.length,
+    trustChangeAmount,
+    tieChangeAmount,
   };
 }
