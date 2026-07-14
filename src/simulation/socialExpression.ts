@@ -5,7 +5,7 @@ import { attractiveness, isJoinable, nearestCandidate } from "./engine";
 import type { InterventionRuntimeOptions } from "./interventions";
 import { resolveEffectiveParams, resolveInterventionScenario } from "./interventions";
 import { DEFAULT_SPEECH_RANGE } from "./speech";
-import type { SpeechEvent, SpeechIntent } from "./speech";
+import type { SpeechEvent, SpeechExpressionLink, SpeechIntent } from "./speech";
 import { aggregateGroupTieCorrection, deriveTieCorrections } from "./relationshipTie";
 import { clamp } from "./model";
 
@@ -542,4 +542,48 @@ export function applyPublicExpressionsToSpeech(
     });
   }
   return adjusted;
+}
+
+/**
+ * Issue #118: 乖離場面(本心と対外表現がずれた発言)の分類。発話時点の乖離スナップショット
+ * (`SpeechExpressionLink`、#115)と実際に発せられたintentから、どの乖離要因が主に働いた場面かを
+ * 決定的に判定する。テンプレート層(`divergenceTemplates.ts`)が本心(thought)と建前(speech)の
+ * 対比文言を選ぶための「場面キー」であり、乖離判定ロジック自体は変更しない(#114/#115の結果を読むだけ)。
+ *
+ * 3つの場面が3つの乖離要因(遠慮・同調・社交辞令)に1:1で対応する:
+ * - "reservedSoftening"(遠慮): 積極的な誘い(invite)を控えめな声がけ(greet)へ軟化させた場面。
+ * - "obligatoryWelcome"(同調): 本心は乗り気でない(privateStance: negative)まま、周囲に合わせて
+ *   歓迎(welcome)を述べる「建前の歓迎」の場面。
+ * - "politeDecline"(社交辞令): 本心は参加希望(privateStance: positive)のまま辞退(decline)を
+ *   告げる「社交辞令の辞退」の場面(observerJoinerの典型)。
+ *
+ * 上記いずれにも当てはまらない発言(非乖離、または乖離だが上記3場面に該当しない)はundefinedを返し、
+ * 呼び出し側は従来の非乖離テンプレートにフォールバックする。
+ */
+export type DivergenceScene = "reservedSoftening" | "obligatoryWelcome" | "politeDecline";
+
+/** 乖離場面が主に表す乖離要因(#114の`PublicExpressionFactorKey`に対応する3要因) */
+export type DivergenceFactor = "reserve" | "conformity" | "impression";
+
+/** 各`DivergenceScene`が表す乖離要因(場面と要因は1:1対応) */
+export const DIVERGENCE_SCENE_FACTOR: Record<DivergenceScene, DivergenceFactor> = {
+  reservedSoftening: "reserve",
+  obligatoryWelcome: "conformity",
+  politeDecline: "impression",
+};
+
+/**
+ * `SpeechExpressionLink`(発話時点の乖離スナップショット)と実際のintentから乖離場面を判定する純関数。
+ * `link.divergent`がfalseなら常にundefined(乖離していない発言に場面はない)。
+ * rngを一切使わず、同一入力に対して常に同一の結果を返す。
+ */
+export function classifyDivergenceScene(
+  link: SpeechExpressionLink,
+  adjustedIntent: SpeechIntent,
+): DivergenceScene | undefined {
+  if (!link.divergent) return undefined;
+  if (link.baseIntent === "invite" && adjustedIntent === "greet") return "reservedSoftening";
+  if (adjustedIntent === "welcome" && link.privateStance === "negative") return "obligatoryWelcome";
+  if (adjustedIntent === "decline" && link.privateStance === "positive") return "politeDecline";
+  return undefined;
 }

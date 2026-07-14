@@ -159,5 +159,8 @@ Phase 3の因果チェーンは
 - 整合性履歴に基づく関係性変化: #117(実装済み。`relationshipTie.ts`が、発言intentと話者の行動の
   整合性履歴からtie補正を導き、`attractiveness()`の同clique bonus/outsider penaltyと解釈モデルの
   `relFactor`へ加算反映する。`docs/relationship-tie-model.md`参照)
-- 整合性履歴に基づく関係性変化: #117
-- テンプレート: #118、UI・Inspector表示: #119、受入テスト・Monte Carlo比較: #120、README: #121
+- シナリオ別・性格別の本心/建前表現テンプレート: #118(実装済み。`divergenceTemplates.ts`が、
+  乖離場面を`classifyDivergenceScene`で3場面(遠慮・同調・社交辞令)に分類し、本心(thought)と
+  建前(speech)を対にした文言をプリセット別・アーキタイプ別に決定的に選ぶ。表示専用でシミュレーション
+  結果に非干渉。`docs/divergence-templates-model.md`参照)
+- UI・Inspector表示: #119、受入テスト・Monte Carlo比較: #120、README: #121
