@@ -1,10 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { LogTag, SimulationState } from "../simulation/types";
 import type { SpeechEvent } from "../simulation/speech";
+import type { ExpressedStance, DivergenceFactor } from "../simulation/socialExpression";
+import { classifyDivergenceScene, DIVERGENCE_SCENE_FACTOR } from "../simulation/socialExpression";
 import { buildAgentLabelMap, formatSpeechDebugMeta, formatSpeechLogMessage } from "./speechDisplay";
 import { formatEffectLine, formatInterpretationFactorLine, formatInterpretationLine } from "./speechEffectsDisplay";
 
-type FilterKey = "all" | "observerJoiner" | "nucleus" | "groupConfirmed" | "leave" | "speech" | "speechEffect";
+type FilterKey =
+  | "all"
+  | "observerJoiner"
+  | "nucleus"
+  | "groupConfirmed"
+  | "leave"
+  | "speech"
+  | "speechEffect"
+  | "divergence"
+  | "trust"
+  | "tie";
 
 const FILTERS: Array<{ key: FilterKey; label: string; tag?: LogTag }> = [
   { key: "all", label: "全ログ" },
@@ -14,7 +26,14 @@ const FILTERS: Array<{ key: FilterKey; label: string; tag?: LogTag }> = [
   { key: "leave", label: "離脱イベントのみ", tag: "leave" },
   { key: "speech", label: "発言のみ" },
   { key: "speechEffect", label: "発言効果のみ" },
+  { key: "divergence", label: "乖離発言のみ" },
+  { key: "trust", label: "信頼更新のみ" },
+  { key: "tie", label: "関係性変化のみ" },
 ];
+
+const STANCE_LABEL: Record<ExpressedStance, string> = { positive: "積極的", none: "無表明", negative: "消極的" };
+const FACTOR_LABEL: Record<DivergenceFactor, string> = { reserve: "遠慮", conformity: "同調", impression: "社交辞令" };
+const OBSERVATION_LABEL: Record<"consistent" | "inconsistent", string> = { consistent: "一致", inconsistent: "不一致" };
 
 // 発言効果(解釈/効果)の行が一度に大量になっても操作を妨げないよう、既定では末尾からこの件数だけ表示する
 // (Issue #98の受入条件: 「長い履歴の折りたたみ・件数上限等を設け、既存観察UIを妨げない」)。
@@ -32,7 +51,10 @@ type TimelineRow =
   | { kind: "state"; key: string; tick: number; message: string; tags: LogTag[] }
   | { kind: "speech"; key: string; tick: number; message: string; meta: string }
   | { kind: "speechInterpretation"; key: string; tick: number; message: string; meta: string }
-  | { kind: "speechEffect"; key: string; tick: number; message: string; meta: string };
+  | { kind: "speechEffect"; key: string; tick: number; message: string; meta: string }
+  | { kind: "divergence"; key: string; tick: number; message: string; meta: string }
+  | { kind: "trustUpdate"; key: string; tick: number; message: string; meta: string }
+  | { kind: "tieUpdate"; key: string; tick: number; message: string; meta: string };
 
 type Props = {
   state: SimulationState;
@@ -68,9 +90,57 @@ function buildTimeline(state: SimulationState, labelById: Map<string, string>): 
     message: formatEffectLine(effect, labelById),
     meta: `speechEventId: ${effect.speechEventId} / reason: ${effect.reason} / speaker: ${labelById.get(effect.speakerId) ?? effect.speakerId}`,
   }));
-  // 状態ログ→発言ログ→解釈ログ→効果ログの順に連結してからtickだけでソートする(Array#sortは
+  // Issue #119: 乖離発言(本心と建前がずれた発言)を、発言ログの`expression`から抽出する。
+  const divergenceRows: TimelineRow[] = speechLog
+    .filter((event) => event.expression?.divergent)
+    .map((event) => {
+      const link = event.expression!;
+      const scene = classifyDivergenceScene(link, event.intent);
+      const factorLabel = scene ? FACTOR_LABEL[DIVERGENCE_SCENE_FACTOR[scene]] : "その他";
+      const speaker = labelById.get(event.speakerId) ?? event.speakerId;
+      return {
+        kind: "divergence",
+        key: `divergence-${event.id}`,
+        tick: event.tick,
+        message: `${speaker}が本心(${STANCE_LABEL[link.privateStance]})と異なる建前(${STANCE_LABEL[link.expressedStance]})で発言 [${factorLabel}]`,
+        meta: `speechEventId: ${event.id} / intent: ${event.intent}(基礎: ${link.baseIntent})`,
+      };
+    });
+  // Issue #119: 信頼(trust)更新イベント(speechTrustUpdateLog)。
+  const trustRows: TimelineRow[] = (state.speechTrustUpdateLog ?? []).map((update) => {
+    const observer = labelById.get(update.observerId) ?? update.observerId;
+    const speaker = labelById.get(update.speakerId) ?? update.speakerId;
+    return {
+      kind: "trustUpdate",
+      key: update.id,
+      tick: update.tick,
+      message: `信頼更新: ${observer}→${speaker} ${OBSERVATION_LABEL[update.observation]}(${update.previousTrust.toFixed(2)}→${update.newTrust.toFixed(2)})`,
+      meta: `観測: ${update.observedFromState}→${update.observedToState} / speechEventId: ${update.speechEventId}`,
+    };
+  });
+  // Issue #119: 関係性補正(tie)変化イベント(relationshipTieUpdateLog)。
+  const tieRows: TimelineRow[] = (state.relationshipTieUpdateLog ?? []).map((update) => {
+    const observer = labelById.get(update.observerId) ?? update.observerId;
+    const speaker = labelById.get(update.speakerId) ?? update.speakerId;
+    return {
+      kind: "tieUpdate",
+      key: update.id,
+      tick: update.tick,
+      message: `関係性変化: ${observer}→${speaker} ${OBSERVATION_LABEL[update.observation]}(補正 ${update.previousCorrection.toFixed(2)}→${update.newCorrection.toFixed(2)})`,
+      meta: `観測: ${update.intent} → ${update.observedToState} / speechEventId: ${update.speechEventId}`,
+    };
+  });
+  // 状態ログ→発言ログ→解釈ログ→効果ログ→乖離→信頼→関係性の順に連結してからtickだけでソートする(Array#sortは
   // 安定ソートのため、同一tick内では連結順、各配列内は元の発生順という決定的な順序が保たれる)。
-  return [...stateRows, ...speechRows, ...interpretationRows, ...effectRows].sort((a, b) => a.tick - b.tick);
+  return [
+    ...stateRows,
+    ...speechRows,
+    ...interpretationRows,
+    ...effectRows,
+    ...divergenceRows,
+    ...trustRows,
+    ...tieRows,
+  ].sort((a, b) => a.tick - b.tick);
 }
 
 export function EventLog({ state }: Props) {
@@ -88,6 +158,9 @@ export function EventLog({ state }: Props) {
     if (filter === "speechEffect") {
       return timeline.filter((row) => row.kind === "speechInterpretation" || row.kind === "speechEffect");
     }
+    if (filter === "divergence") return timeline.filter((row) => row.kind === "divergence");
+    if (filter === "trust") return timeline.filter((row) => row.kind === "trustUpdate");
+    if (filter === "tie") return timeline.filter((row) => row.kind === "tieUpdate");
     return timeline.filter((row) => row.kind === "state" && activeTag !== undefined && row.tags.includes(activeTag));
   }, [timeline, filter, activeTag]);
 
@@ -159,6 +232,21 @@ export function EventLog({ state }: Props) {
           ) : row.kind === "speechEffect" ? (
             <div key={row.key} className="event-log-entry event-log-entry--speech-effect">
               <div className="event-log-entry-message">⚡ {row.message}</div>
+              <div className="event-log-entry-meta">{row.meta}</div>
+            </div>
+          ) : row.kind === "divergence" ? (
+            <div key={row.key} className="event-log-entry event-log-entry--speech-effect">
+              <div className="event-log-entry-message">🎭 {row.message}</div>
+              <div className="event-log-entry-meta">{row.meta}</div>
+            </div>
+          ) : row.kind === "trustUpdate" ? (
+            <div key={row.key} className="event-log-entry event-log-entry--speech-effect">
+              <div className="event-log-entry-message">🤝 {row.message}</div>
+              <div className="event-log-entry-meta">{row.meta}</div>
+            </div>
+          ) : row.kind === "tieUpdate" ? (
+            <div key={row.key} className="event-log-entry event-log-entry--speech-effect">
+              <div className="event-log-entry-message">🔗 {row.message}</div>
               <div className="event-log-entry-meta">{row.meta}</div>
             </div>
           ) : (

@@ -48,11 +48,21 @@ function App() {
   const [seed, setSeed] = useState(INITIAL_SEED);
   const [interventionId, setInterventionId] = useState<InterventionScenarioId>("none");
   const [running, setRunning] = useState(false);
-  // Issue #98: 状態ログ/observerJoiner InspectorでPhase 3(発言効果)の因果を確認できるようにするため、
-  // ここでデフォルト有効化する。以後のstepSimulation呼び出しは`state.speechEffectsEnabled`から
-  // この設定を引き継ぐ(engine.ts参照)ので、都度渡し直す必要はない。
+  // Issue #98/#119: 状態ログ・observerJoiner Inspector・CanvasでPhase 3(発言効果)およびPhase 4
+  // (本心/建前の乖離・動的trust・関係性補正)の因果を確認できるようにするため、ここでまとめて
+  // デフォルト有効化する。以後のstepSimulation呼び出しは各`*Enabled`フラグをstateから引き継ぐ
+  // (engine.ts参照)ので、都度渡し直す必要はない。表示層(Inspector/Canvas/EventLog)はこれらを
+  // 読み取って可視化するだけで、有効/無効の切り替えやシミュレーション本体の状態遷移には関与しない。
   const [simState, setSimState] = useState<SimulationState>(() =>
-    createInitialState(INITIAL_SEED, PRESETS[0].params, { interventionId: "none" }, { enabled: true }),
+    createInitialState(
+      INITIAL_SEED,
+      PRESETS[0].params,
+      { interventionId: "none" },
+      { enabled: true },
+      { enabled: true },
+      { enabled: true },
+      { enabled: true },
+    ),
   );
   // 現在のsimStateの生成に実際に使われたparams。Reset必須パラメータが
   // これとparamsとで食い違っている間は、変更がまだ反映されていないとみなす。
@@ -81,6 +91,9 @@ function App() {
         nextParams,
         { interventionId: nextInterventionId },
         { enabled: true },
+        { enabled: true },
+        { enabled: true },
+        { enabled: true },
       );
       setSimState(initialState);
       setAppliedParams(nextParams);
@@ -98,6 +111,9 @@ function App() {
 
   const visibleSpeeches = useActiveSpeechBubbles(simState, runId, {
     enabled: speechBubbleDisplaySettings.enabled,
+    // Issue #119: 乖離場面で発言(建前)と対に本心(心の声)を同時表示するための決定的選択の種・プリセット
+    seed,
+    presetId,
   });
 
   const hasPendingResetChanges = RESET_REQUIRED_PARAM_KEYS.some(

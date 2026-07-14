@@ -8,6 +8,7 @@ import {
 } from "../simulation/activeSpeechBubbles";
 import { buildAgentLabelMap } from "../components/speechDisplay";
 import { formatSpeechBubbleText } from "../components/speechBubbleFormat";
+import { resolveDivergentExpression } from "../simulation/divergenceTemplates";
 import type { SpeechBubbleDisplay } from "../components/SimulationCanvas";
 
 /**
@@ -27,6 +28,13 @@ export type UseActiveSpeechBubblesOptions = {
   /** falseの間は候補抽出・競合制御を一切行わず、表示を空にする(表示設定「発言OFF」用) */
   enabled?: boolean;
   maxConcurrent?: number;
+  /**
+   * Issue #119: 乖離場面の本心(心の声)側文言を決定的に選ぶための種・プリセット。
+   * `resolveDivergentExpression`(divergenceTemplates.ts)へ渡す。省略時は本心オーバーレイを付与しない
+   * (本体`SeededRandom`とは独立であり、表示にのみ影響する)。
+   */
+  seed?: number;
+  presetId?: string;
 };
 
 export type SpeechBubbleDisplayDriverState = {
@@ -53,7 +61,7 @@ export function advanceSpeechBubbleDisplay(
   resetKey: unknown,
   options: UseActiveSpeechBubblesOptions = {},
 ): SpeechBubbleDisplayDriverState {
-  const { enabled = true, maxConcurrent } = options;
+  const { enabled = true, maxConcurrent, seed, presetId } = options;
 
   if (driver.resetKey !== resetKey) {
     return createSpeechBubbleDisplayDriverState(simState, resetKey);
@@ -77,7 +85,20 @@ export function advanceSpeechBubbleDisplay(
   const candidates = newEvents.map((event) => {
     const agent = simState.agents.find((a) => a.id === event.speakerId);
     const isObserverJoiner = agent?.isObserverJoiner ?? false;
-    return toSpeechBubbleCandidate(event, formatSpeechBubbleText(event, labelById), isObserverJoiner);
+    // Issue #119: 乖離発言なら本心(建前=発言文言と対になる心の声)を決定的に導出してオーバーレイに使う。
+    // seed/presetId未指定、または非乖離発言ではundefined(=本心オーバーレイなし)。
+    const innerThought =
+      agent && event.expression && seed !== undefined && presetId !== undefined
+        ? resolveDivergentExpression({
+            link: event.expression,
+            intent: event.intent,
+            agent,
+            presetId,
+            seed,
+            tick: event.tick,
+          })?.thought
+        : undefined;
+    return toSpeechBubbleCandidate(event, formatSpeechBubbleText(event, labelById), isObserverJoiner, innerThought);
   });
 
   const bubbles = applySpeechBubbleEvents(driver.bubbles, candidates, simState.tick, { maxConcurrent });
@@ -86,6 +107,7 @@ export function advanceSpeechBubbleDisplay(
     text: bubble.text,
     isObserverJoiner: bubble.isObserverJoiner,
     intent: bubble.intent,
+    innerThought: bubble.innerThought,
   }));
 
   return { resetKey, prevSimState: simState, bubbles, displayed };
@@ -96,19 +118,24 @@ export function useActiveSpeechBubbles(
   resetKey: unknown,
   options: UseActiveSpeechBubblesOptions = {},
 ): SpeechBubbleDisplay[] {
-  const { enabled, maxConcurrent } = options;
+  const { enabled, maxConcurrent, seed, presetId } = options;
   const driverRef = useRef<SpeechBubbleDisplayDriverState>(
     createSpeechBubbleDisplayDriverState(simState, resetKey),
   );
   const [displayed, setDisplayed] = useState<SpeechBubbleDisplay[]>(driverRef.current.displayed);
 
   useEffect(() => {
-    const next = advanceSpeechBubbleDisplay(driverRef.current, simState, resetKey, { enabled, maxConcurrent });
+    const next = advanceSpeechBubbleDisplay(driverRef.current, simState, resetKey, {
+      enabled,
+      maxConcurrent,
+      seed,
+      presetId,
+    });
     if (next !== driverRef.current) {
       driverRef.current = next;
       setDisplayed(next.displayed);
     }
-  }, [simState, resetKey, enabled, maxConcurrent]);
+  }, [simState, resetKey, enabled, maxConcurrent, seed, presetId]);
 
   return displayed;
 }
