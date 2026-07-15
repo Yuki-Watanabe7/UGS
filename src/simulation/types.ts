@@ -692,3 +692,82 @@ export type SpeechEffectsComparisonResult = {
     dimensionTotals: Record<SpeechEffectDimension, MonteCarloMetricDelta>;
   };
 };
+
+/**
+ * Issue #120: Phase 4(本心/建前の乖離・#114、trust更新・#116、関係性補正・#117)固有の、
+ * 単一run分の観察指標。`buildPhase4RunSummary`(`summary.ts`)が、いずれも時系列蓄積ログである
+ * `speechLog`(`SpeechEvent.expression`)・`speechTrustUpdateLog`・`relationshipTieUpdateLog`からのみ
+ * 導出する(意思決定には使われない記録の集計であり、追加の状態導出は行わない)。
+ * Phase 3固有指標(`SpeechEffectsRunSummary`)とは独立した集計軸として並立させる。
+ */
+export type Phase4RunSummary = {
+  /** `SpeechEvent.expression.divergent === true`だった発言の件数(乖離発生数) */
+  divergenceCount: number;
+  /** `expression`スナップショットを持つ発言の件数(socialExpression有効時のみ非0) */
+  expressedSpeechCount: number;
+  /** `speechTrustUpdateLog`の`|delta|`合計(受け手→話者pairのtrust変化量の総和) */
+  trustChangeAmount: number;
+  /** `relationshipTieUpdateLog`の`|delta|`合計(pairの関係性補正の変化量の総和) */
+  tieChangeAmount: number;
+};
+
+/** 複数run分のPhase 4固有指標の集計値 */
+export type Phase4MonteCarloSummary = {
+  runs: number;
+  averageDivergenceCount: number;
+  averageExpressedSpeechCount: number;
+  averageTrustChangeAmount: number;
+  averageTieChangeAmount: number;
+};
+
+/**
+ * Issue #120: Phase 4モデル(socialExpression・speechTrust・relationshipTieをまとめて切り替える)の
+ * ON/OFF paired比較の実行設定。`SpeechEffectsMonteCarloConfig`と同じ設計(既存の`MonteCarloConfig`とは
+ * 独立した型)。`comparePhase4Model`は、この設定のまま3設定の`enabled`だけをまとめてfalse/trueに
+ * 切り替えてoff/on両方を実行する(preset由来`params`・`intervention`・`baseSeed`・`runs`・`maxTicks`は固定)。
+ * speechEffects(Phase 3)は両条件とも有効固定(Phase 4の観測がPhase 3の認知記録を前提とするため)。
+ */
+export type Phase4MonteCarloConfig = {
+  baseSeed: number;
+  runs: number;
+  params: SimParams;
+  maxTicks?: number;
+  intervention?: InterventionRuntimeOptions;
+};
+
+/** `comparePhase4Model`が内部でoff/onそれぞれについて実行する単一条件分の結果一式 */
+export type Phase4MonteCarloResult = {
+  config: Phase4MonteCarloConfig;
+  runs: MonteCarloRunResult[];
+  summary: MonteCarloSummary;
+  /** `runs`と同じ順序・同じ長さ(seedで1:1対応)のPhase 4固有run結果 */
+  phase4Runs: Phase4RunSummary[];
+  phase4Summary: Phase4MonteCarloSummary;
+};
+
+/**
+ * `comparePhase4Model`の戻り値。`SpeechEffectsComparisonResult`と同様、既存の`MonteCarloComparisonResult`
+ * ともPhase 3の`SpeechEffectsComparisonResult`とも型・フィールド名を分離する。
+ */
+export type Phase4ComparisonResult = {
+  off: Phase4MonteCarloResult;
+  on: Phase4MonteCarloResult;
+  /** off/on共通のseed列(`baseSeed`〜`baseSeed + runs - 1`)。run iがseedで対応することの明示 */
+  pairedSeeds: number[];
+  metrics: {
+    observerJoinerJoinRate: MonteCarloMetricDelta;
+    observerJoinerLeaveRate: MonteCarloMetricDelta;
+    groupFailureRate: MonteCarloMetricDelta;
+    averageFirstGroupConfirmedTick: MonteCarloMetricDelta<number | undefined>;
+    lateJoinSuccessRate: MonteCarloMetricDelta;
+    averageJoinedCount: MonteCarloMetricDelta;
+    averageLeftCount: MonteCarloMetricDelta;
+  };
+  /** Phase 4固有指標のoff/on/delta。`metrics`とは別に保持し、既存指標との混同を避ける */
+  phase4Metrics: {
+    divergenceCount: MonteCarloMetricDelta;
+    expressedSpeechCount: MonteCarloMetricDelta;
+    trustChangeAmount: MonteCarloMetricDelta;
+    tieChangeAmount: MonteCarloMetricDelta;
+  };
+};
