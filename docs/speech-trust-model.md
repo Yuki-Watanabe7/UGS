@@ -3,8 +3,10 @@
 Parent Roadmap: #61 / Depends on: #113, #115
 
 `speechTrust.ts`が扱う2つの独立した仕組み — 話者側の**真実性記録**と、受け手側の**動的trust更新** —
-のモデルと処理境界を定義する。`docs/social-expression-phase4-boundary.md`(三層モデルの土台)の
-続きにあたる。
+のモデルと処理境界を定義する。[`social-expression-phase4-boundary.md`](social-expression-phase4-boundary.md)
+(三層モデルの土台)の続きにあたり、動的trustはPhase 3の解釈モデル
+([`speech-interpretation-model.md`](speech-interpretation-model.md)の`relationshipTrust`要因)の
+係数として参照される([`speech-effects-phase3-boundary.md`](speech-effects-phase3-boundary.md)参照)。
 
 ## 1. 話者側: 真実性(`SpeechTruthfulnessRecord`)
 

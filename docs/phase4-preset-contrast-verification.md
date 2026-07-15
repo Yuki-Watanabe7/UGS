@@ -3,12 +3,14 @@
 Parent Roadmap: #61 / Depends on: #114, #115, #116, #117
 
 `App.tsx`はPhase 4三層モデル(`socialExpression`)・trust更新(`speechTrust`)・関係性補正
-(`relationshipTie`)をPhase 3(`speechEffects`)とともに**デフォルトで全て有効化**した状態で
-実行される(`App.tsx`の`createInitialState`/`resetSimulation`呼び出し、いずれも4設定とも
-`{ enabled: true }`)。本ドキュメントは、この実運用条件下でCLAUDE.mdが要求する
-「5プリセットのコントラスト(特にプリセット5の孤立シナリオ)」が維持されていることを、
-`phase4MonteCarlo.ts`(`runPhase4MonteCarlo`、Issue #120で追加)を使って複数seed実走で
-確認した結果を記録する。
+(`relationshipTie`)をPhase 3(`speechEffects`、[`speech-effects-phase3-boundary.md`](speech-effects-phase3-boundary.md)参照)
+とともに**デフォルトで全て有効化**した状態で実行される(`App.tsx`の`createInitialState`/
+`resetSimulation`呼び出し、いずれも4設定とも`{ enabled: true }`)。本ドキュメントは、この実運用条件下で
+[`CLAUDE.md`](../CLAUDE.md)が要求する「5プリセットのコントラスト(特にプリセット5の孤立シナリオ、
+[`core-agent-dynamics.md`](core-agent-dynamics.md)参照)」が維持されていることを、
+`phase4MonteCarlo.ts`(`runPhase4MonteCarlo`、Issue #120で追加。手法は
+[`speech-effects-paired-monte-carlo.md`](speech-effects-paired-monte-carlo.md)のpaired比較パターンを
+踏襲)を使って複数seed実走で確認した結果を記録する。
 
 ## 実行条件
 

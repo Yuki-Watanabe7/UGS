@@ -2,9 +2,11 @@
 
 Parent Roadmap: #61 / Depends on: #114, #115
 
-乖離モデル(#114/#115)により「本心(心の声)と建前(発言)が同じtickで異なる内容になる」場面が
-生まれる。本文書は、その乖離場面で本心と建前の違いが文言から読み取れるテンプレート層
-(`divergenceTemplates.ts`)と、その決定的な選択の仕組みを定義する。
+乖離モデル(#114/#115、[`social-expression-phase4-boundary.md`](social-expression-phase4-boundary.md)参照)
+により「本心(心の声)と建前(発言)が同じtickで異なる内容になる」場面が生まれる。本文書は、その乖離場面で
+本心と建前の違いが文言から読み取れるテンプレート層(`divergenceTemplates.ts`)と、その決定的な選択の
+仕組みを定義する。心の声(Phase 1、`expression.ts`)・発言(Phase 2、`speech.ts`)いずれも本文書のテンプレート
+層と同じ「表示専用・シミュレーション結果に非干渉」という原則を共有する。
 
 ## 乖離場面の分類(`classifyDivergenceScene`、socialExpression.ts)
 
