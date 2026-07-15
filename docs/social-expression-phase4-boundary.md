@@ -3,8 +3,17 @@
 Parent Roadmap: #61
 
 Phase 4(本心・建前・行動の不一致を含む社会的表現モデル)の土台となる三層の分離と、
-その導出の処理境界を定義する。本文書はIssue #113(三層の器)・#114(乖離判定)・
-#115(乖離を反映した発言生成)時点の状態を記述し、後続issue(#116〜#121)が拡張するたびに更新される。
+その導出の処理境界を定義する。本文書は三層の器(#113)・乖離判定(#114)・乖離を反映した発言生成(#115)
+を土台として定義し、続く真実性/信頼更新(#116)・関係性変化(#117)・表現テンプレート(#118)・
+UI/Inspector表示(#119)・5プリセットのコントラスト維持検証(#120)・README/設計文書整備(#121)まで
+すべて実装済みの最終状態を記述する(各issueの詳細は末尾の「関連issueとその文書」を参照)。
+
+本文書はPhase 3([`speech-effects-phase3-boundary.md`](speech-effects-phase3-boundary.md)、
+発言の認知・解釈・効果の因果チェーン)と[`core-agent-dynamics.md`](core-agent-dynamics.md)
+(`attractiveness()`など既存判断式の定義)の続きにあたる。`PrivateEvaluation`の導出は
+`core-agent-dynamics.md`が定義する判断式の入力・中間値をそのまま写しとり、`PublicExpression`から
+`SpeechEvent`への統合はPhase 3の認知パイプラインの入力を決める(詳細は下記
+「Phase 3因果チェーンとの接続点」を参照)。
 
 ## 三層の定義と既存概念との対応
 
@@ -152,15 +161,24 @@ Phase 3の因果チェーンは
    乖離調整後のintentがチェーン全体(認知→解釈→効果)の入力を決める。intent→効果次元の
    マッピング(`speechEffects.ts`)自体は変更しない。
 
-## このissueで対応しない範囲(後続issueとの境界)
+## 関連issueとその文書(すべて実装済み)
 
-- 発言の真実性評価・信頼更新: #116(実装済み。`speechTrust.ts`が、#115の乖離スナップショットからの
-  真実性導出と、受け手→話者pair単位の動的trust更新を担う。`docs/speech-trust-model.md`参照)
-- 整合性履歴に基づく関係性変化: #117(実装済み。`relationshipTie.ts`が、発言intentと話者の行動の
+- 発言の真実性評価・信頼更新: #116(`speechTrust.ts`が、#115の乖離スナップショットからの
+  真実性導出と、受け手→話者pair単位の動的trust更新を担う。
+  [`docs/speech-trust-model.md`](speech-trust-model.md)参照)
+- 整合性履歴に基づく関係性変化: #117(`relationshipTie.ts`が、発言intentと話者の行動の
   整合性履歴からtie補正を導き、`attractiveness()`の同clique bonus/outsider penaltyと解釈モデルの
-  `relFactor`へ加算反映する。`docs/relationship-tie-model.md`参照)
-- シナリオ別・性格別の本心/建前表現テンプレート: #118(実装済み。`divergenceTemplates.ts`が、
+  `relFactor`へ加算反映する。[`docs/relationship-tie-model.md`](relationship-tie-model.md)参照)
+- シナリオ別・性格別の本心/建前表現テンプレート: #118(`divergenceTemplates.ts`が、
   乖離場面を`classifyDivergenceScene`で3場面(遠慮・同調・社交辞令)に分類し、本心(thought)と
   建前(speech)を対にした文言をプリセット別・アーキタイプ別に決定的に選ぶ。表示専用でシミュレーション
-  結果に非干渉。`docs/divergence-templates-model.md`参照)
-- UI・Inspector表示: #119、受入テスト・Monte Carlo比較: #120、README: #121
+  結果に非干渉。[`docs/divergence-templates-model.md`](divergence-templates-model.md)参照)
+- UI・Inspector表示: #119(`ObserverJoinerInspector.tsx`の「本心 / 建前」セクション・
+  話者ごとのtrust表示、`EventLog.tsx`の「乖離発言のみ」「信頼更新のみ」「関係性変化のみ」フィルタ。
+  独立の設計文書は追加せず、`inspection.ts`が組み立てる`ObserverSocialExpressionSnapshot`/
+  `ObserverTrustSummary`(`types.ts`)がUIとモデル層の境界を担う)
+- 5プリセットのコントラスト維持検証: #120(`phase4MonteCarlo.ts`の`runPhase4MonteCarlo`/
+  `comparePhase4Model`によるpaired Monte Carlo比較と、`phase4Acceptance.test.ts`の受入回帰テスト。
+  [`docs/phase4-preset-contrast-verification.md`](phase4-preset-contrast-verification.md)参照)
+- README・設計文書の使い方/観察観点/検証方法の追記: #121(README.mdの
+  「本心・対外表現・行動の三層モデル — Phase 4」節、本文書の相互参照、`CLAUDE.md`のPhase 4境界節)

@@ -4,8 +4,11 @@ Parent Roadmap: #61 / Depends on: #116
 
 `relationshipTie.ts`が扱う、発言intentと話者のその後の行動の整合性の**積み重ね**が
 pair間の関係性(親密さ・距離感)そのものを変えるモデルの定義と処理境界。
-#116(trust更新=単発観測に対する解釈係数の変化)の続きにあたり、こちらは整合性を**履歴**として
-蓄積し、その履歴から関係性補正(tie補正)を導く。
+[`speech-trust-model.md`](speech-trust-model.md)(#116、trust更新=単発観測に対する解釈係数の変化)の
+続きにあたり、こちらは整合性を**履歴**として蓄積し、その履歴から関係性補正(tie補正)を導く。
+反映先は[`core-agent-dynamics.md`](core-agent-dynamics.md)が定義する`attractiveness()`の同clique
+bonus/outsider penalty、および[`speech-interpretation-model.md`](speech-interpretation-model.md)の
+`relFactor`(関係性係数)の2箇所(下記「反映先」参照)。
 
 ## #116(trust更新)との違い
 
