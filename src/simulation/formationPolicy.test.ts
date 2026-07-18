@@ -248,6 +248,28 @@ describe("afterPartyPolicy.resolveGroupCapacity (責務6: 容量制約, Issue #1
   });
 });
 
+describe("afterPartyPolicy.computeJoinFailureStressIncrement (責務8: 参加失敗stress, Issue #133)", () => {
+  it("満員(capacityFull)が理由の場合のみ正のstress増分を返す", () => {
+    const agent = makeAgent({ willingness: 0.8 });
+    expect(afterPartyPolicy.computeJoinFailureStressIncrement(agent, "capacityFull")).toBeGreaterThan(0);
+  });
+
+  it("消滅/期限切れ/消失が理由の場合は追加stressを発生させない(既存挙動を維持)", () => {
+    const agent = makeAgent({ willingness: 0.8 });
+    expect(afterPartyPolicy.computeJoinFailureStressIncrement(agent, "groupDissolved")).toBe(0);
+    expect(afterPartyPolicy.computeJoinFailureStressIncrement(agent, "groupExpired")).toBe(0);
+    expect(afterPartyPolicy.computeJoinFailureStressIncrement(agent, "groupMissing")).toBe(0);
+  });
+
+  it("willingnessが高いほど増分が大きい", () => {
+    const low = makeAgent({ willingness: 0.2 });
+    const high = makeAgent({ willingness: 0.9 });
+    expect(afterPartyPolicy.computeJoinFailureStressIncrement(high, "capacityFull")).toBeGreaterThan(
+      afterPartyPolicy.computeJoinFailureStressIncrement(low, "capacityFull"),
+    );
+  });
+});
+
 describe("engine wiring: formation policy persists through state across ticks", () => {
   it("createInitialState defaults formationScenarioId to afterParty for backward compatibility", () => {
     const state = createInitialState(1, DEFAULT_PARAMS);
@@ -348,6 +370,16 @@ describe("classroomPairPolicy (Issue #132, Phase 2)", () => {
       const agents = [makeAgent({ id: "a", state: "undecided" })];
       expect(shortDeadlinePolicy.isFinished(agents, 4)).toBe(false);
       expect(shortDeadlinePolicy.isFinished(agents, 5)).toBe(true);
+    });
+  });
+
+  describe("computeJoinFailureStressIncrement (責務8, Issue #133)", () => {
+    it("最後の1枠を逃した(capacityFull)場合のみ追加stressを発生させる", () => {
+      const agent = makeAgent({ willingness: 0.7 });
+      expect(classroomPolicy.computeJoinFailureStressIncrement(agent, "capacityFull")).toBeGreaterThan(0);
+      expect(classroomPolicy.computeJoinFailureStressIncrement(agent, "groupDissolved")).toBe(0);
+      expect(classroomPolicy.computeJoinFailureStressIncrement(agent, "groupExpired")).toBe(0);
+      expect(classroomPolicy.computeJoinFailureStressIncrement(agent, "groupMissing")).toBe(0);
     });
   });
 });

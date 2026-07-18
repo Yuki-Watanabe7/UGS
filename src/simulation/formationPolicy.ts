@@ -1,4 +1,4 @@
-import type { Agent, GroupCandidate, SimParams } from "./types";
+import type { ApproachFailureReason, Agent, GroupCandidate, SimParams } from "./types";
 import { clamp, distance } from "./model";
 
 /**
@@ -18,6 +18,7 @@ import { clamp, distance } from "./model";
  *   5. シミュレーション全体の終了条件                -> isFinished
  *   6. 候補の成立最小人数・収容最大人数(Issue #131)  -> resolveGroupCapacity
  *   7. 候補の成立判定に使う"集まった人数"の数え方     -> computeConfirmationCount
+ *   8. 参加失敗(満員等)によるこのtickの追加stress増分 -> computeJoinFailureStressIncrement (Issue #133)
  *
  * 介入シナリオ(`interventions.ts`の`InterventionScenarioId`)はこれとは独立した軸であり、
  * ここでは一切参照しない。介入による確率・しきい値の補正は、従来どおりengine.ts側で
@@ -133,6 +134,15 @@ export interface FormationPolicy {
    * 近接しているだけの他候補の人を含めない)を返す。
    */
   computeConfirmationCount(candidate: GroupCandidate, agents: Agent[]): number;
+
+  /**
+   * 責務8(Issue #133): `approaching`のagentが参加に失敗した(満員等でengine.tsが
+   * `undecided`へ戻した)このtickに、通常の曖昧さstress(`computeStressIncrement`)とは別に
+   * 直接`agent.stress`へ加算する増分。`reason`が"capacityFull"(満員が理由)の場合のみ正の値を返し、
+   * 候補の消滅・期限切れ(自分の意思とは無関係な理由)では0を返すのが一般的な実装
+   * (「最後の1枠を逃した」という個別の失敗体験にのみ追加stressを紐づけるため)。
+   */
+  computeJoinFailureStressIncrement(agent: Agent, reason: ApproachFailureReason): number;
 }
 
 // --- afterParty: 現行の二次会シナリオのロジック(既存挙動を維持したまま移設) --------------------
@@ -155,6 +165,9 @@ const MAX_SIMULATION_TICKS = 400;
 // 責務7: 成立判定用に"集まった人数"とみなす近接半径(旧engine.tsのGROUP_GATHER_RADIUSを移設)。
 // まだ正式にmemberIdsへ加わっていない、接近中/形成中/参加済みの人も範囲内なら数える近似値
 const AFTER_PARTY_GATHER_RADIUS = 60;
+// 責務8(Issue #133): 満員による参加失敗1回あたりの追加stress基礎割合。willingnessが高いほど
+// 「入りたかったのに入れなかった」ショックが大きくなるよう、agent.willingnessに掛けて使う
+const JOIN_FAILURE_STRESS_RATE = 0.08;
 
 export const afterPartyPolicy: FormationPolicy = {
   id: "afterParty",
@@ -253,6 +266,11 @@ export const afterPartyPolicy: FormationPolicy = {
           distance(a.x, a.y, candidate.x, candidate.y) < AFTER_PARTY_GATHER_RADIUS),
     ).length;
   },
+
+  computeJoinFailureStressIncrement(agent, reason) {
+    if (reason !== "capacityFull") return 0;
+    return agent.willingness * JOIN_FAILURE_STRESS_RATE;
+  },
 };
 
 // --- classroomPair: Issue #132 (Phase 2) 教室で自由にペアを作るシナリオ ------------------------
@@ -271,6 +289,9 @@ const CLASSROOM_CANDIDATE_MAX_AGE = 25;
 // 未定状態が続く間に蓄積するstressの基礎割合(退出には使わないが、既存のstressフィールド・
 // UI表示は引き続き意味を持たせるため既存式を再利用する)
 const CLASSROOM_STRESS_RATE = 0.005;
+// 責務8(Issue #133): ペアの最後の1枠を逃した際の追加stress基礎割合。定員2固定のため
+// 「最後の1枠を取られる」経験がafterPartyより起こりやすく、afterPartyよりやや高めに設定している
+const CLASSROOM_JOIN_FAILURE_STRESS_RATE = 0.1;
 // `formationDeadlineTick`省略時の既定値
 export const DEFAULT_CLASSROOM_PAIR_DEADLINE_TICK = 200;
 
@@ -349,6 +370,11 @@ function createClassroomPairPolicy(formationDeadlineTick: number): FormationPoli
       // afterPartyの近接ヒューリスティックとは異なり、定員厳格化のため実際のmemberIdsのみを数える
       // (近くをたまたま通りかかった無関係な人を「集まった」と誤カウントしないため)
       return candidate.memberIds.length;
+    },
+
+    computeJoinFailureStressIncrement(agent, reason) {
+      if (reason !== "capacityFull") return 0;
+      return agent.willingness * CLASSROOM_JOIN_FAILURE_STRESS_RATE;
     },
   };
 }

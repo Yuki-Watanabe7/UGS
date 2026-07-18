@@ -1,5 +1,6 @@
 import type {
   Agent,
+  ApproachFailureReason,
   GroupCandidate,
   LogEntry,
   LogTag,
@@ -9,7 +10,7 @@ import type {
   SimulationState,
 } from "./types";
 import type { InterventionRuntimeOptions, InterventionScenarioId } from "./interventions";
-import type { FormationRuntimeOptions, GroupCapacity } from "./formationPolicy";
+import type { FormationPolicy, FormationRuntimeOptions, GroupCapacity } from "./formationPolicy";
 import { resolveFormationPolicy } from "./formationPolicy";
 import type { SpeechEvent } from "./speech";
 import { createSpeechEvent, deriveSpeechEvents } from "./speech";
@@ -72,6 +73,9 @@ const WANDER_SPEED = 0.5;
 const JOIN_DISTANCE = 26;
 // dissolving/dissolved/expired が画面上に留まる(フェードアウト表現用の)tick数。これを超えたら配列から除去する
 const CANDIDATE_LINGER_TICKS = 4;
+// Issue #133: 参加失敗した候補への即時再接近を避けるクールダウンtick数。
+// `maxGroupSize`はcandidate存続中に変化しないため実質恒久的な除外に近いが、明示的な制御として持たせる
+const REAPPROACH_COOLDOWN_TICKS = 8;
 
 // `predecided-venue`: 成立済みグループへのattractivenessに加える固定ボーナス
 const PREDECIDED_VENUE_CONFIRMED_BONUS = 0.25;
@@ -273,10 +277,16 @@ export function nearestCandidate(
   agent: Agent,
   candidates: GroupCandidate[],
   capacityOf?: (candidate: GroupCandidate) => GroupCapacity,
+  /**
+   * Issue #133: 再探索時のクールダウン制御用。指定されたIDの候補は(満員/消滅で既に除外されて
+   * いるかどうかに関わらず)この呼び出しでは選択肢から外す。省略時は従来どおり除外しない。
+   */
+  excludeId?: string,
 ): GroupCandidate | undefined {
   let best: GroupCandidate | undefined;
   let bestDist = Infinity;
   for (const c of candidates) {
+    if (excludeId !== undefined && c.id === excludeId) continue;
     if (!isJoinable(c, capacityOf?.(c))) continue;
     const d = distance(agent.x, agent.y, c.x, c.y);
     if (d < bestDist) {
@@ -375,6 +385,95 @@ export function attractiveness(
     : 1 - agent.influenceAvoidance * (lightInvitationBoosted ? LIGHT_INVITATION_INFLUENCE_AVOIDANCE_RESIDUAL : 1);
   const base = agent.willingness * agent.conformity * influenceAvoidanceFactor;
   return clamp(base + cliqueTieBonus * 0.5 - outsiderPenalty * 0.5 + speechAttractivenessBonus, 0, 1.5);
+}
+
+const APPROACH_FAILURE_REASON_TEXT: Record<ApproachFailureReason, string> = {
+  capacityFull: "満員になり",
+  groupDissolved: "消滅し",
+  groupExpired: "時間切れになり",
+  groupMissing: "見当たらなくなり",
+};
+
+/**
+ * Issue #133: approaching中のagentが参加失敗した(target無効化、または到着時点の容量競合)ことを
+ * 記録する共通処理。state遷移(`approaching -> undecided`、`approaching -> searchingAgain`相当)、
+ * 再探索クールダウン用フィールドの更新、参加失敗stress、構造化ログ(失敗理由イベント+`searchRestarted`)
+ * をまとめて行う。呼び出し側は候補が無効化された(到着前)場合と、到着時点で満員が判明した場合の
+ * 両方からこれを呼ぶ(`eventType`で区別)。
+ */
+function recordApproachFailure(
+  agent: Agent,
+  candidate: GroupCandidate | undefined,
+  capacity: GroupCapacity | undefined,
+  reason: ApproachFailureReason,
+  eventType: "approachTargetInvalidated" | "joinFailedCapacity",
+  tick: number,
+  log: LogEntry[],
+  formationPolicy: FormationPolicy,
+): void {
+  const failedCandidateId = agent.joinedGroupId;
+  const memberCount = candidate?.memberIds.length ?? 0;
+  const capacityFields = candidate && capacity ? capacityMetadataFields(capacity, memberCount) : {};
+
+  agent.state = "undecided";
+  agent.joinedGroupId = undefined;
+  if (failedCandidateId) {
+    agent.lastFailedCandidateId = failedCandidateId;
+    agent.lastFailedCandidateAtTick = tick;
+  }
+  agent.searchRestartCount = (agent.searchRestartCount ?? 0) + 1;
+  if (reason === "capacityFull") {
+    agent.capacityFailureCount = (agent.capacityFailureCount ?? 0) + 1;
+  }
+
+  const stressIncrement = formationPolicy.computeJoinFailureStressIncrement(agent, reason);
+  if (stressIncrement > 0) {
+    agent.stress = clamp(agent.stress + stressIncrement, 0, 1);
+  }
+
+  const tags: LogTag[] = agent.isObserverJoiner ? ["observerJoiner", "joinFailure"] : ["joinFailure"];
+  const failureMetadata: SimulationEventMetadata = {
+    agentId: agent.id,
+    agentLabel: agent.label,
+    groupId: failedCandidateId,
+    memberCount,
+    reason,
+    ...capacityFields,
+  };
+
+  if (eventType === "approachTargetInvalidated") {
+    const reasonText = APPROACH_FAILURE_REASON_TEXT[reason];
+    pushLog(
+      log,
+      tick,
+      agent.isObserverJoiner
+        ? `observerJoinerが向かっていた輪が${reasonText}、接近を中断した`
+        : `${agent.label}さんが向かっていた輪が${reasonText}、接近を中断した`,
+      tags,
+      "approachTargetInvalidated",
+      failureMetadata,
+    );
+  } else {
+    pushLog(
+      log,
+      tick,
+      agent.isObserverJoiner
+        ? `observerJoinerが輪に到着したが、既に満員で参加できなかった`
+        : `${agent.label}さんが輪に到着したが、既に満員で参加できなかった`,
+      tags,
+      "joinFailedCapacity",
+      failureMetadata,
+    );
+  }
+
+  pushLog(
+    log,
+    tick,
+    agent.isObserverJoiner ? `observerJoinerが別の相手を探し直した` : `${agent.label}さんが別の相手を探し直した`,
+    tags,
+    "searchRestarted",
+    { agentId: agent.id, agentLabel: agent.label, groupId: failedCandidateId, reason },
+  );
 }
 
 function stepAgentMotion(agent: Agent, target?: { x: number; y: number }, speed = APPROACH_SPEED): void {
@@ -559,8 +658,22 @@ export function stepSimulation(
   for (const agent of agents) {
     if (agent.state !== "undecided") continue;
 
+    // Issue #133: 直前に参加失敗した候補は、クールダウン期間中は再探索の選択肢から除外する
+    // (「直前の失敗候補を即座に再選択しない」制御。容量が変わらない限り実質恒久的な除外と等価だが、
+    // 明示的なフィールドとして持たせることで再探索の系列がログ・テストから追跡できるようにする)
+    const cooldownExcludeId =
+      agent.lastFailedCandidateId !== undefined &&
+      agent.lastFailedCandidateAtTick !== undefined &&
+      tick - agent.lastFailedCandidateAtTick < REAPPROACH_COOLDOWN_TICKS
+        ? agent.lastFailedCandidateId
+        : undefined;
     // Issue #131: 既に満員の候補へは新たに接近を始めさせない(容量込みのjoinable判定)
-    const candidate = nearestCandidate(agent, candidates, (c) => formationPolicy.resolveGroupCapacity(c, effectiveParams));
+    const candidate = nearestCandidate(
+      agent,
+      candidates,
+      (c) => formationPolicy.resolveGroupCapacity(c, effectiveParams),
+      cooldownExcludeId,
+    );
     if (!candidate) continue;
 
     // Issue #117: この観測者が輪の構成員に対して積み上げた整合性履歴由来の集約tie補正
@@ -621,22 +734,39 @@ export function stepSimulation(
   for (const agent of agents) {
     if (agent.state !== "approaching") continue;
     const candidate = candidates.find((c) => c.id === agent.joinedGroupId);
-    // 接近先の輪が解散/期限切れになっていたら、目的地を失ったものとしてundecidedに戻す
-    if (!candidate || !isJoinable(candidate)) {
-      agent.state = "undecided";
-      agent.joinedGroupId = undefined;
+
+    // Issue #133: 接近先の輪が消滅/解散/期限切れになっていたら、到着見込みに関わらず
+    // 即座に接近を中断する(既存挙動の状態ベース判定を踏襲しつつ、理由を構造化イベントとして残す)
+    if (!candidate) {
+      recordApproachFailure(agent, candidate, undefined, "groupMissing", "approachTargetInvalidated", tick, log, formationPolicy);
       continue;
     }
+    if (!isJoinable(candidate)) {
+      const reason: ApproachFailureReason = candidate.status === "expired" ? "groupExpired" : "groupDissolved";
+      recordApproachFailure(agent, candidate, undefined, reason, "approachTargetInvalidated", tick, log, formationPolicy);
+      continue;
+    }
+
+    const capacity = formationPolicy.resolveGroupCapacity(candidate, effectiveParams);
+    const alreadyArrivable = distance(agent.x, agent.y, candidate.x, candidate.y) < JOIN_DISTANCE;
+    // Issue #133: まだ到着圏外で、かつ現時点で既に満員と判明している場合は、無駄な接近を
+    // 続けさせずここで見切りをつけて再探索させる(各tickでの有効性再検証)。到着圏内(このtickで
+    // 到着を試みる)場合は中断せず、下の到着処理で同一tick内の競合を"到着したら満員だった"
+    // (joinFailedCapacity)として解決する
+    if (!alreadyArrivable && isCandidateFull(candidate, capacity) && !candidate.memberIds.includes(agent.id)) {
+      recordApproachFailure(agent, candidate, capacity, "capacityFull", "approachTargetInvalidated", tick, log, formationPolicy);
+      continue;
+    }
+
     stepAgentMotion(agent, candidate);
     const d = distance(agent.x, agent.y, candidate.x, candidate.y);
     if (d < JOIN_DISTANCE) {
-      const capacity = formationPolicy.resolveGroupCapacity(candidate, effectiveParams);
       const outcome = addMemberToCandidate(candidate, agent.id, capacity);
       if (outcome === "full") {
-        // Issue #131: 到着時点で満員になっていたら合流できない。再探索は対象外(このissueのスコープ外)
-        // のため、輪が消えた場合と同じくundecidedへ戻すだけに留める
-        agent.state = "undecided";
-        agent.joinedGroupId = undefined;
+        // Issue #133: 到着した瞬間、同一tick内で先に処理された別agentが最後の1枠を取っていた
+        // (agents配列順=seedで決定的な競合)場合はここに来る。joinFailedCapacityとして記録し、
+        // 満員グループへ留まり続けさせずundecidedへ戻して再探索させる
+        recordApproachFailure(agent, candidate, capacity, "capacityFull", "joinFailedCapacity", tick, log, formationPolicy);
         continue;
       }
       agent.state = "joined";
