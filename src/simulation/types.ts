@@ -108,6 +108,15 @@ export type GroupCandidate = {
    * (engine.ts参照)。
    */
   isPublicMeetingPoint?: boolean;
+  /**
+   * Issue #131: この候補固有の成立最小人数/収容最大人数のオーバーライド。未指定の場合は
+   * `FormationPolicy.resolveGroupCapacity`が返すポリシー既定値が使われる(`afterPartyPolicy`では
+   * `minGroupSize = params.groupConfirmSize`, `maxGroupSize = Number.POSITIVE_INFINITY` = 実質無制限)。
+   * 「満員」はここから`isCandidateFull`/`isJoinable`が都度導出する派生判定であり、status等へ
+   * 独立したフラグとしては保持しない(二重管理による不整合を避けるため)。
+   */
+  minGroupSize?: number;
+  maxGroupSize?: number;
 };
 
 /**
@@ -159,6 +168,10 @@ export type SimulationEventMetadata = {
   /** eventType: "observerInvited" 用。声をかけた側のエージェントID/表示名 */
   inviterAgentId?: string;
   inviterAgentLabel?: string;
+  /** Issue #131: 容量情報が関係するイベント(合流/成立)でのみ設定される、その候補の収容最大人数 */
+  maxGroupSize?: number;
+  /** Issue #131: 容量情報が関係するイベントでのみ設定される、そのイベント時点での残り空き人数(`maxGroupSize - memberIds.length`) */
+  remainingCapacity?: number;
 };
 
 export type LogEntry = {

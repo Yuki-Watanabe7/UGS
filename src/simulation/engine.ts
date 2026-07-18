@@ -9,7 +9,7 @@ import type {
   SimulationState,
 } from "./types";
 import type { InterventionRuntimeOptions, InterventionScenarioId } from "./interventions";
-import type { FormationRuntimeOptions } from "./formationPolicy";
+import type { FormationRuntimeOptions, GroupCapacity } from "./formationPolicy";
 import { resolveFormationPolicy } from "./formationPolicy";
 import type { SpeechEvent } from "./speech";
 import { createSpeechEvent, deriveSpeechEvents } from "./speech";
@@ -218,26 +218,60 @@ function pushLog(
   log.push({ tick, message: `${formatTick(tick)} ${message}`, tags, eventType, metadata });
 }
 
-/** candidate.memberIdsへの追加は必ずこの関数を通し、同一agentの重複登録を防ぐ */
-function addMemberToCandidate(candidate: GroupCandidate, agentId: string): void {
-  if (!candidate.memberIds.includes(agentId)) {
-    candidate.memberIds.push(agentId);
-  }
+/** Issue #131: `addMemberToCandidate`の結果。呼び出し側はこれを見て成功/失敗を判断する */
+export type AddMemberOutcome = "added" | "alreadyMember" | "full";
+
+/**
+ * candidate.memberIdsへの追加は必ずこの関数を通し、同一agentの重複登録と`capacity.maxGroupSize`
+ * を超える追加を防ぐ。既に埋まっている場合は候補を一切変更せず"full"を返す(呼び出し側が
+ * フォールバック——新規候補の作成、または合流を諦めてundecidedへ戻す等——を決める)。
+ */
+function addMemberToCandidate(candidate: GroupCandidate, agentId: string, capacity: GroupCapacity): AddMemberOutcome {
+  if (candidate.memberIds.includes(agentId)) return "alreadyMember";
+  if (isCandidateFull(candidate, capacity)) return "full";
+  candidate.memberIds.push(agentId);
+  return "added";
 }
 
-/** 解散中・解散済み・期限切れの候補は接近/合流対象として扱わない */
-export function isJoinable(candidate: GroupCandidate): boolean {
-  return candidate.status === "forming" || candidate.status === "confirmed";
+/** Issue #131: `capacity.maxGroupSize`に対して現在人数が既に埋まっているか(派生判定。専用のstatusは持たない) */
+export function isCandidateFull(candidate: GroupCandidate, capacity: GroupCapacity): boolean {
+  return candidate.memberIds.length >= capacity.maxGroupSize;
+}
+
+/**
+ * Issue #131: 構造化イベントmetadataへ定員・空き人数を載せる際の共通ヘルパー。
+ * `maxGroupSize`が有限(候補固有のオーバーライド等で実際に容量制限がある)場合のみ値を持たせ、
+ * 「実質無制限」(Number.POSITIVE_INFINITY)の場合はmetadataに含めない(JSON化できない値を
+ * ログへ持ち込まないため、かつ無制限であることを示す情報に実質的な価値がないため)。
+ */
+function capacityMetadataFields(
+  capacity: GroupCapacity,
+  memberCount: number,
+): { maxGroupSize?: number; remainingCapacity?: number } {
+  if (!Number.isFinite(capacity.maxGroupSize)) return {};
+  return { maxGroupSize: capacity.maxGroupSize, remainingCapacity: capacity.maxGroupSize - memberCount };
+}
+
+/**
+ * 解散中・解散済み・期限切れの候補は接近/合流対象として扱わない。
+ * Issue #131: `capacity`を渡すと満員判定も含める。省略時は状態のみの判定(既存呼び出し元との後方互換用。
+ * 既に参加済みのメンバーにとって自分の輪がまだ有効かを確認する用途では、容量は無関係なので省略する)。
+ */
+export function isJoinable(candidate: GroupCandidate, capacity?: GroupCapacity): boolean {
+  const statusOk = candidate.status === "forming" || candidate.status === "confirmed";
+  if (!statusOk) return false;
+  return capacity ? !isCandidateFull(candidate, capacity) : true;
 }
 
 export function nearestCandidate(
   agent: Agent,
   candidates: GroupCandidate[],
+  capacityOf?: (candidate: GroupCandidate) => GroupCapacity,
 ): GroupCandidate | undefined {
   let best: GroupCandidate | undefined;
   let bestDist = Infinity;
   for (const c of candidates) {
-    if (!isJoinable(c)) continue;
+    if (!isJoinable(c, capacityOf?.(c))) continue;
     const d = distance(agent.x, agent.y, c.x, c.y);
     if (d < bestDist) {
       bestDist = d;
@@ -430,8 +464,14 @@ export function stepSimulation(
       const nearbyCandidate = candidates.find(
         (c) => c.status === "forming" && distance(agent.x, agent.y, c.x, c.y) < formationPolicy.candidateMergeRadius,
       );
-      if (nearbyCandidate) {
-        addMemberToCandidate(nearbyCandidate, agent.id);
+      // Issue #131: 併合先が既に満員なら合流を諦め、新規候補の作成にフォールバックする
+      // (候補マージで`maxGroupSize`を超えないようにするため)
+      const mergedIntoNearby =
+        nearbyCandidate !== undefined &&
+        addMemberToCandidate(nearbyCandidate, agent.id, formationPolicy.resolveGroupCapacity(nearbyCandidate, effectiveParams)) ===
+          "added";
+      if (mergedIntoNearby) {
+        // 併合成功。新規候補の作成・核形成ログは不要(既存挙動どおり)
       } else {
         const candidate: GroupCandidate = {
           id: `group-${tick}-${agent.id}`,
@@ -441,7 +481,7 @@ export function stepSimulation(
           status: "forming",
           age: 0,
         };
-        addMemberToCandidate(candidate, agent.id);
+        addMemberToCandidate(candidate, agent.id, formationPolicy.resolveGroupCapacity(candidate, effectiveParams));
         candidates.push(candidate);
         pushLog(
           log,
@@ -507,7 +547,8 @@ export function stepSimulation(
   for (const agent of agents) {
     if (agent.state !== "undecided") continue;
 
-    const candidate = nearestCandidate(agent, candidates);
+    // Issue #131: 既に満員の候補へは新たに接近を始めさせない(容量込みのjoinable判定)
+    const candidate = nearestCandidate(agent, candidates, (c) => formationPolicy.resolveGroupCapacity(c, effectiveParams));
     if (!candidate) continue;
 
     // Issue #117: この観測者が輪の構成員に対して積み上げた整合性履歴由来の集約tie補正
@@ -577,7 +618,15 @@ export function stepSimulation(
     stepAgentMotion(agent, candidate);
     const d = distance(agent.x, agent.y, candidate.x, candidate.y);
     if (d < JOIN_DISTANCE) {
-      addMemberToCandidate(candidate, agent.id);
+      const capacity = formationPolicy.resolveGroupCapacity(candidate, effectiveParams);
+      const outcome = addMemberToCandidate(candidate, agent.id, capacity);
+      if (outcome === "full") {
+        // Issue #131: 到着時点で満員になっていたら合流できない。再探索は対象外(このissueのスコープ外)
+        // のため、輪が消えた場合と同じくundecidedへ戻すだけに留める
+        agent.state = "undecided";
+        agent.joinedGroupId = undefined;
+        continue;
+      }
       agent.state = "joined";
       if (agent.isObserverJoiner) {
         pushLog(
@@ -588,7 +637,13 @@ export function stepSimulation(
             : `observerJoinerが未確定の輪に合流`,
           ["observerJoiner"],
           candidate.status === "confirmed" ? "observerJoinedConfirmed" : "observerJoinedForming",
-          { agentId: agent.id, agentLabel: agent.label, groupId: candidate.id, joinedGroupStatus: candidate.status },
+          {
+            agentId: agent.id,
+            agentLabel: agent.label,
+            groupId: candidate.id,
+            joinedGroupStatus: candidate.status,
+            ...capacityMetadataFields(capacity, candidate.memberIds.length),
+          },
         );
       } else {
         pushLog(
@@ -749,9 +804,11 @@ export function stepSimulation(
 
     if (formationPolicy.shouldConfirmCandidate(nearbyCount, effectiveParams)) {
       candidate.status = "confirmed";
+      const capacity = formationPolicy.resolveGroupCapacity(candidate, effectiveParams);
       pushLog(log, tick, `${nearbyCount}人が集まり二次会グループが成立`, ["groupConfirmed"], "groupConfirmed", {
         groupId: candidate.id,
         memberCount: nearbyCount,
+        ...capacityMetadataFields(capacity, candidate.memberIds.length),
       });
       for (const agent of agents) {
         if (candidate.memberIds.includes(agent.id) && agent.state === "forming") {

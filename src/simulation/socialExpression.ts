@@ -266,7 +266,7 @@ export function derivePrivateEvaluations(
   // 整合性履歴由来のtie補正も同じ経路(state.tieHistory)から解決する(tie無効時は空マップ=補正0で、
   // attractivenessは従来式のまま=Issue #117以前と同値)。
   const tieCorrections = state.relationshipTieEnabled ? deriveTieCorrections(state.tieHistory ?? {}) : {};
-  const joinableCandidates = state.groupCandidates.filter(isJoinable);
+  const joinableCandidates = state.groupCandidates.filter((c) => isJoinable(c));
 
   return state.agents.map((agent) => {
     const nearest = nearestCandidate(agent, state.groupCandidates);

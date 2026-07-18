@@ -217,6 +217,36 @@ describe("afterPartyPolicy.isFinished (責務5: 終了条件)", () => {
   });
 });
 
+describe("afterPartyPolicy.resolveGroupCapacity (責務6: 容量制約, Issue #131)", () => {
+  function makeCandidate(overrides: Partial<GroupCandidate>): GroupCandidate {
+    return {
+      id: "group-1",
+      x: 400,
+      y: 260,
+      memberIds: [],
+      status: "forming",
+      age: 0,
+      ...overrides,
+    };
+  }
+
+  it("既定では成立最小人数=groupConfirmSize・収容最大人数=実質無制限を返す(既存二次会ポリシーとの後方互換)", () => {
+    const candidate = makeCandidate({});
+    const params = { ...DEFAULT_PARAMS, groupConfirmSize: 3 };
+    const capacity = afterPartyPolicy.resolveGroupCapacity(candidate, params);
+    expect(capacity.minGroupSize).toBe(3);
+    expect(capacity.maxGroupSize).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it("候補固有のminGroupSize/maxGroupSizeオーバーライドを優先し、異なる値を表現できる", () => {
+    const candidate = makeCandidate({ minGroupSize: 2, maxGroupSize: 6 });
+    const capacity = afterPartyPolicy.resolveGroupCapacity(candidate, { ...DEFAULT_PARAMS, groupConfirmSize: 3 });
+    expect(capacity.minGroupSize).toBe(2);
+    expect(capacity.maxGroupSize).toBe(6);
+    expect(capacity.minGroupSize).not.toBe(capacity.maxGroupSize);
+  });
+});
+
 describe("engine wiring: formation policy persists through state across ticks", () => {
   it("createInitialState defaults formationScenarioId to afterParty for backward compatibility", () => {
     const state = createInitialState(1, DEFAULT_PARAMS);

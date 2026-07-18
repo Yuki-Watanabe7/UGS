@@ -16,6 +16,7 @@ import { distance } from "./model";
  *   4. エージェントが場から退出できるか              -> canLeave
  *      (退出判断に至るストレス蓄積の基礎式)          -> computeStressIncrement
  *   5. シミュレーション全体の終了条件                -> isFinished
+ *   6. 候補の成立最小人数・収容最大人数(Issue #131)  -> resolveGroupCapacity
  *
  * 介入シナリオ(`interventions.ts`の`InterventionScenarioId`)はこれとは独立した軸であり、
  * ここでは一切参照しない。介入による確率・しきい値の補正は、従来どおりengine.ts側で
@@ -63,6 +64,15 @@ export type UnconfirmedCandidateLifecycleContext = {
 
 export type UnconfirmedCandidateLifecycleOutcome = "continue" | "dissolve" | "expire";
 
+/**
+ * 責務6(Issue #131): 候補の成立最小人数・収容最大人数(容量制約)。
+ * `maxGroupSize`に`Number.POSITIVE_INFINITY`を返すポリシー/候補は「実質無制限」を表す。
+ */
+export type GroupCapacity = {
+  minGroupSize: number;
+  maxGroupSize: number;
+};
+
 export interface FormationPolicy {
   readonly id: FormationScenarioId;
 
@@ -98,6 +108,12 @@ export interface FormationPolicy {
 
   /** 責務5: シミュレーション全体が終了とみなせるか */
   isFinished(agents: Agent[], tick: number): boolean;
+
+  /**
+   * 責務6(Issue #131): 候補の成立最小人数・収容最大人数を解決する。候補固有のオーバーライド
+   * (`GroupCandidate.minGroupSize`/`maxGroupSize`)が設定されていればそちらを優先するのが一般的な実装。
+   */
+  resolveGroupCapacity(candidate: GroupCandidate, params: SimParams): GroupCapacity;
 }
 
 // --- afterParty: 現行の二次会シナリオのロジック(既存挙動を維持したまま移設) --------------------
@@ -193,6 +209,15 @@ export const afterPartyPolicy: FormationPolicy = {
   isFinished(agents, tick) {
     const allSettled = agents.every((a) => a.state === "joined" || a.state === "left");
     return allSettled || tick >= MAX_SIMULATION_TICKS;
+  },
+
+  resolveGroupCapacity(candidate, params) {
+    // 二次会シナリオでは成立に必要な人数(groupConfirmSize)以上は自由に混ざれるため、
+    // 収容人数は実質無制限(候補固有のオーバーライドがない限り)
+    return {
+      minGroupSize: candidate.minGroupSize ?? params.groupConfirmSize,
+      maxGroupSize: candidate.maxGroupSize ?? Number.POSITIVE_INFINITY,
+    };
   },
 };
 
