@@ -70,7 +70,6 @@ import {
 const APPROACH_SPEED = 14;
 const WANDER_SPEED = 0.5;
 const JOIN_DISTANCE = 26;
-const GROUP_GATHER_RADIUS = 60;
 // dissolving/dissolved/expired が画面上に留まる(フェードアウト表現用の)tick数。これを超えたら配列から除去する
 const CANDIDATE_LINGER_TICKS = 4;
 
@@ -120,10 +119,16 @@ export function createInitialState(
   const relationshipTieConfig = resolveRelationshipTieConfig(relationshipTie);
   const effectiveParams = resolveEffectiveParams(params, intervention);
   const agents = createInitialAgents(seed, effectiveParams);
+  // Issue #132: 教室ペア形成シナリオの初期ログは、二次会シナリオ向けの文言(「二次会に行くか」)を
+  // そのまま使うと文脈が合わないため、formationPolicy.idで出し分ける
+  const openingMessage =
+    formationPolicy.id === "classroomPair"
+      ? "先生が「自由にペアを作ってください」と指示した。まだ誰も相手を決めていない。"
+      : "参加者が集まり始めた。まだ誰も二次会に行くかは決めていない。";
   const log: LogEntry[] = [
     {
       tick: 0,
-      message: "参加者が集まり始めた。まだ誰も二次会に行くかは決めていない。",
+      message: openingMessage,
       tags: ["simulation"],
       eventType: "simulationStarted",
     },
@@ -188,6 +193,7 @@ export function createInitialState(
     finished: false,
     interventionId: scenario.id,
     formationScenarioId: formationPolicy.id,
+    formationDeadlineTick: formation?.formationDeadlineTick,
     speechLog: [],
     speechReceptionLog: [],
     speechInterpretationLog: [],
@@ -403,9 +409,13 @@ export function stepSimulation(
   const interventionId = resolveInterventionScenario(resolvedIntervention).id;
   // Issue #130 (Phase 1): 形成ポリシーも同じfall backパターンで、呼び出し側の渡し忘れにより
   // 途中からafterPartyへ戻ってしまわない(=別ポリシーが消えない)ようにする。
-  const formationPolicy = resolveFormationPolicy(
-    formation ?? (state.formationScenarioId ? { scenarioId: state.formationScenarioId } : undefined),
-  );
+  // Issue #132: classroomPair固有のformationDeadlineTickも同じfall backで引き継ぐ。
+  const resolvedFormation: FormationRuntimeOptions | undefined =
+    formation ??
+    (state.formationScenarioId
+      ? { scenarioId: state.formationScenarioId, formationDeadlineTick: state.formationDeadlineTick }
+      : undefined);
+  const formationPolicy = resolveFormationPolicy(resolvedFormation);
   // Phase 3効果も同様に、未指定時は直前のstateの設定を引き継ぐ(呼び出し側の渡し忘れで
   // 途中からOFFに戻ってしまわないようにする)。
   const speechEffectsConfig = resolveSpeechEffectsConfig(
@@ -483,14 +493,16 @@ export function stepSimulation(
         };
         addMemberToCandidate(candidate, agent.id, formationPolicy.resolveGroupCapacity(candidate, effectiveParams));
         candidates.push(candidate);
-        pushLog(
-          log,
-          tick,
-          `${agent.label}さんが「もう一軒行く?」と発言し、核を作り始めた`,
-          ["nucleus"],
-          "nucleusCreated",
-          { agentId: agent.id, agentLabel: agent.label, groupId: candidate.id },
-        );
+        // Issue #132: 教室ペア形成シナリオでは「もう一軒行く?」ではなく、ペア相手探しの声かけとして表現する
+        const nucleusMessage =
+          formationPolicy.id === "classroomPair"
+            ? `${agent.label}さんが「一緒にペアになろう」と声をかけ、ペア探しを始めた`
+            : `${agent.label}さんが「もう一軒行く?」と発言し、核を作り始めた`;
+        pushLog(log, tick, nucleusMessage, ["nucleus"], "nucleusCreated", {
+          agentId: agent.id,
+          agentLabel: agent.label,
+          groupId: candidate.id,
+        });
         speechEvents.push(
           createSpeechEvent({
             tick,
@@ -796,16 +808,18 @@ export function stepSimulation(
     }
 
     // status === "forming"
-    const nearbyCount = agents.filter(
-      (a) =>
-        (a.state === "forming" || a.state === "joined" || a.state === "approaching") &&
-        (candidate.memberIds.includes(a.id) || distance(a.x, a.y, candidate.x, candidate.y) < GROUP_GATHER_RADIUS),
-    ).length;
+    // Issue #132(責務7): "集まった人数"の数え方自体をpolicyへ委ねる(afterPartyは近接ヒューリスティック、
+    // classroomPairは実際のmemberIds.lengthのみを数える)
+    const nearbyCount = formationPolicy.computeConfirmationCount(candidate, agents);
 
     if (formationPolicy.shouldConfirmCandidate(nearbyCount, effectiveParams)) {
       candidate.status = "confirmed";
       const capacity = formationPolicy.resolveGroupCapacity(candidate, effectiveParams);
-      pushLog(log, tick, `${nearbyCount}人が集まり二次会グループが成立`, ["groupConfirmed"], "groupConfirmed", {
+      const confirmedMessage =
+        formationPolicy.id === "classroomPair"
+          ? `${nearbyCount}人のペアが成立した`
+          : `${nearbyCount}人が集まり二次会グループが成立`;
+      pushLog(log, tick, confirmedMessage, ["groupConfirmed"], "groupConfirmed", {
         groupId: candidate.id,
         memberCount: nearbyCount,
         ...capacityMetadataFields(capacity, candidate.memberIds.length),
@@ -884,14 +898,13 @@ export function stepSimulation(
 
   if (finished && !state.finished) {
     const joinedCount = agents.filter((a) => a.state === "joined").length;
-    const leftCount = agents.filter((a) => a.state === "left").length;
-    pushLog(
-      log,
-      tick,
-      `シミュレーション終了: 参加${joinedCount}人 / 帰宅${leftCount}人`,
-      ["simulation"],
-      "simulationFinished",
-    );
+    // Issue #132: 教室ペア形成シナリオでは「帰宅」概念がない代わりに、人口が奇数の場合に
+    // 起こりうる「未割当のまま終了」を明示する
+    const finishedMessage =
+      formationPolicy.id === "classroomPair"
+        ? `シミュレーション終了: ペア成立${joinedCount}人 / 未割当${agents.length - joinedCount}人`
+        : `シミュレーション終了: 参加${joinedCount}人 / 帰宅${agents.filter((a) => a.state === "left").length}人`;
+    pushLog(log, tick, finishedMessage, ["simulation"], "simulationFinished");
   }
 
   const nextState: SimulationState = {
@@ -904,6 +917,7 @@ export function stepSimulation(
     finished,
     interventionId,
     formationScenarioId: formationPolicy.id,
+    formationDeadlineTick: resolvedFormation?.formationDeadlineTick,
     speechLog: [],
   };
 

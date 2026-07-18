@@ -1,4 +1,6 @@
 import type { SimParams } from "./types";
+import { DEFAULT_CLASSROOM_PAIR_DEADLINE_TICK } from "./formationPolicy";
+import type { FormationScenarioId } from "./formationPolicy";
 
 export const DEFAULT_PARAMS: SimParams = {
   populationSize: 14,
@@ -18,6 +20,13 @@ export type ScenarioPreset = {
   name: string;
   description: string;
   params: SimParams;
+  /**
+   * Issue #132 (Phase 2): このプリセットが使うグループ形成ポリシー。省略時は既存プリセットとの
+   * 後方互換として`afterParty`(engine.ts/formationPolicy.tsのfall back既定値と同じ)。
+   */
+  formationScenarioId?: FormationScenarioId;
+  /** `formationScenarioId: "classroomPair"`のプリセットでのみ参照される終了deadline tick */
+  formationDeadlineTick?: number;
 };
 
 export const PRESETS: ScenarioPreset[] = [
@@ -86,6 +95,24 @@ export const PRESETS: ScenarioPreset[] = [
       lateJoinEase: 0.2,
       existingTieStrength: 0.85,
     },
+  },
+  {
+    id: "classroom-pair",
+    name: "6. 教室で自由にペアを作る場(Phase 2)",
+    description:
+      "先生が「自由にペアを作ってください」と指示する教室。2人定員の複数ペアが並行して形成され、" +
+      "退出はできない。全員割当か締切tickの到達で終了し、人数が奇数なら1人は未割当のまま残り得る。" +
+      "observerJoiner相当の人は自分からは誘わず、誘われるのを待ちやすい。",
+    params: {
+      ...DEFAULT_PARAMS,
+      populationSize: 20,
+      groupConfirmSize: 2,
+      numLeaders: 0,
+      overallWillingness: 0.8,
+      existingTieStrength: 0.3,
+    },
+    formationScenarioId: "classroomPair",
+    formationDeadlineTick: DEFAULT_CLASSROOM_PAIR_DEADLINE_TICK,
   },
 ];
 

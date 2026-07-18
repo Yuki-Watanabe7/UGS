@@ -1,5 +1,5 @@
 import type { Agent, GroupCandidate, SimParams } from "./types";
-import { distance } from "./model";
+import { clamp, distance } from "./model";
 
 /**
  * Issue #130 (Phase 1): シナリオごとに差し替え可能な「グループ形成・終了ルール」の集合。
@@ -17,17 +17,28 @@ import { distance } from "./model";
  *      (退出判断に至るストレス蓄積の基礎式)          -> computeStressIncrement
  *   5. シミュレーション全体の終了条件                -> isFinished
  *   6. 候補の成立最小人数・収容最大人数(Issue #131)  -> resolveGroupCapacity
+ *   7. 候補の成立判定に使う"集まった人数"の数え方     -> computeConfirmationCount
  *
  * 介入シナリオ(`interventions.ts`の`InterventionScenarioId`)はこれとは独立した軸であり、
  * ここでは一切参照しない。介入による確率・しきい値の補正は、従来どおりengine.ts側で
  * policyが返した基礎値に対して適用する(受入条件: engine内に学校シナリオ固有の分岐を先取りしない
  * ―― 同時に、既存の介入分岐もこのファイルへは持ち込まない)。
+ *
+ * Issue #132 (Phase 2): `classroomPair`は「教室で先生が自由にペアを作るよう指示する」シナリオ。
+ * 定員2固定(min=max=2)・退出不可(canLeaveは常にfalse)・全員割当またはformationDeadlineTick到達で
+ * 終了、という点でafterPartyと大きく異なるが、既存のinitiative/influenceAvoidance/conformity/
+ * clique/stressの各エージェントフィールドとengine.tsの核形成→接近→合流のtickループ自体は再利用する。
  */
-export type FormationScenarioId = "afterParty";
+export type FormationScenarioId = "afterParty" | "classroomPair";
 
 /** `createInitialState`/`stepSimulation`に形成ポリシーを指定する際の実行時オプション */
 export type FormationRuntimeOptions = {
   scenarioId: FormationScenarioId;
+  /**
+   * Issue #132: `classroomPair`固有の、全員割当に至らなくても強制終了するtick数。
+   * `classroomPair`以外では無視される。省略時は`DEFAULT_CLASSROOM_PAIR_DEADLINE_TICK`。
+   */
+  formationDeadlineTick?: number;
 };
 
 /** 責務1(候補作成)の入力コンテキスト */
@@ -114,6 +125,14 @@ export interface FormationPolicy {
    * (`GroupCandidate.minGroupSize`/`maxGroupSize`)が設定されていればそちらを優先するのが一般的な実装。
    */
   resolveGroupCapacity(candidate: GroupCandidate, params: SimParams): GroupCapacity;
+
+  /**
+   * 責務7(Issue #132): `shouldConfirmCandidate`へ渡す"集まった人数"をこの候補についてどう数えるかを
+   * 決める。afterPartyは既存の近接ヒューリスティック(まだ合流していない周辺の人も含めて数える)を
+   * そのまま踏襲し、classroomPairは`candidate.memberIds.length`そのもの(定員厳格化のため
+   * 近接しているだけの他候補の人を含めない)を返す。
+   */
+  computeConfirmationCount(candidate: GroupCandidate, agents: Agent[]): number;
 }
 
 // --- afterParty: 現行の二次会シナリオのロジック(既存挙動を維持したまま移設) --------------------
@@ -133,6 +152,9 @@ const CANDIDATE_MERGE_RADIUS = 40;
 const APPROACH_RATE_MULTIPLIER = 0.35;
 // シミュレーション全体の安全上限tick数
 const MAX_SIMULATION_TICKS = 400;
+// 責務7: 成立判定用に"集まった人数"とみなす近接半径(旧engine.tsのGROUP_GATHER_RADIUSを移設)。
+// まだ正式にmemberIdsへ加わっていない、接近中/形成中/参加済みの人も範囲内なら数える近似値
+const AFTER_PARTY_GATHER_RADIUS = 60;
 
 export const afterPartyPolicy: FormationPolicy = {
   id: "afterParty",
@@ -219,17 +241,135 @@ export const afterPartyPolicy: FormationPolicy = {
       maxGroupSize: candidate.maxGroupSize ?? Number.POSITIVE_INFINITY,
     };
   },
+
+  computeConfirmationCount(candidate, agents) {
+    // 旧engine.tsのstep 9に直接書かれていたヒューリスティックをそのまま移設(既存挙動を維持)。
+    // まだcandidate.memberIdsに加わっていなくても、接近中/形成中/参加済みで近くにいれば
+    // 「集まっている」とみなす(輪に人が集まってきている様子を素朴に近似する)
+    return agents.filter(
+      (a) =>
+        (a.state === "forming" || a.state === "joined" || a.state === "approaching") &&
+        (candidate.memberIds.includes(a.id) ||
+          distance(a.x, a.y, candidate.x, candidate.y) < AFTER_PARTY_GATHER_RADIUS),
+    ).length;
+  },
 };
 
-const FORMATION_POLICIES: Record<FormationScenarioId, FormationPolicy> = {
+// --- classroomPair: Issue #132 (Phase 2) 教室で自由にペアを作るシナリオ ------------------------
+
+// 教室シナリオでの核形成確率にかける基礎倍率。teacherの指示による活動のため、二次会の
+// APPROACH_RATE_MULTIPLIERよりやや高めに設定し、時間内にペアが決まりやすくしてある
+const CLASSROOM_APPROACH_RATE_MULTIPLIER = 0.5;
+// 核形成(ペア探し開始)確率に掛ける基礎割合
+const CLASSROOM_INITIATION_RATE = 0.12;
+// 併合半径(教室内での「近く」の目安。二次会と同じ値を踏襲)
+const CLASSROOM_CANDIDATE_MERGE_RADIUS = 40;
+// 相手が見つからないまま解散/期限切れとみなすtick数。deadline内に何度か探し直せるよう、
+// 二次会(15/40)より短めに設定している
+const CLASSROOM_WEAK_RESPONSE_AGE = 10;
+const CLASSROOM_CANDIDATE_MAX_AGE = 25;
+// 未定状態が続く間に蓄積するstressの基礎割合(退出には使わないが、既存のstressフィールド・
+// UI表示は引き続き意味を持たせるため既存式を再利用する)
+const CLASSROOM_STRESS_RATE = 0.005;
+// `formationDeadlineTick`省略時の既定値
+export const DEFAULT_CLASSROOM_PAIR_DEADLINE_TICK = 200;
+
+function createClassroomPairPolicy(formationDeadlineTick: number): FormationPolicy {
+  return {
+    id: "classroomPair",
+    candidateMergeRadius: CLASSROOM_CANDIDATE_MERGE_RADIUS,
+    approachRateMultiplier: CLASSROOM_APPROACH_RATE_MULTIPLIER,
+    defaultWeakResponseAge: CLASSROOM_WEAK_RESPONSE_AGE,
+    defaultMaxAge: CLASSROOM_CANDIDATE_MAX_AGE,
+
+    evaluateCandidateInitiation(agent) {
+      // observerJoiner相当(自らペアを作らず誘いを待ちやすい人)は、afterPartyと同様に
+      // 自分からは核(ペア探し)を作らない
+      if (agent.isObserverJoiner) {
+        return { eligible: false, probability: 0, hasInitiative: false };
+      }
+
+      // 先生が「自由にペアを作ってください」と全員に指示しているため、afterPartyと異なり
+      // 主導性の高い人だけに限定しない(numLeaders: 0のプリセットでも誰も動けない、という
+      // afterParty的な事態を避ける)。initiative/willingnessは頻度の重み付けとしてのみ再利用する
+      const hasInitiative = agent.initiative >= 0.5;
+      const probability = clamp(
+        agent.willingness * (0.4 + 0.6 * agent.initiative) * CLASSROOM_INITIATION_RATE,
+        0,
+        1,
+      );
+
+      return { eligible: true, probability, hasInitiative };
+    },
+
+    shouldConfirmCandidate(nearbyCount) {
+      // 定員2固定。groupConfirmSize(params)は参照しない
+      return nearbyCount >= 2;
+    },
+
+    evaluateUnconfirmedCandidateLifecycle(candidate, ctx) {
+      // shouldConfirmCandidateが先に評価されるため、ここに到達する時点でmemberIds.length < 2
+      if (candidate.memberIds.length < 2 && candidate.age >= ctx.weakResponseAge) {
+        return "dissolve";
+      }
+      if (candidate.age >= ctx.maxAge) {
+        return "expire";
+      }
+      return "continue";
+    },
+
+    computeStressIncrement(agent, ctx) {
+      // 既存の「未定状態が続くほどstressが上がる」式を再利用するが、canLeaveが常にfalseのため
+      // 退出には結びつかない(UI上のstress表示・観察用途のみに意味を持つ)
+      return (
+        (agent.willingness * (1 - agent.ambiguityTolerance) * CLASSROOM_STRESS_RATE) /
+        Math.max(0.2, ctx.ambiguityDuration)
+      );
+    },
+
+    canLeave() {
+      // 受入条件: 学校シナリオではleave/leftへ遷移しない
+      return false;
+    },
+
+    isFinished(agents, tick) {
+      const allPaired = agents.every((a) => a.state === "joined");
+      return allPaired || tick >= formationDeadlineTick;
+    },
+
+    resolveGroupCapacity(candidate) {
+      // 定員2固定(候補固有のオーバーライドがあればそちらを優先する既存の一般ルールは維持)
+      return {
+        minGroupSize: candidate.minGroupSize ?? 2,
+        maxGroupSize: candidate.maxGroupSize ?? 2,
+      };
+    },
+
+    computeConfirmationCount(candidate) {
+      // afterPartyの近接ヒューリスティックとは異なり、定員厳格化のため実際のmemberIdsのみを数える
+      // (近くをたまたま通りかかった無関係な人を「集まった」と誤カウントしないため)
+      return candidate.memberIds.length;
+    },
+  };
+}
+
+const FORMATION_POLICIES: Partial<Record<FormationScenarioId, FormationPolicy>> = {
   afterParty: afterPartyPolicy,
 };
 
-export function getFormationPolicyById(id: FormationScenarioId): FormationPolicy {
+/**
+ * `formationDeadlineTick`は`classroomPair`のみで参照される(他シナリオでは無視される)。
+ * `classroomPair`は`formationDeadlineTick`ごとに異なる`FormationPolicy`が必要なため、
+ * afterPartyのような固定シングルトンではなく毎回`createClassroomPairPolicy`で組み立てる。
+ */
+export function getFormationPolicyById(id: FormationScenarioId, formationDeadlineTick?: number): FormationPolicy {
+  if (id === "classroomPair") {
+    return createClassroomPairPolicy(formationDeadlineTick ?? DEFAULT_CLASSROOM_PAIR_DEADLINE_TICK);
+  }
   return FORMATION_POLICIES[id] ?? afterPartyPolicy;
 }
 
 /** `options`(未指定なら後方互換として`afterParty`)に対応する`FormationPolicy`を解決する */
 export function resolveFormationPolicy(options?: FormationRuntimeOptions): FormationPolicy {
-  return getFormationPolicyById(options?.scenarioId ?? "afterParty");
+  return getFormationPolicyById(options?.scenarioId ?? "afterParty", options?.formationDeadlineTick);
 }
