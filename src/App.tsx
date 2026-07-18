@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import { ControlPanel } from "./components/ControlPanel";
 import { RESET_REQUIRED_PARAM_KEYS } from "./components/sliderConfig";
@@ -28,6 +28,7 @@ import { SeededRandom } from "./simulation/random";
 import { getPresetById, PRESETS } from "./simulation/presets";
 import { getInterventionById } from "./simulation/interventions";
 import type { InterventionScenarioId } from "./simulation/interventions";
+import type { FormationRuntimeOptions } from "./simulation/formationPolicy";
 import type { SimParams, SimulationState } from "./simulation/types";
 import { useActiveExpressions } from "./hooks/useActiveExpressions";
 import { useActiveSpeechBubbles } from "./hooks/useActiveSpeechBubbles";
@@ -35,6 +36,15 @@ import { useIsMobile } from "./hooks/useIsMobile";
 
 const TICK_INTERVAL_MS = 250;
 const INITIAL_SEED = 12345;
+
+/** Issue #132: 選択中のプリセットに紐づくFormationPolicyの実行時オプションを組み立てる */
+function formationOptionsForPreset(presetId: string): FormationRuntimeOptions {
+  const preset = getPresetById(presetId);
+  return {
+    scenarioId: preset.formationScenarioId ?? "afterParty",
+    formationDeadlineTick: preset.formationDeadlineTick,
+  };
+}
 
 const INTRO_TEXT =
   "このプロトタイプは、二次会に行くかどうかがその場の空気で決まるような、曖昧な移行場面での" +
@@ -62,6 +72,7 @@ function App() {
       { enabled: true },
       { enabled: true },
       { enabled: true },
+      formationOptionsForPreset(PRESETS[0].id),
     ),
   );
   // 現在のsimStateの生成に実際に使われたparams。Reset必須パラメータが
@@ -84,7 +95,12 @@ function App() {
   const rngRef = useRef(new SeededRandom(seed));
 
   const resetSimulation = useCallback(
-    (nextSeed: number, nextParams: SimParams, nextInterventionId: InterventionScenarioId) => {
+    (
+      nextSeed: number,
+      nextParams: SimParams,
+      nextInterventionId: InterventionScenarioId,
+      nextPresetId: string,
+    ) => {
       rngRef.current = new SeededRandom(nextSeed);
       const initialState = createInitialState(
         nextSeed,
@@ -94,6 +110,7 @@ function App() {
         { enabled: true },
         { enabled: true },
         { enabled: true },
+        formationOptionsForPreset(nextPresetId),
       );
       setSimState(initialState);
       setAppliedParams(nextParams);
@@ -120,9 +137,15 @@ function App() {
     (key) => params[key] !== appliedParams[key],
   );
 
+  // Issue #132: 現在選択中のプリセットに紐づくformationPolicyの実行時オプション。presetIdが変わらない
+  // 限り同一参照を保つ(useCallback/useEffectの依存配列に含めても不要な再生成を起こさないため)。
+  const formation = useMemo(() => formationOptionsForPreset(presetId), [presetId]);
+
   const handleStep = useCallback(() => {
-    setSimState((prev) => stepSimulation(prev, params, rngRef.current, { interventionId }));
-  }, [params, interventionId]);
+    setSimState((prev) =>
+      stepSimulation(prev, params, rngRef.current, { interventionId }, undefined, undefined, undefined, undefined, formation),
+    );
+  }, [params, interventionId, formation]);
 
   useEffect(() => {
     if (!running) return;
@@ -132,11 +155,21 @@ function App() {
           setRunning(false);
           return prev;
         }
-        return stepSimulation(prev, params, rngRef.current, { interventionId });
+        return stepSimulation(
+          prev,
+          params,
+          rngRef.current,
+          { interventionId },
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          formation,
+        );
       });
     }, TICK_INTERVAL_MS);
     return () => window.clearInterval(id);
-  }, [running, params, interventionId]);
+  }, [running, params, interventionId, formation]);
 
   const handleStartPause = useCallback(() => {
     if (simState.finished) return;
@@ -148,15 +181,15 @@ function App() {
   }, []);
 
   const handleReset = useCallback(() => {
-    resetSimulation(seed, params, interventionId);
-  }, [resetSimulation, seed, params, interventionId]);
+    resetSimulation(seed, params, interventionId, presetId);
+  }, [resetSimulation, seed, params, interventionId, presetId]);
 
   const handleSeedChange = useCallback(
     (nextSeed: number) => {
       setSeed(nextSeed);
-      resetSimulation(nextSeed, params, interventionId);
+      resetSimulation(nextSeed, params, interventionId, presetId);
     },
-    [resetSimulation, params, interventionId],
+    [resetSimulation, params, interventionId, presetId],
   );
 
   const handlePresetChange = useCallback(
@@ -164,7 +197,7 @@ function App() {
       const preset = getPresetById(nextPresetId);
       setPresetId(preset.id);
       setParams(preset.params);
-      resetSimulation(seed, preset.params, interventionId);
+      resetSimulation(seed, preset.params, interventionId, preset.id);
     },
     [resetSimulation, seed, interventionId],
   );
@@ -172,9 +205,9 @@ function App() {
   const handleInterventionChange = useCallback(
     (nextInterventionId: InterventionScenarioId) => {
       setInterventionId(nextInterventionId);
-      resetSimulation(seed, params, nextInterventionId);
+      resetSimulation(seed, params, nextInterventionId, presetId);
     },
-    [resetSimulation, seed, params],
+    [resetSimulation, seed, params, presetId],
   );
 
   return (

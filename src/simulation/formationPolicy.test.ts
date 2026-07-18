@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   afterPartyPolicy,
+  DEFAULT_CLASSROOM_PAIR_DEADLINE_TICK,
   getFormationPolicyById,
   resolveFormationPolicy,
 } from "./formationPolicy";
@@ -260,5 +261,93 @@ describe("engine wiring: formation policy persists through state across ticks", 
       state = stepSimulation(state, getPresetById("natural").params, rng);
       expect(state.formationScenarioId).toBe("afterParty");
     }
+  });
+});
+
+describe("classroomPairPolicy (Issue #132, Phase 2)", () => {
+  const classroomPolicy = getFormationPolicyById("classroomPair");
+
+  it("resolves via resolveFormationPolicy/getFormationPolicyById with id 'classroomPair'", () => {
+    expect(classroomPolicy.id).toBe("classroomPair");
+    expect(resolveFormationPolicy({ scenarioId: "classroomPair" }).id).toBe("classroomPair");
+  });
+
+  describe("evaluateCandidateInitiation (責務1)", () => {
+    it("never makes an observerJoiner eligible to initiate a pair search", () => {
+      const agent = makeAgent({ isObserverJoiner: true, initiative: 1, willingness: 1 });
+      const decision = classroomPolicy.evaluateCandidateInitiation(agent, { agents: [agent], params: DEFAULT_PARAMS });
+      expect(decision.eligible).toBe(false);
+      expect(decision.probability).toBe(0);
+    });
+
+    it("makes a non-observerJoiner eligible even with low initiative (teacher-instructed, not leader-gated)", () => {
+      const agent = makeAgent({ isObserverJoiner: false, initiative: 0.1, willingness: 0.5 });
+      const decision = classroomPolicy.evaluateCandidateInitiation(agent, { agents: [agent], params: DEFAULT_PARAMS });
+      expect(decision.eligible).toBe(true);
+      expect(decision.probability).toBeGreaterThan(0);
+      expect(decision.hasInitiative).toBe(false);
+    });
+  });
+
+  describe("shouldConfirmCandidate / computeConfirmationCount (責務3/7)", () => {
+    it("confirms once exactly 2 have gathered, fixed regardless of params.groupConfirmSize", () => {
+      const params = { ...DEFAULT_PARAMS, groupConfirmSize: 5 };
+      expect(classroomPolicy.shouldConfirmCandidate(1, params)).toBe(false);
+      expect(classroomPolicy.shouldConfirmCandidate(2, params)).toBe(true);
+    });
+
+    it("counts strictly by candidate.memberIds.length, ignoring nearby non-members", () => {
+      const candidate: GroupCandidate = {
+        id: "pair-1",
+        x: 400,
+        y: 260,
+        memberIds: ["founder"],
+        status: "forming",
+        age: 0,
+      };
+      // 近くをたまたま通りかかっただけの無関係なエージェントは数に入らない
+      const bystander = makeAgent({ id: "bystander", state: "approaching", x: 405, y: 260 });
+      expect(classroomPolicy.computeConfirmationCount(candidate, [bystander])).toBe(1);
+    });
+  });
+
+  describe("resolveGroupCapacity (責務6)", () => {
+    it("defaults to a fixed pair (min=max=2)", () => {
+      const candidate: GroupCandidate = { id: "pair-1", x: 0, y: 0, memberIds: [], status: "forming", age: 0 };
+      const capacity = classroomPolicy.resolveGroupCapacity(candidate, DEFAULT_PARAMS);
+      expect(capacity).toEqual({ minGroupSize: 2, maxGroupSize: 2 });
+    });
+  });
+
+  describe("canLeave (責務4, 受入条件: leave/leftへ遷移しない)", () => {
+    it("is always false regardless of stress or threshold", () => {
+      const agent = makeAgent({ leaveThreshold: 0.1 });
+      expect(classroomPolicy.canLeave(agent, 1, 0)).toBe(false);
+      expect(classroomPolicy.canLeave(agent, 0, 1)).toBe(false);
+    });
+  });
+
+  describe("isFinished (責務5)", () => {
+    it("finishes once every agent is joined, even before the deadline tick", () => {
+      const agents = [makeAgent({ id: "a", state: "joined" }), makeAgent({ id: "b", state: "joined" })];
+      expect(classroomPolicy.isFinished(agents, 3)).toBe(true);
+    });
+
+    it("is not finished while any agent is unmatched, before the deadline tick", () => {
+      const agents = [makeAgent({ id: "a", state: "joined" }), makeAgent({ id: "b", state: "undecided" })];
+      expect(classroomPolicy.isFinished(agents, 3)).toBe(false);
+    });
+
+    it("force-finishes at the configured deadline tick, leaving unmatched agents as-is", () => {
+      const agents = [makeAgent({ id: "a", state: "joined" }), makeAgent({ id: "b", state: "undecided" })];
+      expect(classroomPolicy.isFinished(agents, DEFAULT_CLASSROOM_PAIR_DEADLINE_TICK)).toBe(true);
+    });
+
+    it("uses a caller-supplied formationDeadlineTick instead of the default", () => {
+      const shortDeadlinePolicy = getFormationPolicyById("classroomPair", 5);
+      const agents = [makeAgent({ id: "a", state: "undecided" })];
+      expect(shortDeadlinePolicy.isFinished(agents, 4)).toBe(false);
+      expect(shortDeadlinePolicy.isFinished(agents, 5)).toBe(true);
+    });
   });
 });

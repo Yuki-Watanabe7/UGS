@@ -60,8 +60,10 @@ describe("createInitialAgents", () => {
 });
 
 describe("presets", () => {
-  it("exposes the five required scenario presets", () => {
-    expect(PRESETS).toHaveLength(5);
+  it("exposes the five required afterParty scenario presets, plus the classroomPair preset (Issue #132)", () => {
+    const afterPartyPresets = PRESETS.filter((p) => (p.formationScenarioId ?? "afterParty") === "afterParty");
+    expect(afterPartyPresets).toHaveLength(5);
+    expect(PRESETS.some((p) => p.formationScenarioId === "classroomPair")).toBe(true);
   });
 
   it("falls back to the first preset for an unknown id", () => {

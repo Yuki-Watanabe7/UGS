@@ -234,6 +234,13 @@ export type SimulationState = {
    */
   formationScenarioId?: FormationScenarioId;
   /**
+   * Issue #132 (Phase 2): `formationScenarioId`が`classroomPair`の場合に使われる、全員割当に至らなくても
+   * 強制終了するtick数。`formationScenarioId`と同じfall backパターン(呼び出し側が引き継ぎ忘れても
+   * 直前の設定を維持する)で扱う。`classroomPair`以外では無視され、未指定時は
+   * `DEFAULT_CLASSROOM_PAIR_DEADLINE_TICK`(`formationPolicy.ts`)が使われる。
+   */
+  formationDeadlineTick?: number;
+  /**
    * エージェントが実際に行った発言(`SpeechEvent`、`speech.ts`参照)の時系列記録。Phase 2で追加。
    * `log`(検証可能な出来事の記録)とは別軸で、「誰が何を発言したか」だけを構造化して保持する。
    * 生成・記録・表示の基盤に留まり、この記録を他エージェントの判断が参照することはない
