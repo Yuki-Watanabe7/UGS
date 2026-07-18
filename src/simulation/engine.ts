@@ -9,6 +9,8 @@ import type {
   SimulationState,
 } from "./types";
 import type { InterventionRuntimeOptions, InterventionScenarioId } from "./interventions";
+import type { FormationRuntimeOptions } from "./formationPolicy";
+import { resolveFormationPolicy } from "./formationPolicy";
 import type { SpeechEvent } from "./speech";
 import { createSpeechEvent, deriveSpeechEvents } from "./speech";
 import type { SpeechActiveEffect, SpeechEffectsConfig } from "./speechEffects";
@@ -69,15 +71,6 @@ const APPROACH_SPEED = 14;
 const WANDER_SPEED = 0.5;
 const JOIN_DISTANCE = 26;
 const GROUP_GATHER_RADIUS = 60;
-const CANDIDATE_MERGE_RADIUS = 40;
-// 未定状態が続く間に蓄積するstressの基礎割合。移動速度と釣り合うよう調整済み
-// (速すぎると誰も離脱せず、遅すぎると誰も輪にたどり着く前に離脱してしまう)。
-const BASE_STRESS_RATE = 0.007;
-const OBSERVER_EXTRA_STRESS_RATE = 0.0035;
-// forming候補が成立しないまま存続できる最大tick数。これを超えたら期限切れ(expired)にする
-const CANDIDATE_MAX_AGE = 40;
-// このtick数までに founder 以外が誰も加わらない(反応が薄い)場合は解散(dissolving)にする
-const CANDIDATE_WEAK_RESPONSE_AGE = 15;
 // dissolving/dissolved/expired が画面上に留まる(フェードアウト表現用の)tick数。これを超えたら配列から除去する
 const CANDIDATE_LINGER_TICKS = 4;
 
@@ -117,8 +110,10 @@ export function createInitialState(
   socialExpression?: Partial<SocialExpressionConfig>,
   speechTrust?: Partial<SpeechTrustConfig>,
   relationshipTie?: Partial<RelationshipTieConfig>,
+  formation?: FormationRuntimeOptions,
 ): SimulationState {
   const scenario = resolveInterventionScenario(intervention);
+  const formationPolicy = resolveFormationPolicy(formation);
   const speechEffectsConfig = resolveSpeechEffectsConfig(speechEffects);
   const socialExpressionConfig = resolveSocialExpressionConfig(socialExpression);
   const speechTrustConfig = resolveSpeechTrustConfig(speechTrust);
@@ -192,6 +187,7 @@ export function createInitialState(
     height: WORLD_HEIGHT,
     finished: false,
     interventionId: scenario.id,
+    formationScenarioId: formationPolicy.id,
     speechLog: [],
     speechReceptionLog: [],
     speechInterpretationLog: [],
@@ -361,6 +357,7 @@ export function stepSimulation(
   socialExpression?: Partial<SocialExpressionConfig>,
   speechTrust?: Partial<SpeechTrustConfig>,
   relationshipTie?: Partial<RelationshipTieConfig>,
+  formation?: FormationRuntimeOptions,
 ): SimulationState {
   if (state.finished) return state;
 
@@ -370,6 +367,11 @@ export function stepSimulation(
     intervention ?? (state.interventionId ? { interventionId: state.interventionId } : undefined);
   const effectiveParams = resolveEffectiveParams(params, resolvedIntervention);
   const interventionId = resolveInterventionScenario(resolvedIntervention).id;
+  // Issue #130 (Phase 1): 形成ポリシーも同じfall backパターンで、呼び出し側の渡し忘れにより
+  // 途中からafterPartyへ戻ってしまわない(=別ポリシーが消えない)ようにする。
+  const formationPolicy = resolveFormationPolicy(
+    formation ?? (state.formationScenarioId ? { scenarioId: state.formationScenarioId } : undefined),
+  );
   // Phase 3効果も同様に、未指定時は直前のstateの設定を引き継ぐ(呼び出し側の渡し忘れで
   // 途中からOFFに戻ってしまわないようにする)。
   const speechEffectsConfig = resolveSpeechEffectsConfig(
@@ -412,36 +414,21 @@ export function stepSimulation(
   // 近くに揃っている人だけ(主導者0人・既存関係性も弱い場なら誰も場を作らない)
   for (const agent of agents) {
     if (agent.state !== "undecided") continue;
-    if (agent.isObserverJoiner) continue; // observerJoinerは自ら場を作らない
 
-    const hasInitiative = agent.initiative >= 0.5;
-    const cliqueReady =
-      agent.cliqueId !== undefined &&
-      effectiveParams.existingTieStrength > 0.5 &&
-      agents.filter(
-        (other) =>
-          other.id !== agent.id &&
-          other.cliqueId === agent.cliqueId &&
-          other.state === "undecided" &&
-          distance(agent.x, agent.y, other.x, other.y) < CANDIDATE_MERGE_RADIUS,
-      ).length >= 2;
+    const initiation = formationPolicy.evaluateCandidateInitiation(agent, { agents, params: effectiveParams });
+    if (!initiation.eligible) continue;
 
-    if (!hasInitiative && !cliqueReady) continue;
-
-    const baseFormingProbability = hasInitiative
-      ? agent.willingness * agent.initiative * 0.08 * (1 + effectiveParams.numLeaders * 0.15)
-      : effectiveParams.existingTieStrength * 0.1;
     // `anonymous-low-pressure-intent`: 匿名の合図で「参加したい人が一定数いる」ことが伝わり、
     // 主導者/既存グループが核を作り始めやすくなる(声かけの代わりに核形成側を後押しする)
     const formingProbability =
       interventionId === "anonymous-low-pressure-intent"
-        ? baseFormingProbability * ANONYMOUS_INTENT_FORMING_PROBABILITY_MULTIPLIER
-        : baseFormingProbability;
+        ? initiation.probability * ANONYMOUS_INTENT_FORMING_PROBABILITY_MULTIPLIER
+        : initiation.probability;
 
     if (rng.chance(formingProbability)) {
       agent.state = "forming";
       const nearbyCandidate = candidates.find(
-        (c) => c.status === "forming" && distance(agent.x, agent.y, c.x, c.y) < CANDIDATE_MERGE_RADIUS,
+        (c) => c.status === "forming" && distance(agent.x, agent.y, c.x, c.y) < formationPolicy.candidateMergeRadius,
       );
       if (nearbyCandidate) {
         addMemberToCandidate(nearbyCandidate, agent.id);
@@ -469,7 +456,7 @@ export function stepSimulation(
             tick,
             speakerId: agent.id,
             intent: "invite",
-            reason: hasInitiative ? "initiativeFormedCore" : "cliqueFormedCore",
+            reason: initiation.hasInitiative ? "initiativeFormedCore" : "cliqueFormedCore",
             audience: "nearby",
             originX: agent.x,
             originY: agent.y,
@@ -551,7 +538,8 @@ export function stepSimulation(
     // Issue #96: "invite"由来のSpeechActiveEffect(周囲の未定な人への後押し)を加算する
     const speechApproachBonus = sumActiveEffectValue(activeEffects, agent.id, "approachProbability", tick);
     const approachProbability = clamp(
-      score * 0.35 * anonymousIntentApproachMultiplier * lightInvitationApproachMultiplier + speechApproachBonus,
+      score * formationPolicy.approachRateMultiplier * anonymousIntentApproachMultiplier * lightInvitationApproachMultiplier +
+        speechApproachBonus,
       0,
       0.9,
     );
@@ -662,30 +650,26 @@ export function stepSimulation(
       const dominant = dominantClique(c, agents);
       return !(dominant && dominant.ratio > welcomingDominanceThreshold && dominant.cliqueId !== agent.cliqueId);
     });
-    let increment =
-      (agent.willingness * (1 - agent.ambiguityTolerance) * BASE_STRESS_RATE) /
-      Math.max(0.2, effectiveParams.ambiguityDuration);
-
-    if (agent.isObserverJoiner && !hasWelcomingConfirmedGroup) {
-      // `predecided-venue`/`short-ambiguity-window`はどちらも「行き場・見通しの不確実性」を
-      // 先に取り除く介入のため、行き場がないこと自体に起因する追加ストレスの蓄積率を下げる
-      // (predecided-venueは行き先そのものが決まっている分、より強く効く)。
-      // `light-observer-invitation`: 声をかけられた直後の一定期間だけ、この人自身の
-      // 追加ストレス蓄積が軽減される(他の介入と異なり、全員一律ではなく本人限定)
-      const noDestinationStressMultiplier =
-        interventionId === "predecided-venue"
-          ? PREDECIDED_VENUE_STRESS_MULTIPLIER
-          : interventionId === "short-ambiguity-window"
-            ? SHORT_AMBIGUITY_WINDOW_STRESS_MULTIPLIER
-            : interventionId === "anonymous-low-pressure-intent"
-              ? ANONYMOUS_INTENT_STRESS_MULTIPLIER
-              : interventionId === "light-observer-invitation" && isUnderLightInvitationBoost(agent, tick)
-                ? LIGHT_INVITATION_STRESS_MULTIPLIER
-                : 1;
-      increment +=
-        (agent.willingness * agent.influenceAvoidance * OBSERVER_EXTRA_STRESS_RATE * noDestinationStressMultiplier) /
-        Math.max(0.2, effectiveParams.ambiguityDuration);
-    }
+    // `predecided-venue`/`short-ambiguity-window`はどちらも「行き場・見通しの不確実性」を
+    // 先に取り除く介入のため、行き場がないこと自体に起因する追加ストレスの蓄積率を下げる
+    // (predecided-venueは行き先そのものが決まっている分、より強く効く)。
+    // `light-observer-invitation`: 声をかけられた直後の一定期間だけ、この人自身の
+    // 追加ストレス蓄積が軽減される(他の介入と異なり、全員一律ではなく本人限定)
+    const noDestinationStressMultiplier =
+      interventionId === "predecided-venue"
+        ? PREDECIDED_VENUE_STRESS_MULTIPLIER
+        : interventionId === "short-ambiguity-window"
+          ? SHORT_AMBIGUITY_WINDOW_STRESS_MULTIPLIER
+          : interventionId === "anonymous-low-pressure-intent"
+            ? ANONYMOUS_INTENT_STRESS_MULTIPLIER
+            : interventionId === "light-observer-invitation" && isUnderLightInvitationBoost(agent, tick)
+              ? LIGHT_INVITATION_STRESS_MULTIPLIER
+              : 1;
+    let increment = formationPolicy.computeStressIncrement(agent, {
+      hasWelcomingConfirmedGroup,
+      ambiguityDuration: effectiveParams.ambiguityDuration,
+      noDestinationStressMultiplier,
+    });
 
     // Issue #96: "greet"由来のSpeechActiveEffect(周囲の合流を見て感じる安心感)を蓄積率へ加算する
     // (負の値になり、増分を打ち消す方向に働く。最終的なstressそのものは下の`clamp(...,0,1)`が保証する)
@@ -697,7 +681,7 @@ export function stepSimulation(
     // 実効しきい値へ加算する。`agent.leaveThreshold`本体(personality値)は変更しない
     const effectiveLeaveThreshold = agent.leaveThreshold + sumActiveEffectValue(activeEffects, agent.id, "leaveThreshold", tick);
 
-    if (agent.stress > effectiveLeaveThreshold) {
+    if (formationPolicy.canLeave(agent, agent.stress, effectiveLeaveThreshold)) {
       agent.state = "leaving";
       if (agent.isObserverJoiner) {
         pushLog(
@@ -735,12 +719,12 @@ export function stepSimulation(
   // 帰宅判断(stress蓄積)より先に「合流できない輪への固執」自体を終わらせる
   const candidateWeakResponseAge =
     interventionId === "short-ambiguity-window"
-      ? Math.round(CANDIDATE_WEAK_RESPONSE_AGE * SHORT_AMBIGUITY_WINDOW_AGE_FACTOR)
-      : CANDIDATE_WEAK_RESPONSE_AGE;
+      ? Math.round(formationPolicy.defaultWeakResponseAge * SHORT_AMBIGUITY_WINDOW_AGE_FACTOR)
+      : formationPolicy.defaultWeakResponseAge;
   const candidateMaxAge =
     interventionId === "short-ambiguity-window"
-      ? Math.round(CANDIDATE_MAX_AGE * SHORT_AMBIGUITY_WINDOW_AGE_FACTOR)
-      : CANDIDATE_MAX_AGE;
+      ? Math.round(formationPolicy.defaultMaxAge * SHORT_AMBIGUITY_WINDOW_AGE_FACTOR)
+      : formationPolicy.defaultMaxAge;
 
   for (const candidate of candidates) {
     if (candidate.status === "confirmed") continue;
@@ -763,7 +747,7 @@ export function stepSimulation(
         (candidate.memberIds.includes(a.id) || distance(a.x, a.y, candidate.x, candidate.y) < GROUP_GATHER_RADIUS),
     ).length;
 
-    if (nearbyCount >= effectiveParams.groupConfirmSize) {
+    if (formationPolicy.shouldConfirmCandidate(nearbyCount, effectiveParams)) {
       candidate.status = "confirmed";
       pushLog(log, tick, `${nearbyCount}人が集まり二次会グループが成立`, ["groupConfirmed"], "groupConfirmed", {
         groupId: candidate.id,
@@ -780,14 +764,12 @@ export function stepSimulation(
 
     candidate.age += 1;
 
-    // founder以外誰も加わらないまま反応が薄ければ、時間切れを待たずに解散する。
-    // ただし公開の集合場所(isPublicMeetingPoint)はfounderがいないことに変わりないため、
-    // 反応の薄さだけで早期解散の対象にはしない(期限切れ判定は引き続き適用する)
-    if (
-      !candidate.isPublicMeetingPoint &&
-      candidate.memberIds.length < 2 &&
-      candidate.age >= candidateWeakResponseAge
-    ) {
+    const lifecycleOutcome = formationPolicy.evaluateUnconfirmedCandidateLifecycle(candidate, {
+      weakResponseAge: candidateWeakResponseAge,
+      maxAge: candidateMaxAge,
+    });
+
+    if (lifecycleOutcome === "dissolve") {
       candidate.status = "dissolving";
       candidate.age = 0;
       pushLog(
@@ -798,7 +780,7 @@ export function stepSimulation(
         "groupDissolved",
         { groupId: candidate.id, memberCount: candidate.memberIds.length },
       );
-    } else if (candidate.age >= candidateMaxAge) {
+    } else if (lifecycleOutcome === "expire") {
       candidate.status = "expired";
       candidate.age = 0;
       pushLog(
@@ -841,8 +823,7 @@ export function stepSimulation(
     return true;
   });
 
-  const allSettled = agents.every((a) => a.state === "joined" || a.state === "left");
-  const finished = allSettled || tick >= 400;
+  const finished = formationPolicy.isFinished(agents, tick);
 
   if (finished && !state.finished) {
     const joinedCount = agents.filter((a) => a.state === "joined").length;
@@ -865,6 +846,7 @@ export function stepSimulation(
     height: state.height,
     finished,
     interventionId,
+    formationScenarioId: formationPolicy.id,
     speechLog: [],
   };
 

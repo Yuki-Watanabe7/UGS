@@ -1,4 +1,5 @@
 import type { InterventionRuntimeOptions, InterventionScenarioId } from "./interventions";
+import type { FormationScenarioId } from "./formationPolicy";
 import type { SpeechEvent } from "./speech";
 import type {
   AggregatedActiveEffect,
@@ -212,6 +213,13 @@ export type SimulationState = {
    * 介入なしの場合は"none"。UI表示・集計向けの最小限の保持であり、既存の状態遷移ロジックには影響しない。
    */
   interventionId?: InterventionScenarioId;
+  /**
+   * Issue #130 (Phase 1): このstateの生成(`createInitialState`)/更新(`stepSimulation`)に使われた
+   * グループ形成ポリシー(`formationPolicy.ts`の`FormationPolicy`)のID。`interventionId`と同じfall back
+   * 規則(呼び出し側が引き継ぎ忘れても直前の設定を維持する)で扱う。未指定(既存stateの読み込み等)は
+   * 後方互換として`"afterParty"`が選択される。
+   */
+  formationScenarioId?: FormationScenarioId;
   /**
    * エージェントが実際に行った発言(`SpeechEvent`、`speech.ts`参照)の時系列記録。Phase 2で追加。
    * `log`(検証可能な出来事の記録)とは別軸で、「誰が何を発言したか」だけを構造化して保持する。
