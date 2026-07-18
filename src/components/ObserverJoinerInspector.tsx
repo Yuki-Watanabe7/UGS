@@ -398,6 +398,13 @@ function InspectionCard({
           {isNearLeaving ? " ⚠ 離脱間近" : ""}
         </span>
       </div>
+      <div className="observer-inspector-row">
+        <span>再探索回数(参加失敗)</span>
+        <span>
+          {inspection.searchRestartCount}
+          {inspection.capacityFailureCount > 0 ? `(うち満員起因 ${inspection.capacityFailureCount})` : ""}
+        </span>
+      </div>
 
       <div className="observer-inspector-divider" />
 

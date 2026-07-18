@@ -77,7 +77,28 @@ export type Agent = {
    * (engine.ts参照)。observerJoiner以外には設定されない。
    */
   invitedAtTick?: number;
+  /**
+   * Issue #133: 直近で参加に失敗した(満員・消滅等で接近を中断した)候補のID。
+   * 再探索時にこの候補への即時再接近を避けるクールダウン判定に使う(`lastFailedCandidateAtTick`からの
+   * 経過tickで判定し、engine.ts側の`nearestCandidate`呼び出しで一時的に除外する)。
+   */
+  lastFailedCandidateId?: string;
+  /** Issue #133: `lastFailedCandidateId`が記録されたtick(クールダウン判定の起点) */
+  lastFailedCandidateAtTick?: number;
+  /** Issue #133: `approaching`から参加失敗により`undecided`へ戻り、再探索した回数の累計 */
+  searchRestartCount?: number;
+  /** Issue #133: そのうち、満員(容量起因)が理由だった回数の累計 */
+  capacityFailureCount?: number;
 };
+
+/**
+ * Issue #133: 接近中(`approaching`)の候補が無効化された/参加に失敗した理由。
+ * - "capacityFull": 満員(容量超過)。接近中の再検証、または到着時の同一tick競合のいずれか
+ * - "groupDissolved": 候補が解散(dissolving/dissolved)した
+ * - "groupExpired": 候補が期限切れ(expired)になった
+ * - "groupMissing": 候補自体が見当たらなくなった(通常は上記いずれかより先に検知されるため稀)
+ */
+export type ApproachFailureReason = "capacityFull" | "groupDissolved" | "groupExpired" | "groupMissing";
 
 /**
  * GroupCandidateのライフサイクル状態。
@@ -130,7 +151,9 @@ export type LogTag =
   | "leave"
   | "groupLifecycle"
   | "simulation"
-  | "intervention";
+  | "intervention"
+  /** Issue #133: 接近先の無効化・参加失敗・再探索に関するイベント */
+  | "joinFailure";
 
 /**
  * 集計(終了サマリー/Monte Carlo)向けのイベント種別。
@@ -152,7 +175,13 @@ export type SimulationEventType =
   | "groupConfirmed"
   | "groupDissolved"
   | "groupExpired"
-  | "simulationFinished";
+  | "simulationFinished"
+  /** Issue #133: 接近中の候補が満員/消滅/期限切れ等で無効化され、接近を中断した */
+  | "approachTargetInvalidated"
+  /** Issue #133: 到着時点で満員が判明し参加できなかった(同一tickでの容量競合を含む) */
+  | "joinFailedCapacity"
+  /** Issue #133: 参加失敗によりundecidedへ戻り、再探索を始めた */
+  | "searchRestarted";
 
 /** `eventType`ごとに必要な範囲で付与される集計用の補助情報。全フィールド任意 */
 export type SimulationEventMetadata = {
@@ -172,6 +201,8 @@ export type SimulationEventMetadata = {
   maxGroupSize?: number;
   /** Issue #131: 容量情報が関係するイベントでのみ設定される、そのイベント時点での残り空き人数(`maxGroupSize - memberIds.length`) */
   remainingCapacity?: number;
+  /** Issue #133: `approachTargetInvalidated`/`joinFailedCapacity`/`searchRestarted`用。無効化・失敗理由 */
+  reason?: ApproachFailureReason;
 };
 
 export type LogEntry = {
@@ -433,6 +464,10 @@ export type ObserverJoinerInspection = {
    * 寄与した整合性観測(発言・行動の組)・更新履歴。整合性履歴を持つ話者のみを含む(speakerId昇順)。
    */
   tieSummaries: ObserverTieSummary[];
+  /** Issue #133: 参加失敗により再探索した回数の累計(`Agent.searchRestartCount`、未発生なら0) */
+  searchRestartCount: number;
+  /** Issue #133: そのうち満員(容量起因)が理由だった回数の累計(`Agent.capacityFailureCount`、未発生なら0) */
+  capacityFailureCount: number;
 };
 
 /**

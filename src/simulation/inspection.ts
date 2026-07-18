@@ -302,6 +302,8 @@ function buildInspection(
     socialExpression: buildSocialExpressionSnapshot(agent.id, phase4),
     trustSummaries: buildTrustSummaries(agent.id, state),
     tieSummaries: buildTieSummaries(agent.id, state),
+    searchRestartCount: agent.searchRestartCount ?? 0,
+    capacityFailureCount: agent.capacityFailureCount ?? 0,
   };
 }
 
