@@ -1,5 +1,5 @@
 import type { InterventionRuntimeOptions, InterventionScenarioId } from "./interventions";
-import type { FormationScenarioId } from "./formationPolicy";
+import type { FormationRuntimeOptions, FormationScenarioId } from "./formationPolicy";
 import type { SpeechEvent } from "./speech";
 import type {
   AggregatedActiveEffect,
@@ -91,6 +91,14 @@ export type Agent = {
   searchRestartCount?: number;
   /** Issue #133: そのうち、満員(容量起因)が理由だった回数の累計 */
   capacityFailureCount?: number;
+  /**
+   * Issue #136: このrunを通じて`stress`が到達した最大値。Phase 3の"greet"由来効果はstressを
+   * 一時的に引き下げ得る(engine.tsのstress蓄積式参照)ため、最終的な`stress`だけでは
+   * 「一番つらかった瞬間」の負荷を観察できない。`stress`が変化する箇所(通常のstress蓄積、
+   * および参加失敗による追加stress)で都度`Math.max`で更新するのみで、それ自体は
+   * 意思決定(attractiveness/approachProbability/leave判定)には一切使われない観察専用の値。
+   */
+  maxStress?: number;
 };
 
 /**
@@ -194,7 +202,14 @@ export type SimulationEventType =
   /** Issue #133: 到着時点で満員が判明し参加できなかった(同一tickでの容量競合を含む) */
   | "joinFailedCapacity"
   /** Issue #133: 参加失敗によりundecidedへ戻り、再探索を始めた */
-  | "searchRestarted";
+  | "searchRestarted"
+  /**
+   * Issue #136: undecidedなagentが候補への接近("approaching")を開始した。observerJoinerは
+   * 従来どおり`observerApproached`も別途記録される(後方互換のため`observerApproached`はそのまま維持)。
+   * 全agent共通で発生するため、agent別の接近回数はこのeventTypeで集計する
+   * (`observerApproached`はobserverJoiner限定で、非observerJoinerには発生しない)。
+   */
+  | "agentApproached";
 
 /** `eventType`ごとに必要な範囲で付与される集計用の補助情報。全フィールド任意 */
 export type SimulationEventMetadata = {
@@ -651,6 +666,12 @@ export type MonteCarloRunOptions = {
    * (`resolveSpeechEffectsConfig`の既定値、既存呼び出し元との後方互換のため)。
    */
   speechEffects?: Partial<SpeechEffectsConfig>;
+  /**
+   * Issue #136: 単発実行/Monte Carloの各runに適用するグループ形成ポリシー。省略時は
+   * `resolveFormationPolicy`の既定値(後方互換として"afterParty")。classroomPair(学校シナリオ)の
+   * Monte Carlo集計(`runPairFormationMonteCarlo`)を行うには、プリセット由来のこの値を渡す必要がある。
+   */
+  formation?: FormationRuntimeOptions;
 };
 
 /** Monte Carlo実行全体の設定。`runs`回、`baseSeed + index`をseedとして実行する */
@@ -667,6 +688,12 @@ export type MonteCarloConfig = {
    * (`compareMonteCarloIntervention`がbaseline側で`config.intervention`を無視するのと同じ設計)。
    */
   speechEffects?: Partial<SpeechEffectsConfig>;
+  /**
+   * Issue #136: 全runに共通で適用するグループ形成ポリシー。省略時は既定値("afterParty")。
+   * `compareMonteCarloIntervention`はbaseline/intervention双方でこの値をそのまま引き継ぐ
+   * (介入の比較とは独立した軸のため)。
+   */
+  formation?: FormationRuntimeOptions;
 };
 
 /** 単一seed分のMonte Carlo実行結果 */
@@ -903,4 +930,128 @@ export type Phase4ComparisonResult = {
     trustChangeAmount: MonteCarloMetricDelta;
     tieChangeAmount: MonteCarloMetricDelta;
   };
+};
+
+/**
+ * Issue #136: agent 1人分の、ペア/グループ形成過程の負荷を表す観察指標。`pairFormation.ts`の
+ * `buildPairFormationRunSummary`が`state.log`の構造化イベント(`eventType`/`metadata`)と
+ * `state.agents`のみから導出する(表示用`message`文言は参照しない)。
+ */
+export type PairFormationAgentMetric = {
+  agentId: string;
+  label: string;
+  isObserverJoiner: boolean;
+  /** run終了(または現時点)でのAgentState */
+  finalState: AgentState;
+  /** "approaching"へ遷移した回数の累計(`agentApproached`/`observerApproached`いずれかのeventTypeから集計) */
+  approachCount: number;
+  /** 参加失敗(`approachTargetInvalidated`/`joinFailedCapacity`)の発生回数 */
+  joinFailureCount: number;
+  /** 参加失敗による再探索の回数の累計(`Agent.searchRestartCount`) */
+  searchRestartCount: number;
+  /** そのうち満員(容量起因)が理由だった回数の累計(`Agent.capacityFailureCount`) */
+  capacityFailureCount: number;
+  /** このrunを通じて到達した最大stress(`Agent.maxStress`、未記録なら現在のstress) */
+  maxStress: number;
+  /** run終了(または現時点)でのstress */
+  finalStress: number;
+};
+
+/** Issue #136: 属性(population全体/observerJoinerのみ)ごとの平均値 */
+export type PairFormationMetricAverages = {
+  averageApproachCount: number;
+  averageJoinFailureCount: number;
+  averageSearchRestartCount: number;
+  averageCapacityFailureCount: number;
+  averageMaxStress: number;
+  averageFinalStress: number;
+};
+
+/**
+ * Issue #136: 単一run分のペア/グループ形成過程サマリー。既存の`SimulationSummary`(観察対象は
+ * observerJoinerの参加/離脱経過が中心)とは独立した集計軸であり、「割当に至るまでの過程の負担」
+ * (未割当・参加失敗・再探索・stressのピーク・clique内外の偏り)に焦点を当てる。
+ */
+export type PairFormationRunSummary = {
+  /** 成立した(confirmedになった)グループ/ペアの総数(`SimulationSummary.confirmedGroupCount`と同値) */
+  confirmedPairCount: number;
+  /** 最初にペア/グループが成立したtick。一度も成立していなければundefined */
+  firstPairConfirmedTick?: number;
+  /** 最後にペア/グループが成立したtick。一度も成立していなければundefined */
+  lastPairConfirmedTick?: number;
+  /** 割当済み("joined")人数 */
+  assignedCount: number;
+  /** 未割当("unassigned")人数 */
+  unassignedCount: number;
+  /**
+   * 最後に成立したペア/グループへ、最後に加わった(=`GroupCandidate.memberIds`の末尾)agent。
+   * 成立イベントが一度もなければundefined
+   */
+  lastAssignedAgent?: {
+    agentId: string;
+    label: string;
+    tick: number;
+    groupId: string;
+  };
+  /** agent配列順のagent別指標 */
+  agentMetrics: PairFormationAgentMetric[];
+  /** population全体の平均(`agentMetrics`全件から算出) */
+  populationAverages: PairFormationMetricAverages;
+  /** observerJoinerのみの平均(observerJoinerが1人もいなければ全て0) */
+  observerJoinerAverages: PairFormationMetricAverages;
+  /**
+   * 成立した(confirmedな)グループ/ペアのうち、全メンバーが同一cliqueに属していた割合。
+   * 成立が1件もなければundefined
+   */
+  sameCliquePairRate?: number;
+  /** `1 - sameCliquePairRate`(成立が1件もなければundefined) */
+  crossCliquePairRate?: number;
+  /**
+   * このシナリオの定員が固定サイズ(`minGroupSize === maxGroupSize`かつ有限。classroomPairの2人固定等)
+   * の場合のみ、人口をその固定サイズで割った余り = 理論上どうしても割当不可能な人数。
+   * 定員が可変/実質無制限(afterParty等)のシナリオではundefined(「全員割当率」をそのまま
+   * 失敗判定に使ってよいシナリオのため、この指標自体が不要)。
+   */
+  structuralUnassignedFloor?: number;
+  /** `unassignedCount`のうち`structuralUnassignedFloor`を超える「追加的」未割当人数(floor未定義ならundefined) */
+  excessUnassignedCount?: number;
+};
+
+/** 複数run分のペア/グループ形成過程集計値 */
+export type PairFormationMonteCarloSummary = {
+  runs: number;
+  /** unassignedCount === 0 のrunの割合(0〜1) */
+  allAssignedRate: number;
+  /**
+   * `structuralUnassignedFloor`が定義されているrunに限り、`excessUnassignedCount === 0`
+   * (=理論上の必然的未割当を除けば全員割当できた)runの割合。対象runが1件もなければundefined
+   */
+  allAssignableRate?: number;
+  averageUnassignedCount: number;
+  /** `structuralUnassignedFloor`が定義されているrunのみを対象にした平均。対象runが1件もなければundefined */
+  averageExcessUnassignedCount?: number;
+  /** 未割当("unassigned")になった割合を、agent属性(observerJoiner/population全体)別に集計したもの */
+  unassignedRateByAttribute: {
+    observerJoiner: number;
+    population: number;
+  };
+  averageApproachCount: number;
+  averageJoinFailureCount: number;
+  averageSearchRestartCount: number;
+  /** run毎の完了(`finished`)tickの分布。run配列(seed順)と同じ順序・長さ */
+  finishedTickDistribution: number[];
+  /** `sameCliquePairRate`が定義されているrun(成立が1件以上あったrun)のみを対象にした平均。対象runが1件もなければundefined */
+  averageSameCliquePairRate?: number;
+  /** `crossCliquePairRate`の平均。`averageSameCliquePairRate`と同じ対象・条件 */
+  averageCrossCliquePairRate?: number;
+};
+
+/** `runPairFormationMonteCarlo`の戻り値。既存の`MonteCarloResult`とは独立にペア形成指標を並立させる */
+export type PairFormationMonteCarloResult = {
+  config: MonteCarloConfig;
+  runs: MonteCarloRunResult[];
+  summary: MonteCarloSummary;
+  /** `runs`と同じ順序・同じ長さ(seedで1:1対応)のペア形成過程run結果 */
+  pairFormationRuns: PairFormationRunSummary[];
+  pairFormationSummary: PairFormationMonteCarloSummary;
 };

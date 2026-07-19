@@ -429,6 +429,7 @@ function recordApproachFailure(
   const stressIncrement = formationPolicy.computeJoinFailureStressIncrement(agent, reason);
   if (stressIncrement > 0) {
     agent.stress = clamp(agent.stress + stressIncrement, 0, 1);
+    agent.maxStress = Math.max(agent.maxStress ?? agent.stress, agent.stress);
   }
 
   const tags: LogTag[] = agent.isObserverJoiner ? ["observerJoiner", "joinFailure"] : ["joinFailure"];
@@ -739,6 +740,9 @@ export function stepSimulation(
           formationPolicy.id === "classroomPair"
             ? `${agent.label}さんがペア候補 ${candidate.id} に近づき始めた`
             : `${agent.label}さんが輪の近くに移動`,
+          [],
+          "agentApproached",
+          { agentId: agent.id, agentLabel: agent.label, groupId: candidate.id, groupStatus: candidate.status },
         );
       }
     } else if (agent.isObserverJoiner && rng.chance(0.1)) {
@@ -897,6 +901,7 @@ export function stepSimulation(
     increment += sumActiveEffectValue(activeEffects, agent.id, "stress", tick);
 
     agent.stress = clamp(agent.stress + increment, 0, 1);
+    agent.maxStress = Math.max(agent.maxStress ?? agent.stress, agent.stress);
 
     // Issue #96: "decline"由来のSpeechActiveEffect(周囲の離脱を見て感じる踏ん切りの伝染)を
     // 実効しきい値へ加算する。`agent.leaveThreshold`本体(personality値)は変更しない

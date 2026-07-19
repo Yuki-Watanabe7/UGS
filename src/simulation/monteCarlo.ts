@@ -6,12 +6,15 @@ import type {
   MonteCarloRunOptions,
   MonteCarloRunResult,
   MonteCarloSummary,
+  PairFormationMonteCarloResult,
+  PairFormationRunSummary,
   SimParams,
   SimulationSummary,
 } from "./types";
 import { createInitialState, stepSimulation } from "./engine";
 import { SeededRandom } from "./random";
 import { buildSimulationSummary } from "./summary";
+import { buildPairFormationRunSummary, summarizePairFormationRuns } from "./pairFormation";
 
 /**
  * Monte Carlo層としての安全上限tick数。engine.ts内部の`tick >= 400`終了とは独立に持たせ、
@@ -29,21 +32,27 @@ export function runSimulationToEnd(
   seed: number,
   params: SimParams,
   options?: MonteCarloRunOptions,
-): { summary: SimulationSummary; finishedTick: number } {
+): { summary: SimulationSummary; finishedTick: number; pairFormation: PairFormationRunSummary } {
   const maxTicks = options?.maxTicks ?? DEFAULT_MAX_TICKS;
   const intervention = options?.intervention;
   const speechEffects = options?.speechEffects;
+  // Issue #136: classroomPair(学校シナリオ)等のMonte Carlo集計を行うには、単発実行と同様に
+  // 形成ポリシーもrunごとに渡せる必要がある。省略時は`resolveFormationPolicy`の既定値("afterParty")
+  const formation = options?.formation;
   const rng = new SeededRandom(seed);
 
-  let state = createInitialState(seed, params, intervention, speechEffects);
+  let state = createInitialState(seed, params, intervention, speechEffects, undefined, undefined, undefined, formation);
   while (!state.finished && state.tick < maxTicks) {
-    state = stepSimulation(state, params, rng, intervention, speechEffects);
+    state = stepSimulation(state, params, rng, intervention, speechEffects, undefined, undefined, undefined, formation);
   }
 
   const summary = buildSimulationSummary(state);
   const finishedTick = summary.finishedTick ?? state.tick;
+  // Issue #136: ペア/グループ形成過程の集計(未割当・参加失敗・再探索等)も、既存の`summary`と
+  // 同じ最終stateから同時に導出する(state自体はこの呼び出しの外に持ち出さない)
+  const pairFormation = buildPairFormationRunSummary(state, params);
 
-  return { summary, finishedTick };
+  return { summary, finishedTick, pairFormation };
 }
 
 function average(values: number[]): number {
@@ -94,12 +103,17 @@ export function summarizeRuns(runs: MonteCarloRunResult[]): MonteCarloSummary {
  * 個別run結果と集計値の両方を返す。`config.params`はmutationしない。
  */
 export function runMonteCarlo(config: MonteCarloConfig): MonteCarloResult {
-  const { baseSeed, runs: runCount, params, maxTicks, intervention, speechEffects } = config;
+  const { baseSeed, runs: runCount, params, maxTicks, intervention, speechEffects, formation } = config;
 
   const runs: MonteCarloRunResult[] = [];
   for (let index = 0; index < runCount; index++) {
     const seed = baseSeed + index;
-    const { summary, finishedTick } = runSimulationToEnd(seed, params, { maxTicks, intervention, speechEffects });
+    const { summary, finishedTick } = runSimulationToEnd(seed, params, {
+      maxTicks,
+      intervention,
+      speechEffects,
+      formation,
+    });
     runs.push({ seed, summary, finishedTick });
   }
 
@@ -107,6 +121,38 @@ export function runMonteCarlo(config: MonteCarloConfig): MonteCarloResult {
     config,
     runs,
     summary: summarizeRuns(runs),
+  };
+}
+
+/**
+ * Issue #136: `runMonteCarlo`と同じ実行(同一seed列)を行い、既存の主要指標に加えて
+ * ペア/グループ形成過程の集計(未割当・参加失敗・再探索・完了tick分布等)も返す。
+ * `speechEffectsMonteCarlo.ts`/`phase4MonteCarlo.ts`のoff/on paired比較とは異なり、
+ * こちらはON/OFFの切り替えを持たない単一条件の集計拡張(既存Monte Carlo運用への追加軸)。
+ */
+export function runPairFormationMonteCarlo(config: MonteCarloConfig): PairFormationMonteCarloResult {
+  const { baseSeed, runs: runCount, params, maxTicks, intervention, speechEffects, formation } = config;
+
+  const runs: MonteCarloRunResult[] = [];
+  const pairFormationRuns: PairFormationRunSummary[] = [];
+  for (let index = 0; index < runCount; index++) {
+    const seed = baseSeed + index;
+    const { summary, finishedTick, pairFormation } = runSimulationToEnd(seed, params, {
+      maxTicks,
+      intervention,
+      speechEffects,
+      formation,
+    });
+    runs.push({ seed, summary, finishedTick });
+    pairFormationRuns.push(pairFormation);
+  }
+
+  return {
+    config,
+    runs,
+    summary: summarizeRuns(runs),
+    pairFormationRuns,
+    pairFormationSummary: summarizePairFormationRuns(runs, pairFormationRuns),
   };
 }
 
