@@ -14,6 +14,33 @@
   border-bottom: 1px solid #2e303a;
 }
 
+.app-header-navigation {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 9px;
+}
+
+.back-to-home-link {
+  color: #93c5fd;
+  font-size: 12.5px;
+  text-decoration: none;
+}
+
+.back-to-home-link:hover,
+.back-to-home-link:focus-visible {
+  color: #bfdbfe;
+  text-decoration: underline;
+}
+
+.scenario-category-label {
+  color: #6b7280;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .app-header h1 {
   font-size: 22px;
   font-weight: 600;
@@ -1130,6 +1157,14 @@
   .app-header h1 {
     font-size: 17px;
     margin-bottom: 2px;
+  }
+
+  .app-header-navigation {
+    margin-bottom: 6px;
+  }
+
+  .scenario-category-label {
+    display: none;
   }
 
   .tick-status {

@@ -25,7 +25,7 @@ import {
 } from "./components/speechBubbleDisplayFilter";
 import { createInitialState, stepSimulation } from "./simulation/engine";
 import { SeededRandom } from "./simulation/random";
-import { getPresetById, PRESETS } from "./simulation/presets";
+import { getPresetById } from "./simulation/presets";
 import { getInterventionById } from "./simulation/interventions";
 import type { InterventionScenarioId } from "./simulation/interventions";
 import type { FormationRuntimeOptions } from "./simulation/formationPolicy";
@@ -33,6 +33,12 @@ import type { SimParams, SimulationState } from "./simulation/types";
 import { useActiveExpressions } from "./hooks/useActiveExpressions";
 import { useActiveSpeechBubbles } from "./hooks/useActiveSpeechBubbles";
 import { useIsMobile } from "./hooks/useIsMobile";
+import { AppLink } from "./components/AppLink";
+import {
+  getPresetForScenario,
+  getPresetsForScenario,
+  type ScenarioConfig,
+} from "./scenarios";
 
 const TICK_INTERVAL_MS = 250;
 const INITIAL_SEED = 12345;
@@ -46,15 +52,16 @@ function formationOptionsForPreset(presetId: string): FormationRuntimeOptions {
   };
 }
 
-const INTRO_TEXT =
-  "このプロトタイプは、二次会に行くかどうかがその場の空気で決まるような、曖昧な移行場面での" +
-  "グループ形成過程を可視化します。オレンジ色のエージェントは" +
-  "「行きたいが、自分の意思で場を動かしたくない人 (observerJoiner)」です。";
+type Props = {
+  scenario: ScenarioConfig;
+};
 
-function App() {
+function SimulationApp({ scenario }: Props) {
   const isMobile = useIsMobile();
-  const [presetId, setPresetId] = useState(PRESETS[0].id);
-  const [params, setParams] = useState<SimParams>(PRESETS[0].params);
+  const scenarioPresets = useMemo(() => getPresetsForScenario(scenario), [scenario]);
+  const initialPreset = getPresetForScenario(scenario, scenario.initialPresetId);
+  const [presetId, setPresetId] = useState(initialPreset.id);
+  const [params, setParams] = useState<SimParams>(initialPreset.params);
   const [seed, setSeed] = useState(INITIAL_SEED);
   const [interventionId, setInterventionId] = useState<InterventionScenarioId>("none");
   const [running, setRunning] = useState(false);
@@ -66,18 +73,18 @@ function App() {
   const [simState, setSimState] = useState<SimulationState>(() =>
     createInitialState(
       INITIAL_SEED,
-      PRESETS[0].params,
+      initialPreset.params,
       { interventionId: "none" },
       { enabled: true },
       { enabled: true },
       { enabled: true },
       { enabled: true },
-      formationOptionsForPreset(PRESETS[0].id),
+      formationOptionsForPreset(initialPreset.id),
     ),
   );
   // 現在のsimStateの生成に実際に使われたparams。Reset必須パラメータが
   // これとparamsとで食い違っている間は、変更がまだ反映されていないとみなす。
-  const [appliedParams, setAppliedParams] = useState<SimParams>(PRESETS[0].params);
+  const [appliedParams, setAppliedParams] = useState<SimParams>(initialPreset.params);
   // Reset・プリセット変更・seed変更・再実行のたびにインクリメントする。useActiveExpressionsは
   // この値の変化を「新しい実行が始まった」シグナルとして扱い、古い心の声吹き出しを破棄する。
   const [runId, setRunId] = useState(0);
@@ -194,12 +201,12 @@ function App() {
 
   const handlePresetChange = useCallback(
     (nextPresetId: string) => {
-      const preset = getPresetById(nextPresetId);
+      const preset = getPresetForScenario(scenario, nextPresetId);
       setPresetId(preset.id);
       setParams(preset.params);
       resetSimulation(seed, preset.params, interventionId, preset.id);
     },
-    [resetSimulation, seed, interventionId],
+    [resetSimulation, scenario, seed, interventionId],
   );
 
   const handleInterventionChange = useCallback(
@@ -213,14 +220,20 @@ function App() {
   return (
     <div className="app-root">
       <header className="app-header">
-        <h1>グループ形成過程シミュレーター</h1>
+        <div className="app-header-navigation">
+          <AppLink to="/" className="back-to-home-link">
+            ← シナリオ選択へ
+          </AppLink>
+          <span className="scenario-category-label">{scenario.homeTitle}</span>
+        </div>
+        <h1>{scenario.pageTitle}</h1>
         {isMobile ? (
           <details className="app-intro-details">
             <summary>このシミュレーターについて</summary>
-            <p>{INTRO_TEXT}</p>
+            <p>{scenario.introText}</p>
           </details>
         ) : (
-          <p>{INTRO_TEXT}</p>
+          <p>{scenario.introText}</p>
         )}
         <p className="tick-status">
           Tick: {simState.tick} {simState.finished ? "(終了)" : running ? "(実行中)" : "(一時停止)"}
@@ -246,6 +259,7 @@ function App() {
             onParamsChange={setParams}
             hasPendingResetChanges={hasPendingResetChanges}
             collapseSliders={isMobile}
+            presets={scenarioPresets}
           />
           <ExpressionDisplaySettings
             settings={expressionDisplaySettings}
@@ -308,4 +322,4 @@ function App() {
   );
 }
 
-export default App;
+export default SimulationApp;
