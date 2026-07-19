@@ -1,5 +1,10 @@
 import { buildSimulationSummary } from "../simulation/summary";
-import type { AgentState, ObserverJoinerRunSummary, SimulationState } from "../simulation/types";
+import type {
+  AgentState,
+  ObserverJoinerRunSummary,
+  SimulationFinishReason,
+  SimulationState,
+} from "../simulation/types";
 
 type Props = {
   state: SimulationState;
@@ -12,9 +17,25 @@ const AGENT_STATE_LABEL: Record<AgentState, string> = {
   joined: "参加済み",
   leaving: "離脱中",
   left: "離脱済み",
+  unassigned: "未割当",
 };
 
-const AGENT_STATE_ORDER: AgentState[] = ["undecided", "forming", "approaching", "joined", "leaving", "left"];
+const AGENT_STATE_ORDER: AgentState[] = [
+  "undecided",
+  "forming",
+  "approaching",
+  "joined",
+  "leaving",
+  "left",
+  "unassigned",
+];
+
+const FINISH_REASON_LABEL: Record<SimulationFinishReason, string> = {
+  allAssigned: "全員割当済み",
+  deadlineReached: "締切到達",
+  allSettled: "全員決着済み",
+  maxTicksReached: "最大tick到達",
+};
 
 const NOT_OCCURRED = "未発生";
 const NOT_JOINED = "未参加";
@@ -78,6 +99,10 @@ export function SimulationSummaryPanel({ state }: Props) {
           <span>終了tick</span>
           <span>{formatTick(summary.finishedTick, NOT_OCCURRED)}</span>
         </div>
+        <div className="simulation-summary-row">
+          <span>終了理由</span>
+          <span>{summary.finishReason ? FINISH_REASON_LABEL[summary.finishReason] : NOT_OCCURRED}</span>
+        </div>
       </section>
 
       <section className="simulation-summary-section">
@@ -90,12 +115,33 @@ export function SimulationSummaryPanel({ state }: Props) {
           <span>帰宅人数</span>
           <span>{summary.leftCount}</span>
         </div>
+        <div className="simulation-summary-row">
+          <span>未割当人数</span>
+          <span>{summary.unassignedCount}</span>
+        </div>
         {AGENT_STATE_ORDER.map((agentState) => (
           <div className="simulation-summary-row" key={agentState}>
             <span>{AGENT_STATE_LABEL[agentState]}</span>
             <span>{summary.stateCounts[agentState]}</span>
           </div>
         ))}
+        {summary.unassignedAgents.length > 0 && (
+          <div className="simulation-summary-card">
+            <div className="simulation-summary-row simulation-summary-row--header">
+              <span className="simulation-summary-label-name">未割当者一覧</span>
+              <span>{summary.unassignedAgents.map((agent) => agent.label).join(" / ")}</span>
+            </div>
+            {summary.unassignedAgents.map((agent) => (
+              <div className="simulation-summary-row" key={agent.agentId}>
+                <span>{agent.label}</span>
+                <span>
+                  確定前: {agent.previousState ? AGENT_STATE_LABEL[agent.previousState] : "不明"} / 再探索
+                  {agent.searchRestartCount}回
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="simulation-summary-section">

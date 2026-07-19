@@ -41,7 +41,9 @@ export type AgentState =
    */
   | "joined"
   | "leaving"
-  | "left";
+  | "left"
+  /** 学校シナリオの締切時点で、ペアへ割り当てられなかった終端状態 */
+  | "unassigned";
 
 export type Agent = {
   id: string;
@@ -100,6 +102,13 @@ export type Agent = {
  */
 export type ApproachFailureReason = "capacityFull" | "groupDissolved" | "groupExpired" | "groupMissing";
 
+/** `simulationFinished`イベントに保持する、シナリオ全体の終了理由 */
+export type SimulationFinishReason =
+  | "allAssigned"
+  | "deadlineReached"
+  | "allSettled"
+  | "maxTicksReached";
+
 /**
  * GroupCandidateのライフサイクル状態。
  * forming: 未確定の輪として形成中。
@@ -152,6 +161,8 @@ export type LogTag =
   | "groupLifecycle"
   | "simulation"
   | "intervention"
+  /** Issue #134: 学校シナリオの締切で未割当が確定したイベント */
+  | "unassigned"
   /** Issue #133: 接近先の無効化・参加失敗・再探索に関するイベント */
   | "joinFailure";
 
@@ -175,6 +186,8 @@ export type SimulationEventType =
   | "groupConfirmed"
   | "groupDissolved"
   | "groupExpired"
+  /** Issue #134: deadline到達時、ペア未成立のagentを未割当として確定した */
+  | "agentUnassigned"
   | "simulationFinished"
   /** Issue #133: 接近中の候補が満員/消滅/期限切れ等で無効化され、接近を中断した */
   | "approachTargetInvalidated"
@@ -203,6 +216,22 @@ export type SimulationEventMetadata = {
   remainingCapacity?: number;
   /** Issue #133: `approachTargetInvalidated`/`joinFailedCapacity`/`searchRestarted`用。無効化・失敗理由 */
   reason?: ApproachFailureReason;
+  /** Issue #134: `simulationFinished`用。全体が終了した理由 */
+  finishReason?: SimulationFinishReason;
+  /** Issue #134: `simulationFinished`時点で割当済み(`joined`)の人数 */
+  assignedCount?: number;
+  /** Issue #134: `simulationFinished`時点で未割当(`unassigned`)の人数 */
+  unassignedCount?: number;
+  /** Issue #134: `agentUnassigned`で未割当確定直前にいた探索状態 */
+  previousAgentState?: AgentState;
+  /** Issue #134: `agentUnassigned`時点までに再探索した回数 */
+  searchRestartCount?: number;
+  /** Issue #134: `agentUnassigned`時点までに満員を理由として参加失敗した回数 */
+  capacityFailureCount?: number;
+  /** Issue #134: `agentUnassigned`時点で最後に参加失敗した候補ID */
+  lastFailedCandidateId?: string;
+  /** Issue #134: `agentUnassigned`時点のstressスナップショット */
+  stress?: number;
 };
 
 export type LogEntry = {
@@ -542,6 +571,20 @@ export type ObserverJoinerRunSummary = {
   lateJoinSucceeded: boolean;
 };
 
+/** 学校シナリオで締切時に未割当となった一人分の終了サマリー */
+export type UnassignedAgentSummary = {
+  agentId: string;
+  label: string;
+  /** 未割当確定直前の探索状態(`undecided`/`forming`/`approaching`等) */
+  previousState?: AgentState;
+  /** 確定直前に形成・接近していた候補。該当しない場合はundefined */
+  targetGroupId?: string;
+  searchRestartCount: number;
+  capacityFailureCount: number;
+  lastFailedCandidateId?: string;
+  stress: number;
+};
+
 /**
  * シミュレーションの終了(または途中経過)サマリー。表示文言の文字列解析に依存せず、
  * `state.log`の構造化イベントと`state.agents`から導出する。`SimulationState`をmutationしない。
@@ -552,8 +595,13 @@ export type SimulationSummary = {
   finished: boolean;
   /** 終了tick。finished: falseの場合はundefined */
   finishedTick?: number;
+  /** 構造化`simulationFinished`イベントから取得した終了理由。実行中・旧stateではundefined */
+  finishReason?: SimulationFinishReason;
   joinedCount: number;
   leftCount: number;
+  unassignedCount: number;
+  /** 未割当者をagent順に保持する。実行中/二次会シナリオでは通常空配列 */
+  unassignedAgents: UnassignedAgentSummary[];
   stateCounts: Record<AgentState, number>;
   observerJoiners: ObserverJoinerRunSummary[];
   /** 最初に核(forming候補)が形成されたtick。一度も形成されていなければundefined */

@@ -25,6 +25,7 @@ const AGENT_STATE_LABEL: Record<AgentState, string> = {
   joined: "参加済み",
   leaving: "離脱中",
   left: "離脱済み",
+  unassigned: "未割当",
 };
 
 function formatRate(rate: number): string {

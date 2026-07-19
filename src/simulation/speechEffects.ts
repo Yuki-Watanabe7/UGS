@@ -272,6 +272,7 @@ const STATE_RELEVANCE: Record<AgentState, number> = {
   joined: 0.3,
   leaving: 0.5,
   left: 0,
+  unassigned: 0,
 };
 
 /** 名指し(target)された発言は、周囲向け(nearby)の発言より強く受け止められる */

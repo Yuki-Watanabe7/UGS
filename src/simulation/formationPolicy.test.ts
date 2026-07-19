@@ -205,16 +205,19 @@ describe("afterPartyPolicy.isFinished (責務5: 終了条件)", () => {
   it("is finished once every agent has settled (joined or left)", () => {
     const agents = [makeAgent({ id: "a", state: "joined" }), makeAgent({ id: "b", state: "left" })];
     expect(afterPartyPolicy.isFinished(agents, 10)).toBe(true);
+    expect(afterPartyPolicy.finishReason(agents, 10)).toBe("allSettled");
   });
 
   it("is not finished while any agent is still undecided/forming/approaching/leaving, before the tick cap", () => {
     const agents = [makeAgent({ id: "a", state: "undecided" })];
     expect(afterPartyPolicy.isFinished(agents, 10)).toBe(false);
+    expect(afterPartyPolicy.finishReason(agents, 10)).toBeUndefined();
   });
 
   it("force-finishes at the safety tick cap regardless of agent states", () => {
     const agents = [makeAgent({ id: "a", state: "undecided" })];
     expect(afterPartyPolicy.isFinished(agents, 400)).toBe(true);
+    expect(afterPartyPolicy.finishReason(agents, 400)).toBe("maxTicksReached");
   });
 });
 
@@ -353,16 +356,19 @@ describe("classroomPairPolicy (Issue #132, Phase 2)", () => {
     it("finishes once every agent is joined, even before the deadline tick", () => {
       const agents = [makeAgent({ id: "a", state: "joined" }), makeAgent({ id: "b", state: "joined" })];
       expect(classroomPolicy.isFinished(agents, 3)).toBe(true);
+      expect(classroomPolicy.finishReason(agents, 3)).toBe("allAssigned");
     });
 
     it("is not finished while any agent is unmatched, before the deadline tick", () => {
       const agents = [makeAgent({ id: "a", state: "joined" }), makeAgent({ id: "b", state: "undecided" })];
       expect(classroomPolicy.isFinished(agents, 3)).toBe(false);
+      expect(classroomPolicy.finishReason(agents, 3)).toBeUndefined();
     });
 
-    it("force-finishes at the configured deadline tick, leaving unmatched agents as-is", () => {
+    it("force-finishes at the configured deadline tick with deadlineReached", () => {
       const agents = [makeAgent({ id: "a", state: "joined" }), makeAgent({ id: "b", state: "undecided" })];
       expect(classroomPolicy.isFinished(agents, DEFAULT_CLASSROOM_PAIR_DEADLINE_TICK)).toBe(true);
+      expect(classroomPolicy.finishReason(agents, DEFAULT_CLASSROOM_PAIR_DEADLINE_TICK)).toBe("deadlineReached");
     });
 
     it("uses a caller-supplied formationDeadlineTick instead of the default", () => {
@@ -370,6 +376,7 @@ describe("classroomPairPolicy (Issue #132, Phase 2)", () => {
       const agents = [makeAgent({ id: "a", state: "undecided" })];
       expect(shortDeadlinePolicy.isFinished(agents, 4)).toBe(false);
       expect(shortDeadlinePolicy.isFinished(agents, 5)).toBe(true);
+      expect(shortDeadlinePolicy.finishReason(agents, 5)).toBe("deadlineReached");
     });
   });
 
