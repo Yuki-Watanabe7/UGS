@@ -473,10 +473,51 @@
   stroke-dasharray: 2 4;
 }
 
+.candidate-ring.classroom-waiting {
+  fill: rgba(59, 130, 246, 0.08);
+  stroke: #60a5fa;
+  stroke-dasharray: 4 3;
+}
+
+.candidate-ring.classroom-approaching {
+  fill: rgba(245, 158, 11, 0.1);
+  stroke: #fbbf24;
+  stroke-width: 2;
+  stroke-dasharray: 7 3;
+}
+
+.candidate-ring.classroom-full {
+  fill: rgba(34, 197, 94, 0.12);
+  stroke: #4ade80;
+  stroke-width: 2;
+  stroke-dasharray: none;
+}
+
+.candidate-ring.classroom-resolved {
+  fill: rgba(148, 163, 184, 0.05);
+  stroke: #94a3b8;
+  stroke-dasharray: 2 4;
+}
+
 .candidate-label {
   fill: #9ca3af;
   font-size: 11px;
   text-anchor: middle;
+}
+
+.candidate-capacity-label {
+  fill: #e2e8f0;
+  font-size: 10px;
+  font-weight: 600;
+  text-anchor: middle;
+}
+
+.approach-link {
+  stroke: #fbbf24;
+  stroke-width: 2;
+  stroke-dasharray: 5 4;
+  opacity: 0.85;
+  pointer-events: none;
 }
 
 .agent-dot {
@@ -489,10 +530,102 @@
   stroke-width: 3;
 }
 
+.agent-dot.searching-again {
+  stroke: #fef08a;
+  stroke-width: 2.5;
+}
+
+.agent-dot.unassigned {
+  stroke: #f9a8d4;
+  stroke-width: 3;
+}
+
 .agent-label {
   fill: #cbd5e1;
   font-size: 10px;
   text-anchor: middle;
+}
+
+.agent-status-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-anchor: middle;
+}
+
+.agent-status-label.searching-again {
+  fill: #fde047;
+}
+
+.agent-status-label.unassigned {
+  fill: #f9a8d4;
+}
+
+.canvas-pair-status {
+  padding: 8px 4px 2px;
+  border-top: 1px solid #232634;
+}
+
+.canvas-pair-status h3 {
+  margin: 0 0 8px;
+  color: #cbd5e1;
+  font-size: 12px;
+}
+
+.canvas-pair-status-empty {
+  margin: 0;
+  color: #8b93a5;
+  font-size: 12px;
+}
+
+.canvas-pair-status-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.canvas-pair-status-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid #3b4252;
+  border-left-width: 3px;
+  border-radius: 7px;
+  color: #cbd5e1;
+  font-size: 11px;
+}
+
+.canvas-pair-status-item.waiting {
+  border-left-color: #60a5fa;
+}
+
+.canvas-pair-status-item.approaching {
+  border-left-color: #fbbf24;
+}
+
+.canvas-pair-status-item.full {
+  border-left-color: #4ade80;
+}
+
+.canvas-pair-status-item.resolved {
+  border-left-color: #94a3b8;
+  opacity: 0.65;
+}
+
+.canvas-pair-status-id {
+  overflow: hidden;
+  color: #8b93a5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-pair-status-approachers {
+  grid-column: 1 / -1;
+  color: #fde68a;
 }
 
 /* 心の声吹き出し。他エージェント/本人には認知されない観察者向けの演出のため、
@@ -676,6 +809,37 @@
 .observer-inspector-card--warning {
   border-color: #7c2d12;
   background: #2a1608;
+}
+
+.classroom-agent-inspector-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.classroom-agent-inspector-card {
+  min-width: 0;
+}
+
+.classroom-agent-inspector-card.assignment-searchingAgain {
+  border-color: #a16207;
+  background: rgba(161, 98, 7, 0.1);
+}
+
+.classroom-agent-inspector-card.assignment-unassigned {
+  border-color: #be185d;
+  background: rgba(190, 24, 93, 0.1);
+}
+
+.classroom-agent-inspector-card .observer-inspector-row > :last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.classroom-agent-inspector-last-failure {
+  padding-top: 4px;
+  border-top: 1px solid #2e303a;
 }
 
 .observer-inspector-row {
@@ -1042,6 +1206,11 @@
     height: auto;
     max-height: 60vh;
     max-height: 60dvh;
+  }
+
+  .canvas-pair-status-list,
+  .classroom-agent-inspector-grid {
+    grid-template-columns: 1fr;
   }
 
   /* タッチ操作性: ボタンとフォーム部品を指で押しやすいサイズにする */

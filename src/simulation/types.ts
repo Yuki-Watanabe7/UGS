@@ -419,6 +419,17 @@ export type ObserverActiveEffectStatus = {
   remainingTicks: number;
 };
 
+/** Issue #135: Inspector/Canvasで表示する、ペア形成上の現在の割当状態 */
+export type AgentAssignmentStatus =
+  | "searching"
+  | "waitingForPartner"
+  | "approaching"
+  | "searchingAgain"
+  | "assigned"
+  | "unassigned"
+  | "leaving"
+  | "left";
+
 /**
  * observerJoinerに関わる発言1件(`ObserverSpeechHistoryEntry`と`speechEventId`で対応する)について、
  * 認知(`SpeechReceptionEvent`)→解釈(`SpeechInterpretationEvent`)→効果(`SpeechEffectEvent`)→
@@ -497,6 +508,17 @@ export type ObserverJoinerInspection = {
   searchRestartCount: number;
   /** Issue #133: そのうち満員(容量起因)が理由だった回数の累計(`Agent.capacityFailureCount`、未発生なら0) */
   capacityFailureCount: number;
+  /** Issue #135: AgentStateと再探索履歴から導出した、ペア形成上の現在の割当状態 */
+  assignmentStatus: AgentAssignmentStatus;
+  /** Issue #135: approaching中の場合に限る、現在の接近先候補ID */
+  approachTargetGroupId?: string;
+  /** Issue #135: joined/forming/approachingの場合に所属・対象となっている候補ID */
+  currentGroupId?: string;
+  /** Issue #135: `approachTargetInvalidated`/`joinFailedCapacity`の発生回数 */
+  joinFailureCount: number;
+  /** Issue #135: 最新の参加失敗理由と発生tick。未発生ならundefined */
+  lastFailureReason?: ApproachFailureReason;
+  lastFailureTick?: number;
 };
 
 /**

@@ -83,6 +83,7 @@ function ObserverJoinerSummaryCard({ summary }: { summary: ObserverJoinerRunSumm
 
 export function SimulationSummaryPanel({ state }: Props) {
   const summary = buildSimulationSummary(state);
+  const isClassroomPair = state.formationScenarioId === "classroomPair";
 
   return (
     <div className="panel simulation-summary">
@@ -156,7 +157,7 @@ export function SimulationSummaryPanel({ state }: Props) {
       </section>
 
       <section className="simulation-summary-section">
-        <h3>グループ形成サマリー</h3>
+        <h3>{isClassroomPair ? "ペア形成サマリー" : "グループ形成サマリー"}</h3>
         <div className="simulation-summary-row">
           <span>最初の核形成tick</span>
           <span>{formatTick(summary.firstNucleusTick, NOT_OCCURRED)}</span>
@@ -166,7 +167,7 @@ export function SimulationSummaryPanel({ state }: Props) {
           <span>{formatTick(summary.firstGroupConfirmedTick, NOT_OCCURRED)}</span>
         </div>
         <div className="simulation-summary-row">
-          <span>成立グループ数</span>
+          <span>{isClassroomPair ? "成立ペア数" : "成立グループ数"}</span>
           <span>{summary.confirmedGroupCount}</span>
         </div>
         <div className="simulation-summary-row">

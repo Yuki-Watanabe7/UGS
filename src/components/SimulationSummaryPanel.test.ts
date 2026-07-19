@@ -109,7 +109,13 @@ describe("SimulationSummaryPanel", () => {
         metadata: { assignedCount: 18, unassignedCount: 1, finishReason: "deadlineReached" },
       },
     ];
-    const state = makeState({ agents: [unassigned], log, tick: 20, finished: true });
+    const state = makeState({
+      formationScenarioId: "classroomPair",
+      agents: [unassigned],
+      log,
+      tick: 20,
+      finished: true,
+    });
 
     const html = renderToStaticMarkup(createElement(SimulationSummaryPanel, { state }));
 
@@ -117,5 +123,17 @@ describe("SimulationSummaryPanel", () => {
     expect(html).toContain("未割当者一覧");
     expect(html).toContain("確定前: 接近中");
     expect(html).toContain("再探索2回");
+    expect(html).toContain("ペア形成サマリー");
+    expect(html).toContain("成立ペア数");
+    expect(html).not.toContain("成立グループ数");
+  });
+
+  it("keeps the after-party group wording", () => {
+    const html = renderToStaticMarkup(
+      createElement(SimulationSummaryPanel, { state: makeState({ formationScenarioId: "afterParty" }) }),
+    );
+
+    expect(html).toContain("グループ形成サマリー");
+    expect(html).toContain("成立グループ数");
   });
 });

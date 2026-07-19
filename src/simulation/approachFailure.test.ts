@@ -329,5 +329,11 @@ describe("stepSimulation: classroomPairシナリオでの最後の1枠競合 (Is
     // classroomPairではcanLeaveが常にfalseなので、失敗した側もleaving/leftにはならない
     expect(a.state === "leaving" || a.state === "left").toBe(false);
     expect(b.state === "leaving" || b.state === "left").toBe(false);
+    expect(next.log.find((entry) => entry.eventType === "joinFailedCapacity")?.message).toContain(
+      "ペア候補 pair-1",
+    );
+    expect(next.log.find((entry) => entry.eventType === "groupConfirmed")?.message).toContain(
+      "ペア候補 pair-1",
+    );
   });
 });

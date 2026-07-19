@@ -292,6 +292,7 @@ function App() {
             groupCandidates={simState.groupCandidates}
             width={simState.width}
             height={simState.height}
+            formationScenarioId={simState.formationScenarioId}
             thoughts={visibleThoughts}
             speeches={visibleSpeeches}
           />

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { SimulationCanvas } from "./SimulationCanvas";
-import type { Agent } from "../simulation/types";
+import type { Agent, GroupCandidate } from "../simulation/types";
 
 function makeAgent(overrides: Partial<Agent>): Agent {
   return {
@@ -191,5 +191,110 @@ describe("SimulationCanvas responsive rendering", () => {
       }),
     );
     expect(html).toContain('width="100%"');
+  });
+});
+
+describe("SimulationCanvas classroom pair progress", () => {
+  const candidate = (overrides: Partial<GroupCandidate> = {}): GroupCandidate => ({
+    id: "pair-candidate-a",
+    x: 300,
+    y: 220,
+    memberIds: ["founder"],
+    status: "forming",
+    age: 1,
+    minGroupSize: 2,
+    maxGroupSize: 2,
+    ...overrides,
+  });
+  const baseProps = { formationScenarioId: "classroomPair" as const, width: 800, height: 520 };
+
+  it("shows a one-person candidate as waiting with its current/max count and open slot", () => {
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        ...baseProps,
+        agents: [makeAgent({ id: "founder", state: "forming" })],
+        groupCandidates: [candidate()],
+      }),
+    );
+
+    expect(html).toContain('data-candidate-state="waiting"');
+    expect(html).toContain("相手待ち");
+    expect(html).toContain("1/2・空き1");
+  });
+
+  it("shows an approaching agent, the target mapping line, and the approacher name", () => {
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        ...baseProps,
+        agents: [
+          makeAgent({ id: "founder", state: "forming" }),
+          makeAgent({ id: "joiner", label: "参加者B", state: "approaching", joinedGroupId: "pair-candidate-a" }),
+        ],
+        groupCandidates: [candidate()],
+      }),
+    );
+
+    expect(html).toContain('data-candidate-state="approaching"');
+    expect(html).toContain("接近者あり");
+    expect(html).toContain("approach-link");
+    expect(html).toContain("参加者Bからペア候補 pair-candidate-a への接近");
+    expect(html).toContain("接近: 参加者B");
+  });
+
+  it("distinguishes full and resolved candidates", () => {
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        ...baseProps,
+        agents: [],
+        groupCandidates: [
+          candidate({ id: "full-pair", status: "confirmed", memberIds: ["a", "b"] }),
+          candidate({ id: "expired-pair", status: "expired" }),
+        ],
+      }),
+    );
+
+    expect(html).toContain('data-candidate-state="full"');
+    expect(html).toContain("ペア確定・満員");
+    expect(html).toContain("2/2・空き0");
+    expect(html).toContain('data-candidate-state="resolved"');
+    expect(html).toContain("解消済み");
+  });
+
+  it("visually labels searching-again and unassigned agents", () => {
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        ...baseProps,
+        agents: [
+          makeAgent({ id: "retry", state: "undecided", searchRestartCount: 1 }),
+          makeAgent({ id: "unassigned", state: "unassigned" }),
+        ],
+        groupCandidates: [],
+      }),
+    );
+
+    expect(html).toContain('data-agent-state="searching-again"');
+    expect(html).toContain("再探索");
+    expect(html).toContain('data-agent-state="unassigned"');
+    expect(html).toContain("未割当");
+  });
+
+  it("keeps the after-party candidate display unchanged when the classroom scenario is not selected", () => {
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        width: 800,
+        height: 520,
+        agents: [
+          makeAgent({ id: "founder", state: "forming" }),
+          makeAgent({ id: "after-party-retry", state: "undecided", searchRestartCount: 1 }),
+        ],
+        groupCandidates: [candidate()],
+      }),
+    );
+
+    expect(html).toContain("形成中の輪 (1)");
+    expect(html).not.toContain("canvas-pair-status");
+    expect(html).not.toContain("相手待ち");
+    expect(html).not.toContain('data-agent-state="searching-again"');
+    expect(html).not.toContain("再探索");
   });
 });

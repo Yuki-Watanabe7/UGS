@@ -117,6 +117,13 @@ describe("EventLog", () => {
     expect(html).toContain("発言効果のみ");
   });
 
+  it("offers classroom join-failure and unassigned filters", () => {
+    const html = render(makeState({}));
+
+    expect(html).toContain("参加失敗・再探索のみ");
+    expect(html).toContain("未割当確定のみ");
+  });
+
   it("renders speechInterpretationLog entries with a speech-effect class, distinct from speech rows", () => {
     const observer = makeAgent({ id: "observer", label: "Observer" });
     const html = render(

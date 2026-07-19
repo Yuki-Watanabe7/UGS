@@ -11,6 +11,8 @@ type FilterKey =
   | "observerJoiner"
   | "nucleus"
   | "groupConfirmed"
+  | "joinFailure"
+  | "unassigned"
   | "leave"
   | "speech"
   | "speechEffect"
@@ -23,6 +25,8 @@ const FILTERS: Array<{ key: FilterKey; label: string; tag?: LogTag }> = [
   { key: "observerJoiner", label: "observerJoinerのみ", tag: "observerJoiner" },
   { key: "nucleus", label: "核形成イベントのみ", tag: "nucleus" },
   { key: "groupConfirmed", label: "グループ成立イベントのみ", tag: "groupConfirmed" },
+  { key: "joinFailure", label: "参加失敗・再探索のみ", tag: "joinFailure" },
+  { key: "unassigned", label: "未割当確定のみ", tag: "unassigned" },
   { key: "leave", label: "離脱イベントのみ", tag: "leave" },
   { key: "speech", label: "発言のみ" },
   { key: "speechEffect", label: "発言効果のみ" },

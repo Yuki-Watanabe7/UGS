@@ -1,6 +1,8 @@
-import { buildObserverJoinerInspection } from "../simulation/inspection";
+import { buildAgentInspection, buildObserverJoinerInspection } from "../simulation/inspection";
 import type {
+  AgentAssignmentStatus,
   AgentState,
+  ApproachFailureReason,
   GroupCandidateStatus,
   ObserverJoinerInspection,
   ObserverSocialExpressionSnapshot,
@@ -43,6 +45,24 @@ const AGENT_STATE_LABEL: Record<AgentState, string> = {
   leaving: "離脱中",
   left: "離脱済み",
   unassigned: "未割当",
+};
+
+const ASSIGNMENT_STATUS_LABEL: Record<AgentAssignmentStatus, string> = {
+  searching: "探索中",
+  waitingForPartner: "相手待ち",
+  approaching: "接近中",
+  searchingAgain: "再探索中",
+  assigned: "割当済み",
+  unassigned: "未割当確定",
+  leaving: "離脱中",
+  left: "離脱済み",
+};
+
+const APPROACH_FAILURE_REASON_LABEL: Record<ApproachFailureReason, string> = {
+  capacityFull: "満員",
+  groupDissolved: "候補が解散",
+  groupExpired: "候補が期限切れ",
+  groupMissing: "候補が消失",
 };
 
 const GROUP_STATUS_LABEL: Record<GroupCandidateStatus, string> = {
@@ -507,15 +527,69 @@ function InspectionCard({
   );
 }
 
+/** Issue #135: 学校ペア形成では全員分を一覧できるよう、割当履歴に絞ったcompact cardを使う */
+function ClassroomInspectionCard({ inspection }: { inspection: ObserverJoinerInspection }) {
+  return (
+    <div
+      className={`observer-inspector-card classroom-agent-inspector-card assignment-${inspection.assignmentStatus}`}
+      data-assignment-status={inspection.assignmentStatus}
+    >
+      <div className="observer-inspector-row observer-inspector-row--header">
+        <span className="observer-inspector-label-name">{inspection.label}</span>
+        <span className="observer-inspector-state">{AGENT_STATE_LABEL[inspection.state]}</span>
+      </div>
+      <div className="observer-inspector-row">
+        <span>割当状況</span>
+        <strong>{ASSIGNMENT_STATUS_LABEL[inspection.assignmentStatus]}</strong>
+      </div>
+      <div className="observer-inspector-row">
+        <span>接近先</span>
+        <span title={inspection.approachTargetGroupId}>{inspection.approachTargetGroupId ?? "なし"}</span>
+      </div>
+      <div className="observer-inspector-row">
+        <span>現在のペア候補</span>
+        <span title={inspection.currentGroupId}>{inspection.currentGroupId ?? "なし"}</span>
+      </div>
+      <div className="observer-inspector-row">
+        <span>参加失敗</span>
+        <span>{inspection.joinFailureCount}回</span>
+      </div>
+      <div className="observer-inspector-row">
+        <span>再探索</span>
+        <span>{inspection.searchRestartCount}回</span>
+      </div>
+      <div className="observer-inspector-row classroom-agent-inspector-last-failure">
+        <span>直近の失敗理由</span>
+        <span>
+          {inspection.lastFailureReason
+            ? `${APPROACH_FAILURE_REASON_LABEL[inspection.lastFailureReason]}（tick ${inspection.lastFailureTick}）`
+            : "なし"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function ObserverJoinerInspector({ state, params }: Props) {
-  const inspections = buildObserverJoinerInspection(state, params);
+  const isClassroomPair = state.formationScenarioId === "classroomPair";
+  const inspections = isClassroomPair
+    ? buildAgentInspection(state, params)
+    : buildObserverJoinerInspection(state, params);
   const labelById = buildAgentLabelMap(state.agents);
 
   return (
-    <div className="panel observer-inspector">
-      <h2>observerJoinerインスペクター</h2>
+    <div className={`panel observer-inspector${isClassroomPair ? " classroom-agent-inspector" : ""}`}>
+      <h2>{isClassroomPair ? "エージェントインスペクター" : "observerJoinerインスペクター"}</h2>
       {inspections.length === 0 ? (
-        <p className="observer-inspector-empty">observerJoinerがいません。</p>
+        <p className="observer-inspector-empty">
+          {isClassroomPair ? "エージェントがいません。" : "observerJoinerがいません。"}
+        </p>
+      ) : isClassroomPair ? (
+        <div className="classroom-agent-inspector-grid">
+          {inspections.map((inspection) => (
+            <ClassroomInspectionCard key={inspection.agentId} inspection={inspection} />
+          ))}
+        </div>
       ) : (
         inspections.map((inspection) => (
           <InspectionCard key={inspection.agentId} inspection={inspection} labelById={labelById} />
