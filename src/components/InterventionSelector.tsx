@@ -4,6 +4,7 @@ import { getInterventionById, INTERVENTION_SCENARIOS } from "../simulation/inter
 type Props = {
   interventionId: InterventionScenarioId;
   onInterventionChange: (interventionId: InterventionScenarioId) => void;
+  availableInterventionIds?: readonly InterventionScenarioId[];
 };
 
 const CATEGORY_LABEL: Record<InterventionCategory, string> = {
@@ -25,8 +26,15 @@ const LIKELY_METRICS: Record<InterventionScenarioId, string> = {
   "anonymous-low-pressure-intent": "observerJoiner参加率 / 平均グループ成立tick",
 };
 
-export function InterventionSelector({ interventionId, onInterventionChange }: Props) {
+export function InterventionSelector({
+  interventionId,
+  onInterventionChange,
+  availableInterventionIds = INTERVENTION_SCENARIOS.map((candidate) => candidate.id),
+}: Props) {
   const scenario = getInterventionById(interventionId);
+  const availableScenarios = INTERVENTION_SCENARIOS.filter((candidate) =>
+    availableInterventionIds.includes(candidate.id),
+  );
 
   return (
     <div className="panel intervention-selector">
@@ -37,7 +45,7 @@ export function InterventionSelector({ interventionId, onInterventionChange }: P
           value={interventionId}
           onChange={(e) => onInterventionChange(e.target.value as InterventionScenarioId)}
         >
-          {INTERVENTION_SCENARIOS.map((s) => (
+          {availableScenarios.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
             </option>

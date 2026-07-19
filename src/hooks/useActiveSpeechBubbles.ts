@@ -10,6 +10,7 @@ import { buildAgentLabelMap } from "../components/speechDisplay";
 import { formatSpeechBubbleText } from "../components/speechBubbleFormat";
 import { resolveDivergentExpression } from "../simulation/divergenceTemplates";
 import type { SpeechBubbleDisplay } from "../components/SimulationCanvas";
+import type { FormationScenarioId } from "../simulation/formationPolicy";
 
 /**
  * `SimulationState.speechLog`の変化からSpeechEvent候補を取り出し、寿命・競合・混雑制御
@@ -35,6 +36,7 @@ export type UseActiveSpeechBubblesOptions = {
    */
   seed?: number;
   presetId?: string;
+  scenarioId?: FormationScenarioId;
 };
 
 export type SpeechBubbleDisplayDriverState = {
@@ -61,7 +63,7 @@ export function advanceSpeechBubbleDisplay(
   resetKey: unknown,
   options: UseActiveSpeechBubblesOptions = {},
 ): SpeechBubbleDisplayDriverState {
-  const { enabled = true, maxConcurrent, seed, presetId } = options;
+  const { enabled = true, maxConcurrent, seed, presetId, scenarioId } = options;
 
   if (driver.resetKey !== resetKey) {
     return createSpeechBubbleDisplayDriverState(simState, resetKey);
@@ -96,9 +98,21 @@ export function advanceSpeechBubbleDisplay(
             presetId,
             seed,
             tick: event.tick,
+            scenarioId,
           })?.thought
         : undefined;
-    return toSpeechBubbleCandidate(event, formatSpeechBubbleText(event, labelById), isObserverJoiner, innerThought);
+    return toSpeechBubbleCandidate(
+      event,
+      formatSpeechBubbleText(
+        event,
+        labelById,
+        agent && seed !== undefined && presetId !== undefined
+          ? { agent, seed, presetId, scenarioId }
+          : undefined,
+      ),
+      isObserverJoiner,
+      innerThought,
+    );
   });
 
   const bubbles = applySpeechBubbleEvents(driver.bubbles, candidates, simState.tick, { maxConcurrent });
@@ -118,7 +132,7 @@ export function useActiveSpeechBubbles(
   resetKey: unknown,
   options: UseActiveSpeechBubblesOptions = {},
 ): SpeechBubbleDisplay[] {
-  const { enabled, maxConcurrent, seed, presetId } = options;
+  const { enabled, maxConcurrent, seed, presetId, scenarioId } = options;
   const driverRef = useRef<SpeechBubbleDisplayDriverState>(
     createSpeechBubbleDisplayDriverState(simState, resetKey),
   );
@@ -130,12 +144,13 @@ export function useActiveSpeechBubbles(
       maxConcurrent,
       seed,
       presetId,
+      scenarioId,
     });
     if (next !== driverRef.current) {
       driverRef.current = next;
       setDisplayed(next.displayed);
     }
-  }, [simState, resetKey, enabled, maxConcurrent, seed, presetId]);
+  }, [simState, resetKey, enabled, maxConcurrent, seed, presetId, scenarioId]);
 
   return displayed;
 }

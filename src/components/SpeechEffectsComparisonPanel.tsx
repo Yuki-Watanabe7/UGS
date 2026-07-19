@@ -10,6 +10,11 @@ import {
   isSameSpeechEffectsComparisonCondition,
   type SpeechEffectsComparisonConditionSnapshot,
 } from "./speechEffectsComparisonPanelHelpers";
+import type { FormationRuntimeOptions } from "../simulation/formationPolicy";
+import {
+  AFTER_PARTY_PRESENTATION,
+  type ScenarioPresentation,
+} from "../presentation/scenarioPresentation";
 
 type Props = {
   presetId: string;
@@ -18,16 +23,11 @@ type Props = {
   interventionId: InterventionScenarioId;
   singleSimRunning: boolean;
   onBeforeRun: () => void;
+  formation?: FormationRuntimeOptions;
+  presentation?: ScenarioPresentation;
 };
 
 const DEFAULT_RUN_COUNT = 30;
-
-const DIMENSION_LABEL: Record<SpeechEffectDimension, string> = {
-  stress: "ストレス(greet)",
-  attractiveness: "魅力度(welcome)",
-  approachProbability: "接近確率(invite)",
-  leaveThreshold: "離脱しきい値(decline)",
-};
 
 const DIMENSIONS: SpeechEffectDimension[] = ["approachProbability", "attractiveness", "stress", "leaveThreshold"];
 
@@ -89,6 +89,8 @@ export function SpeechEffectsComparisonPanel({
   interventionId,
   singleSimRunning,
   onBeforeRun,
+  formation,
+  presentation = AFTER_PARTY_PRESENTATION,
 }: Props) {
   const [runCountInput, setRunCountInput] = useState(String(DEFAULT_RUN_COUNT));
   const [result, setResult] = useState<SpeechEffectsComparisonResult | null>(null);
@@ -121,6 +123,7 @@ export function SpeechEffectsComparisonPanel({
       runs: runCount,
       params,
       intervention: { interventionId },
+      formation,
     });
     setResult(comparison);
     setResultCondition(currentCondition);
@@ -133,7 +136,9 @@ export function SpeechEffectsComparisonPanel({
     <div className="panel monte-carlo-panel speech-effects-comparison-panel">
       <h2>発言効果ON/OFFの比較</h2>
       <p className="monte-carlo-note">
-        現在のプリセット・パラメータ・介入({getInterventionById(interventionId).name})・baseSeedを固定したまま、
+        現在のプリセット・パラメータ
+        {presentation.showInterventionControls ? `・介入(${getInterventionById(interventionId).name})` : ""}
+        ・baseSeedを固定したまま、
         Phase 3発言効果(発言の認知・解釈・状態への補正)だけをOFF/ONで切り替えて、同じseed列で比較します。
       </p>
 
@@ -168,7 +173,8 @@ export function SpeechEffectsComparisonPanel({
       ) : (
         <>
           <p className="monte-carlo-condition">
-            条件: {resultPresetName} / 介入: {resultInterventionName} / baseSeed {result.off.config.baseSeed}〜
+            条件: {resultPresetName}
+            {presentation.showInterventionControls ? ` / 介入: ${resultInterventionName}` : ""} / baseSeed {result.off.config.baseSeed}〜
             {result.off.config.baseSeed + resultRuns - 1} ({resultRuns}回)
           </p>
           {isStale && (
@@ -183,47 +189,53 @@ export function SpeechEffectsComparisonPanel({
               <span>差分</span>
             </div>
             <MetricRow
-              label="observerJoiner参加率"
+              label={presentation.monteCarlo.observerJoinRate}
               off={formatRate(result.metrics.observerJoinerJoinRate.baseline)}
               on={formatRate(result.metrics.observerJoinerJoinRate.intervention)}
               delta={formatRateDelta(result.metrics.observerJoinerJoinRate.delta)}
             />
+            {presentation.monteCarlo.showLeaveMetrics && (
+              <MetricRow
+                label={presentation.monteCarlo.observerLeaveRate}
+                off={formatRate(result.metrics.observerJoinerLeaveRate.baseline)}
+                on={formatRate(result.metrics.observerJoinerLeaveRate.intervention)}
+                delta={formatRateDelta(result.metrics.observerJoinerLeaveRate.delta)}
+              />
+            )}
             <MetricRow
-              label="observerJoiner離脱率"
-              off={formatRate(result.metrics.observerJoinerLeaveRate.baseline)}
-              on={formatRate(result.metrics.observerJoinerLeaveRate.intervention)}
-              delta={formatRateDelta(result.metrics.observerJoinerLeaveRate.delta)}
-            />
-            <MetricRow
-              label="グループ不成立率"
+              label={presentation.monteCarlo.groupFailureRate}
               off={formatRate(result.metrics.groupFailureRate.baseline)}
               on={formatRate(result.metrics.groupFailureRate.intervention)}
               delta={formatRateDelta(result.metrics.groupFailureRate.delta)}
             />
             <MetricRow
-              label="平均グループ成立tick"
+              label={presentation.monteCarlo.averageFirstConfirmedTick}
               off={formatOptionalTick(result.metrics.averageFirstGroupConfirmedTick.baseline)}
               on={formatOptionalTick(result.metrics.averageFirstGroupConfirmedTick.intervention)}
               delta={formatOptionalTickDelta(result.metrics.averageFirstGroupConfirmedTick.delta)}
             />
+            {presentation.monteCarlo.showLateJoinMetric && (
+              <MetricRow
+                label={presentation.monteCarlo.lateJoinSuccessRate}
+                off={formatRate(result.metrics.lateJoinSuccessRate.baseline)}
+                on={formatRate(result.metrics.lateJoinSuccessRate.intervention)}
+                delta={formatRateDelta(result.metrics.lateJoinSuccessRate.delta)}
+              />
+            )}
             <MetricRow
-              label="後乗り成功率"
-              off={formatRate(result.metrics.lateJoinSuccessRate.baseline)}
-              on={formatRate(result.metrics.lateJoinSuccessRate.intervention)}
-              delta={formatRateDelta(result.metrics.lateJoinSuccessRate.delta)}
-            />
-            <MetricRow
-              label="平均参加人数"
+              label={presentation.monteCarlo.averageJoinedCount}
               off={formatCount(result.metrics.averageJoinedCount.baseline)}
               on={formatCount(result.metrics.averageJoinedCount.intervention)}
               delta={formatCountDelta(result.metrics.averageJoinedCount.delta)}
             />
-            <MetricRow
-              label="平均帰宅人数"
-              off={formatCount(result.metrics.averageLeftCount.baseline)}
-              on={formatCount(result.metrics.averageLeftCount.intervention)}
-              delta={formatCountDelta(result.metrics.averageLeftCount.delta)}
-            />
+            {presentation.monteCarlo.showLeaveMetrics && (
+              <MetricRow
+                label={presentation.monteCarlo.averageLeftCount}
+                off={formatCount(result.metrics.averageLeftCount.baseline)}
+                on={formatCount(result.metrics.averageLeftCount.intervention)}
+                delta={formatCountDelta(result.metrics.averageLeftCount.delta)}
+              />
+            )}
           </section>
 
           <section className="intervention-comparison-summary speech-effects-phase3-summary">
@@ -255,7 +267,7 @@ export function SpeechEffectsComparisonPanel({
             {DIMENSIONS.map((dimension) => (
               <MetricRow
                 key={dimension}
-                label={`平均累積補正: ${DIMENSION_LABEL[dimension]}`}
+                label={`平均累積補正: ${presentation.speechEffects[dimension]}`}
                 off={formatCorrection(result.phase3Metrics.dimensionTotals[dimension].baseline)}
                 on={formatCorrection(result.phase3Metrics.dimensionTotals[dimension].intervention)}
                 delta={formatCorrectionDelta(result.phase3Metrics.dimensionTotals[dimension].delta)}

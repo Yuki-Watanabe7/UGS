@@ -3,9 +3,14 @@ import { runMonteCarlo } from "../simulation/monteCarlo";
 import { getPresetById } from "../simulation/presets";
 import { getInterventionById } from "../simulation/interventions";
 import type { InterventionScenarioId } from "../simulation/interventions";
-import type { AgentState, MonteCarloResult, ObserverJoinerRunSummary, SimParams } from "../simulation/types";
+import type { MonteCarloResult, ObserverJoinerRunSummary, SimParams } from "../simulation/types";
 import { isSameCondition, isValidRunCount, MAX_RUNS, MIN_RUNS } from "./monteCarloPanelHelpers";
 import type { RunConditionSnapshot } from "./monteCarloPanelHelpers";
+import type { FormationRuntimeOptions } from "../simulation/formationPolicy";
+import {
+  AFTER_PARTY_PRESENTATION,
+  type ScenarioPresentation,
+} from "../presentation/scenarioPresentation";
 
 type Props = {
   presetId: string;
@@ -14,19 +19,11 @@ type Props = {
   interventionId: InterventionScenarioId;
   singleSimRunning: boolean;
   onBeforeRun: () => void;
+  formation?: FormationRuntimeOptions;
+  presentation?: ScenarioPresentation;
 };
 
 const DEFAULT_RUN_COUNT = 30;
-
-const AGENT_STATE_LABEL: Record<AgentState, string> = {
-  undecided: "未定",
-  forming: "輪を形成中",
-  approaching: "接近中",
-  joined: "参加済み",
-  leaving: "離脱中",
-  left: "離脱済み",
-  unassigned: "未割当",
-};
 
 function formatRate(rate: number): string {
   return `${(rate * 100).toFixed(1)}%`;
@@ -52,7 +49,16 @@ function summarizeObservers(
   return observers.map(render).join(" / ");
 }
 
-export function MonteCarloPanel({ presetId, params, seed, interventionId, singleSimRunning, onBeforeRun }: Props) {
+export function MonteCarloPanel({
+  presetId,
+  params,
+  seed,
+  interventionId,
+  singleSimRunning,
+  onBeforeRun,
+  formation,
+  presentation = AFTER_PARTY_PRESENTATION,
+}: Props) {
   const [runCountInput, setRunCountInput] = useState(String(DEFAULT_RUN_COUNT));
   const [result, setResult] = useState<MonteCarloResult | null>(null);
   const [resultCondition, setResultCondition] = useState<RunConditionSnapshot | null>(null);
@@ -73,6 +79,7 @@ export function MonteCarloPanel({ presetId, params, seed, interventionId, single
       runs: runCount,
       params,
       intervention: { interventionId },
+      formation,
     });
     setResult(monteCarloResult);
     setResultCondition(currentCondition);
@@ -117,7 +124,8 @@ export function MonteCarloPanel({ presetId, params, seed, interventionId, single
       ) : (
         <>
           <p className="monte-carlo-condition">
-            条件: {resultPresetName} / 介入: {resultInterventionName} / baseSeed {result.config.baseSeed}〜
+            条件: {resultPresetName}
+            {presentation.showInterventionControls ? ` / 介入: ${resultInterventionName}` : ""} / baseSeed {result.config.baseSeed}〜
             {result.config.baseSeed + result.config.runs - 1} ({result.config.runs}回)
           </p>
           {isStale && (
@@ -128,33 +136,39 @@ export function MonteCarloPanel({ presetId, params, seed, interventionId, single
 
           <section className="monte-carlo-summary">
             <div className="monte-carlo-summary-row">
-              <span>observerJoiner参加率</span>
+              <span>{presentation.monteCarlo.observerJoinRate}</span>
               <span>{formatRate(result.summary.observerJoinerJoinRate)}</span>
             </div>
+            {presentation.monteCarlo.showLeaveMetrics && (
+              <div className="monte-carlo-summary-row">
+                <span>{presentation.monteCarlo.observerLeaveRate}</span>
+                <span>{formatRate(result.summary.observerJoinerLeaveRate)}</span>
+              </div>
+            )}
             <div className="monte-carlo-summary-row">
-              <span>observerJoiner離脱率</span>
-              <span>{formatRate(result.summary.observerJoinerLeaveRate)}</span>
-            </div>
-            <div className="monte-carlo-summary-row">
-              <span>グループ不成立率</span>
+              <span>{presentation.monteCarlo.groupFailureRate}</span>
               <span>{formatRate(result.summary.groupFailureRate)}</span>
             </div>
             <div className="monte-carlo-summary-row">
-              <span>平均グループ成立tick</span>
+              <span>{presentation.monteCarlo.averageFirstConfirmedTick}</span>
               <span>{formatOptionalTick(result.summary.averageFirstGroupConfirmedTick)}</span>
             </div>
+            {presentation.monteCarlo.showLateJoinMetric && (
+              <div className="monte-carlo-summary-row">
+                <span>{presentation.monteCarlo.lateJoinSuccessRate}</span>
+                <span>{formatRate(result.summary.lateJoinSuccessRate)}</span>
+              </div>
+            )}
             <div className="monte-carlo-summary-row">
-              <span>後乗り成功率</span>
-              <span>{formatRate(result.summary.lateJoinSuccessRate)}</span>
-            </div>
-            <div className="monte-carlo-summary-row">
-              <span>平均参加人数</span>
+              <span>{presentation.monteCarlo.averageJoinedCount}</span>
               <span>{formatAverage(result.summary.averageJoinedCount)}</span>
             </div>
-            <div className="monte-carlo-summary-row">
-              <span>平均帰宅人数</span>
-              <span>{formatAverage(result.summary.averageLeftCount)}</span>
-            </div>
+            {presentation.monteCarlo.showLeaveMetrics && (
+              <div className="monte-carlo-summary-row">
+                <span>{presentation.monteCarlo.averageLeftCount}</span>
+                <span>{formatAverage(result.summary.averageLeftCount)}</span>
+              </div>
+            )}
           </section>
 
           <section className="monte-carlo-runs">
@@ -163,11 +177,16 @@ export function MonteCarloPanel({ presetId, params, seed, interventionId, single
               {result.runs.map((run) => (
                 <div className="monte-carlo-run-row" key={run.seed}>
                   <span>seed {run.seed}</span>
-                  <span>{summarizeObservers(run.summary.observerJoiners, (o) => AGENT_STATE_LABEL[o.finalState])}</span>
+                  <span>
+                    {summarizeObservers(
+                      run.summary.observerJoiners,
+                      (o) => presentation.agentStateLabels[o.finalState],
+                    )}
+                  </span>
                   <span>{summarizeObservers(run.summary.observerJoiners, (o) => formatTick(o.joinedTick))}</span>
                   <span>{summarizeObservers(run.summary.observerJoiners, (o) => formatTick(o.leftTick))}</span>
                   <span>{formatTick(run.summary.firstGroupConfirmedTick)}</span>
-                  <span>{run.summary.confirmedGroupCount}グループ</span>
+                  <span>{run.summary.confirmedGroupCount}{presentation.monteCarlo.confirmedUnit}</span>
                 </div>
               ))}
             </div>

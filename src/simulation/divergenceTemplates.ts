@@ -2,6 +2,8 @@ import type { Agent } from "./types";
 import type { SpeechExpressionLink, SpeechIntent } from "./speech";
 import type { DivergenceFactor, DivergenceScene } from "./socialExpression";
 import { classifyDivergenceScene, DIVERGENCE_SCENE_FACTOR } from "./socialExpression";
+import type { FormationScenarioId } from "./formationPolicy";
+import { getScenarioPresentation } from "../presentation/scenarioPresentation";
 
 /**
  * Issue #118: 乖離場面(本心と対外表現がずれた発言)用の、本心(thought)と建前(speech)を
@@ -172,6 +174,8 @@ export type DivergenceTemplateContext = {
   seed: number;
   /** 発話tick */
   tick: number;
+  /** 表示語彙を解決するシナリオ。省略時は既存の二次会テンプレートを使う */
+  scenarioId?: FormationScenarioId;
 };
 
 /** 乖離場面の本心/建前ペア解決結果。`variantIndex`で本心と建前が同一の選択に紐づくことを示す */
@@ -204,8 +208,11 @@ export function resolveDivergentExpression(ctx: DivergenceTemplateContext): Dive
 
   const archetype = classifyTemplateArchetype(ctx.agent);
   const template = DIVERGENCE_TEMPLATES[scene];
-  const archetypePairs = template.byArchetype[archetype] ?? template.byArchetype.general;
-  const presetPairs = template.byPreset?.[ctx.presetId] ?? [];
+  const scenarioTemplate = getScenarioPresentation(ctx.scenarioId).divergenceTemplates?.[scene];
+  const archetypePairs = scenarioTemplate
+    ? scenarioTemplate[archetype] ?? scenarioTemplate.general
+    : template.byArchetype[archetype] ?? template.byArchetype.general;
+  const presetPairs = scenarioTemplate ? [] : template.byPreset?.[ctx.presetId] ?? [];
   const pool = [...archetypePairs, ...presetPairs];
 
   const key = `${ctx.seed}:${ctx.tick}:${ctx.agent.id}:${scene}:${archetype}:${ctx.presetId}`;

@@ -5,19 +5,10 @@ import type {
   SimulationFinishReason,
   SimulationState,
 } from "../simulation/types";
+import { getScenarioPresentation, type ScenarioPresentation } from "../presentation/scenarioPresentation";
 
 type Props = {
   state: SimulationState;
-};
-
-const AGENT_STATE_LABEL: Record<AgentState, string> = {
-  undecided: "未定",
-  forming: "輪を形成中",
-  approaching: "接近中",
-  joined: "参加済み",
-  leaving: "離脱中",
-  left: "離脱済み",
-  unassigned: "未割当",
 };
 
 const AGENT_STATE_ORDER: AgentState[] = [
@@ -45,45 +36,68 @@ function formatTick(tick: number | undefined, placeholder: string): string {
   return tick === undefined ? placeholder : `tick ${tick}`;
 }
 
-function joinedGroupKindLabel(summary: ObserverJoinerRunSummary): string {
+function joinedGroupKindLabel(
+  summary: ObserverJoinerRunSummary,
+  presentation: ScenarioPresentation,
+): string {
   if (summary.joinedTick === undefined) return NOT_JOINED;
+  if (presentation.id === "classroomPair") {
+    return summary.joinedGroupStatus === "confirmed" ? "成立済みペア" : "形成中のペア候補";
+  }
   return summary.joinedGroupStatus === "confirmed" ? "成立済みグループ" : "未確定の輪";
 }
 
-function ObserverJoinerSummaryCard({ summary }: { summary: ObserverJoinerRunSummary }) {
+function ObserverJoinerSummaryCard({
+  summary,
+  presentation,
+}: {
+  summary: ObserverJoinerRunSummary;
+  presentation: ScenarioPresentation;
+}) {
+  const isClassroomPair = presentation.id === "classroomPair";
   return (
     <div className="simulation-summary-card">
       <div className="simulation-summary-row simulation-summary-row--header">
         <span className="simulation-summary-label-name">{summary.label}</span>
-        <span className="simulation-summary-state">{AGENT_STATE_LABEL[summary.finalState]}</span>
+        <span className="simulation-summary-state">{presentation.agentStateLabels[summary.finalState]}</span>
       </div>
       <div className="simulation-summary-row">
-        <span>参加tick</span>
+        <span>{isClassroomPair ? "ペア成立tick" : "参加tick"}</span>
         <span>{formatTick(summary.joinedTick, NOT_JOINED)}</span>
       </div>
       <div className="simulation-summary-row">
-        <span>参加先</span>
-        <span>{joinedGroupKindLabel(summary)}</span>
+        <span>{isClassroomPair ? "組み合わせ" : "参加先"}</span>
+        <span>{joinedGroupKindLabel(summary, presentation)}</span>
       </div>
-      <div className="simulation-summary-row">
-        <span>離脱開始tick</span>
-        <span>{formatTick(summary.leaveStartedTick, NOT_LEFT)}</span>
-      </div>
-      <div className="simulation-summary-row">
-        <span>帰宅完了tick</span>
-        <span>{formatTick(summary.leftTick, NOT_LEFT)}</span>
-      </div>
-      <div className="simulation-summary-row">
-        <span>後乗り成功</span>
-        <span>{summary.lateJoinSucceeded ? "成功" : "いいえ"}</span>
-      </div>
+      {isClassroomPair ? (
+        <div className="simulation-summary-row">
+          <span>最終割当</span>
+          <span>{summary.finalState === "joined" ? "ペア成立" : "未割当"}</span>
+        </div>
+      ) : (
+        <>
+          <div className="simulation-summary-row">
+            <span>離脱開始tick</span>
+            <span>{formatTick(summary.leaveStartedTick, NOT_LEFT)}</span>
+          </div>
+          <div className="simulation-summary-row">
+            <span>帰宅完了tick</span>
+            <span>{formatTick(summary.leftTick, NOT_LEFT)}</span>
+          </div>
+          <div className="simulation-summary-row">
+            <span>後乗り成功</span>
+            <span>{summary.lateJoinSucceeded ? "成功" : "いいえ"}</span>
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
 export function SimulationSummaryPanel({ state }: Props) {
   const summary = buildSimulationSummary(state);
-  const isClassroomPair = state.formationScenarioId === "classroomPair";
+  const presentation = getScenarioPresentation(state.formationScenarioId);
+  const isClassroomPair = presentation.id === "classroomPair";
 
   return (
     <div className="panel simulation-summary">
@@ -109,20 +123,22 @@ export function SimulationSummaryPanel({ state }: Props) {
       <section className="simulation-summary-section">
         <h3>人数サマリー</h3>
         <div className="simulation-summary-row">
-          <span>参加人数</span>
+          <span>{presentation.summary.joinedCount}</span>
           <span>{summary.joinedCount}</span>
         </div>
+        {!isClassroomPair && (
+          <div className="simulation-summary-row">
+            <span>{presentation.summary.leftCount}</span>
+            <span>{summary.leftCount}</span>
+          </div>
+        )}
         <div className="simulation-summary-row">
-          <span>帰宅人数</span>
-          <span>{summary.leftCount}</span>
-        </div>
-        <div className="simulation-summary-row">
-          <span>未割当人数</span>
+          <span>{presentation.summary.unassignedCount}</span>
           <span>{summary.unassignedCount}</span>
         </div>
         {AGENT_STATE_ORDER.map((agentState) => (
           <div className="simulation-summary-row" key={agentState}>
-            <span>{AGENT_STATE_LABEL[agentState]}</span>
+            <span>{presentation.agentStateLabels[agentState]}</span>
             <span>{summary.stateCounts[agentState]}</span>
           </div>
         ))}
@@ -136,7 +152,7 @@ export function SimulationSummaryPanel({ state }: Props) {
               <div className="simulation-summary-row" key={agent.agentId}>
                 <span>{agent.label}</span>
                 <span>
-                  確定前: {agent.previousState ? AGENT_STATE_LABEL[agent.previousState] : "不明"} / 再探索
+                  確定前: {agent.previousState ? presentation.agentStateLabels[agent.previousState] : "不明"} / 再探索
                   {agent.searchRestartCount}回
                 </span>
               </div>
@@ -146,12 +162,18 @@ export function SimulationSummaryPanel({ state }: Props) {
       </section>
 
       <section className="simulation-summary-section">
-        <h3>observerJoinerサマリー</h3>
+        <h3>{presentation.summary.observerSection}</h3>
         {summary.observerJoiners.length === 0 ? (
-          <p className="simulation-summary-empty">observerJoinerがいません。</p>
+          <p className="simulation-summary-empty">
+            {isClassroomPair ? "自分から誘わず待ちやすい生徒はいません。" : "observerJoinerがいません。"}
+          </p>
         ) : (
           summary.observerJoiners.map((observer) => (
-            <ObserverJoinerSummaryCard key={observer.agentId} summary={observer} />
+            <ObserverJoinerSummaryCard
+              key={observer.agentId}
+              summary={observer}
+              presentation={presentation}
+            />
           ))
         )}
       </section>
@@ -159,19 +181,19 @@ export function SimulationSummaryPanel({ state }: Props) {
       <section className="simulation-summary-section">
         <h3>{isClassroomPair ? "ペア形成サマリー" : "グループ形成サマリー"}</h3>
         <div className="simulation-summary-row">
-          <span>最初の核形成tick</span>
+          <span>{presentation.summary.firstNucleusTick}</span>
           <span>{formatTick(summary.firstNucleusTick, NOT_OCCURRED)}</span>
         </div>
         <div className="simulation-summary-row">
-          <span>最初のグループ成立tick</span>
+          <span>{presentation.summary.firstConfirmedTick}</span>
           <span>{formatTick(summary.firstGroupConfirmedTick, NOT_OCCURRED)}</span>
         </div>
         <div className="simulation-summary-row">
-          <span>{isClassroomPair ? "成立ペア数" : "成立グループ数"}</span>
+          <span>{presentation.summary.confirmedCount}</span>
           <span>{summary.confirmedGroupCount}</span>
         </div>
         <div className="simulation-summary-row">
-          <span>グループ不成立</span>
+          <span>{presentation.summary.failure}</span>
           <span>{summary.groupFailure ? "はい" : "いいえ"}</span>
         </div>
       </section>

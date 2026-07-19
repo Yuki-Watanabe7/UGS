@@ -1,6 +1,8 @@
 import type { SimParams } from "../simulation/types";
 import type { ScenarioPreset } from "../simulation/presets";
-import { APPLY_MODE_LABEL, SLIDERS } from "./sliderConfig";
+import type { ScenarioPresentation } from "../presentation/scenarioPresentation";
+import { AFTER_PARTY_PRESENTATION } from "../presentation/scenarioPresentation";
+import { APPLY_MODE_LABEL, getSlidersForPresentation } from "./sliderConfig";
 
 type Props = {
   running: boolean;
@@ -17,6 +19,7 @@ type Props = {
   // スマホ幅では詳細パラメータを折りたたんで、基本操作を優先表示する
   collapseSliders?: boolean;
   presets: readonly ScenarioPreset[];
+  presentation?: ScenarioPresentation;
 };
 
 export function ControlPanel({
@@ -33,23 +36,28 @@ export function ControlPanel({
   hasPendingResetChanges,
   collapseSliders = false,
   presets,
+  presentation = AFTER_PARTY_PRESENTATION,
 }: Props) {
+  const scenarioSliders = getSlidersForPresentation(presentation);
   const sliders = (
     <div className="sliders">
-      {SLIDERS.map((slider) => (
+      {scenarioSliders.map((slider) => (
         <label className="field slider-field" key={slider.key}>
           <span>
-            {slider.label}: {params[slider.key].toFixed(slider.step < 1 ? 2 : 0)}
+            {slider.label}: {slider.fixedValueLabel ?? params[slider.key].toFixed(slider.step < 1 ? 2 : 0)}
             <span className={`apply-mode-badge apply-mode-badge--${slider.applyMode}`}>
               {APPLY_MODE_LABEL[slider.applyMode]}
             </span>
           </span>
+          <span className="slider-description">{slider.description}</span>
           <input
             type="range"
             min={slider.min}
             max={slider.max}
             step={slider.step}
             value={params[slider.key]}
+            disabled={!slider.editable}
+            aria-readonly={!slider.editable}
             onChange={(e) =>
               onParamsChange({ ...params, [slider.key]: Number(e.target.value) })
             }

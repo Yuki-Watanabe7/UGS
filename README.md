@@ -35,6 +35,11 @@ const observerJoiner = {
 
 各URLは直接アクセス・再読み込み・共有が可能です。シミュレーション画面上部の「シナリオ選択へ」からトップページへ戻れます。
 
+画面の操作項目・発言・心の声・ログ・集計ラベルは、内部の状態遷移やイベント識別子とは分離した
+シナリオ別presentation設定から解決します。学校画面では学校向け語彙と利用可能な操作だけを表示し、
+二次会画面の既存表示は維持します。設計上の責務境界は
+[`docs/scenario-presentation-boundary.md`](docs/scenario-presentation-boundary.md)を参照してください。
+
 - `main` ブランチへのpushをトリガーに、GitHub Actions(`.github/workflows/pages.yml`)が lint / test / build を実行して自動デプロイします
 - 公開版は**利用向け**です。コードを変更しながら動作を確かめたい場合は、後述のローカル開発起動(`npm run dev`)や実機確認(`npm run dev:host`)を使ってください
 

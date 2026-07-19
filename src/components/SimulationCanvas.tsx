@@ -5,6 +5,7 @@ import type { SpeechIntent } from "../simulation/speech";
 import { ThoughtBubble } from "./ThoughtBubble";
 import { SpeechBubble } from "./SpeechBubble";
 import { computeThoughtBubbleLayouts, type ThoughtBubblePlacementInput } from "./thoughtBubbleLayout";
+import { getScenarioPresentation, type ScenarioPresentation } from "../presentation/scenarioPresentation";
 
 /**
  * 表示すべき心の声1件分。文言生成・寿命管理は呼び出し側(表示管理レイヤー)の責務で、ここでは受け取るだけ。
@@ -104,17 +105,17 @@ function candidateRingClass(candidate: GroupCandidate): string {
   }
 }
 
-function candidateLabel(candidate: GroupCandidate): string {
+function candidateLabel(candidate: GroupCandidate, presentation: ScenarioPresentation): string {
   switch (candidate.status) {
     case "confirmed":
-      return "二次会グループ";
+      return presentation.canvas.confirmedCandidate;
     case "dissolving":
     case "dissolved":
-      return "解散した輪";
+      return presentation.canvas.dissolvedCandidate;
     case "expired":
-      return "時間切れの輪";
+      return presentation.canvas.expiredCandidate;
     default:
-      return "形成中の輪";
+      return presentation.canvas.formingCandidate;
   }
 }
 
@@ -276,7 +277,8 @@ export function SimulationCanvas({
   thoughts = [],
   speeches = [],
 }: Props) {
-  const isClassroomPair = formationScenarioId === "classroomPair";
+  const presentation = getScenarioPresentation(formationScenarioId);
+  const isClassroomPair = presentation.id === "classroomPair";
   const speakingAgentIds = new Set(speeches.map((speech) => speech.agentId));
   const speechInputs = buildSpeechPlacementInputs(agents, speeches, width, height);
   // Issue #119: 乖離発言では本心(心の声)を発言と対に同時表示する。話者本人の通常の心の声は
@@ -295,7 +297,7 @@ export function SimulationCanvas({
         width="100%"
         height={height}
         role="img"
-        aria-label="グループ形成シミュレーション領域"
+        aria-label={presentation.canvas.ariaLabel}
       >
         <rect x={0} y={0} width={width} height={height} className="canvas-bg" />
 
@@ -350,7 +352,7 @@ export function SimulationCanvas({
               <text x={candidate.x} y={candidate.y - 60} className="candidate-label">
                 {classroomState
                   ? classroomCandidateStateLabel(classroomState)
-                  : `${candidateLabel(candidate)} (${candidate.memberIds.length})`}
+                  : `${candidateLabel(candidate, presentation)} (${candidate.memberIds.length})`}
               </text>
               {classroomState && (
                 <text x={candidate.x} y={candidate.y - 44} className="candidate-capacity-label">

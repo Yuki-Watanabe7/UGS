@@ -181,6 +181,24 @@ describe("resolveDivergentExpression: 本心/建前ペアの決定的解決", ()
       }
     }
   });
+
+  it("学校シナリオでは本心と建前の対を保ったまま学校語彙へ解決する", () => {
+    const forbidden = ["二次会", "もう一軒", "店", "会場", "帰宅", "途中参加"];
+    const school = resolveDivergentExpression(
+      ctx({
+        scenarioId: "classroomPair",
+        presetId: "classroom-pair",
+        agent: makeAgent({ id: "school-observer", isObserverJoiner: true }),
+      }),
+    )!;
+
+    expect(school.thought).not.toBe(school.speech);
+    expect(school.thought).toContain("一緒に組みたい");
+    for (const term of forbidden) {
+      expect(school.thought).not.toContain(term);
+      expect(school.speech).not.toContain(term);
+    }
+  });
 });
 
 describe("resolveSpeechEventText: 乖離場面での建前文言の解決(後方互換)", () => {

@@ -813,6 +813,8 @@ export type SpeechEffectsMonteCarloConfig = {
   params: SimParams;
   maxTicks?: number;
   intervention?: InterventionRuntimeOptions;
+  /** 発言効果OFF/ONの両条件で共通して使う形成ポリシー */
+  formation?: FormationRuntimeOptions;
 };
 
 /** `compareSpeechEffects`が内部でoff/onそれぞれについて実行する単一条件分の結果一式 */
