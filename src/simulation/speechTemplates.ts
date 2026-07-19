@@ -1,6 +1,8 @@
 import type { Agent } from "./types";
 import type { SpeechEvent, SpeechReason } from "./speech";
 import { resolveDivergentExpression } from "./divergenceTemplates";
+import type { FormationScenarioId } from "./formationPolicy";
+import { getScenarioPresentation } from "../presentation/scenarioPresentation";
 
 /**
  * `SpeechReason`ごとの発言テンプレート文言。文言そのものはこのモジュールでのみ保持し、
@@ -11,19 +13,9 @@ import { resolveDivergentExpression } from "./divergenceTemplates";
  * 渡すことで、建前側(発言)の文言を`divergenceTemplates.ts`の乖離専用テンプレートから解決する。
  * コンテキストなし(既存の呼び出し元)では従来どおりreasonごとの1文言を返す(後方互換)。
  */
-const TEMPLATES: Record<SpeechReason, string> = {
-  initiativeFormedCore: "もう一軒行く?",
-  cliqueFormedCore: "もう一軒行く?",
-  formingGroupRecruitment: "こっちも一緒にどう?",
-  approachWelcome: "おいでおいで、こっちだよ",
-  joinGreeting: "合流できた、よろしく!",
-  leaveDeclaration: "今日はここで帰るね、また今度!",
-  lightObserverInvitation: "よかったら一緒に行く?",
-};
-
 /** `reason`から実際の発言文言を解決する */
-export function resolveSpeechText(reason: SpeechReason): string {
-  return TEMPLATES[reason];
+export function resolveSpeechText(reason: SpeechReason, scenarioId?: FormationScenarioId): string {
+  return getScenarioPresentation(scenarioId).speechTemplates[reason];
 }
 
 /**
@@ -32,11 +24,13 @@ export function resolveSpeechText(reason: SpeechReason): string {
  */
 export type SpeechTextContext = {
   /** 発言の話者(アーキタイプ分類に使う) */
-  agent: Agent;
+  agent?: Agent;
   /** シナリオ別バリエーション選択に使うプリセットID */
-  presetId: string;
+  presetId?: string;
   /** 決定的バリエーション選択の種(本体`SeededRandom`とは独立) */
-  seed: number;
+  seed?: number;
+  /** 表示語彙を解決するシナリオ。省略時は二次会表示を維持する */
+  scenarioId?: FormationScenarioId;
 };
 
 /**
@@ -48,7 +42,13 @@ export type SpeechTextContext = {
  * それ以外(コンテキストなし・非乖離発言・話者IDの不一致)は従来どおりreasonごとの1文言を返す。
  */
 export function resolveSpeechEventText(event: SpeechEvent, context?: SpeechTextContext): string {
-  if (context && event.expression && context.agent.id === event.speakerId) {
+  if (
+    context?.agent &&
+    context.presetId !== undefined &&
+    context.seed !== undefined &&
+    event.expression &&
+    context.agent.id === event.speakerId
+  ) {
     const resolution = resolveDivergentExpression({
       link: event.expression,
       intent: event.intent,
@@ -56,8 +56,9 @@ export function resolveSpeechEventText(event: SpeechEvent, context?: SpeechTextC
       presetId: context.presetId,
       seed: context.seed,
       tick: event.tick,
+      scenarioId: context.scenarioId,
     });
     if (resolution) return resolution.speech;
   }
-  return resolveSpeechText(event.reason);
+  return resolveSpeechText(event.reason, context?.scenarioId);
 }

@@ -11,6 +11,8 @@ import type {
 import type { ObserverActiveEffectStatus } from "../simulation/types";
 import { formatTick } from "../simulation/time";
 import { resolveLabel } from "./speechDisplay";
+import type { FormationScenarioId } from "../simulation/formationPolicy";
+import { getScenarioPresentation } from "../presentation/scenarioPresentation";
 
 /**
  * Phase 3の因果イベント(認知/解釈/効果/現在の適用状況)を、状態ログ・observerJoiner Inspectorの
@@ -19,15 +21,11 @@ import { resolveLabel } from "./speechDisplay";
  * 乱数を一切参照・変更しない。
  */
 
-const DIMENSION_LABEL: Record<SpeechEffectDimension, string> = {
-  stress: "ストレス蓄積率",
-  attractiveness: "輪の魅力度",
-  approachProbability: "接近確率",
-  leaveThreshold: "離脱しきい値",
-};
-
-export function speechEffectDimensionLabel(dimension: SpeechEffectDimension): string {
-  return DIMENSION_LABEL[dimension];
+export function speechEffectDimensionLabel(
+  dimension: SpeechEffectDimension,
+  scenarioId?: FormationScenarioId,
+): string {
+  return getScenarioPresentation(scenarioId).speechEffects[dimension];
 }
 
 const VALENCE_LABEL: Record<SpeechInterpretationValence, string> = {
@@ -87,9 +85,13 @@ export function formatInterpretationFactorLine(factor: SpeechInterpretationFacto
 }
 
 /** 効果(`SpeechEffectEvent`)を1行で読める文言にする */
-export function formatEffectLine(effect: SpeechEffectEvent, labelById: Map<string, string>): string {
+export function formatEffectLine(
+  effect: SpeechEffectEvent,
+  labelById: Map<string, string>,
+  scenarioId?: FormationScenarioId,
+): string {
   const receiver = resolveLabel(effect.receiverId, labelById);
-  const dimension = speechEffectDimensionLabel(effect.dimension);
+  const dimension = speechEffectDimensionLabel(effect.dimension, scenarioId);
   return `${formatTick(effect.occurredTick)} ${receiver}さんの${dimension}へ${formatSigned(effect.outputValue)}の効果(持続${effect.durationTicks}tick)`;
 }
 
@@ -100,9 +102,15 @@ export function formatActiveEffectStatusLine(status: ObserverActiveEffectStatus 
 }
 
 /** 集約結果(`AggregatedActiveEffect`)を1行で読める文言にする */
-export function formatAggregatedEffectSummary(summary: AggregatedActiveEffect): string {
-  const target = summary.targetGroupId ? `(対象輪: ${summary.targetGroupId})` : "";
-  return `${speechEffectDimensionLabel(summary.dimension)}${target}: 集約値${formatSigned(summary.value)}`;
+export function formatAggregatedEffectSummary(
+  summary: AggregatedActiveEffect,
+  scenarioId?: FormationScenarioId,
+): string {
+  const presentation = getScenarioPresentation(scenarioId);
+  const target = summary.targetGroupId
+    ? `(${presentation.id === "classroomPair" ? "対象ペア候補" : "対象輪"}: ${summary.targetGroupId})`
+    : "";
+  return `${speechEffectDimensionLabel(summary.dimension, scenarioId)}${target}: 集約値${formatSigned(summary.value)}`;
 }
 
 /** 集約結果1件分の個別寄与(`ActiveEffectContribution`)を1行で読める文言にする */

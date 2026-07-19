@@ -39,6 +39,7 @@ import {
   getPresetsForScenario,
   type ScenarioConfig,
 } from "./scenarios";
+import { normalizeInterventionForPresentation } from "./presentation/scenarioPresentation";
 
 const TICK_INTERVAL_MS = 250;
 const INITIAL_SEED = 12345;
@@ -64,6 +65,10 @@ function SimulationApp({ scenario }: Props) {
   const [params, setParams] = useState<SimParams>(initialPreset.params);
   const [seed, setSeed] = useState(INITIAL_SEED);
   const [interventionId, setInterventionId] = useState<InterventionScenarioId>("none");
+  const activeInterventionId = normalizeInterventionForPresentation(
+    interventionId,
+    scenario.presentation,
+  );
   const [running, setRunning] = useState(false);
   // Issue #98/#119: 状態ログ・observerJoiner Inspector・CanvasでPhase 3(発言効果)およびPhase 4
   // (本心/建前の乖離・動的trust・関係性補正)の因果を確認できるようにするため、ここでまとめて
@@ -130,6 +135,7 @@ function SimulationApp({ scenario }: Props) {
   const activeThoughts = useActiveExpressions(simState, seed, runId, {
     enabled: expressionDisplaySettings.enabled,
     maxConcurrent: EXPRESSION_DISPLAY_DENSITY_MAX_CONCURRENT[expressionDisplaySettings.density],
+    scenarioId: scenario.presentation.id,
   });
   const visibleThoughts = filterThoughtsForDisplay(activeThoughts, expressionDisplaySettings.target);
 
@@ -138,6 +144,7 @@ function SimulationApp({ scenario }: Props) {
     // Issue #119: 乖離場面で発言(建前)と対に本心(心の声)を同時表示するための決定的選択の種・プリセット
     seed,
     presetId,
+    scenarioId: scenario.presentation.id,
   });
 
   const hasPendingResetChanges = RESET_REQUIRED_PARAM_KEYS.some(
@@ -150,9 +157,19 @@ function SimulationApp({ scenario }: Props) {
 
   const handleStep = useCallback(() => {
     setSimState((prev) =>
-      stepSimulation(prev, params, rngRef.current, { interventionId }, undefined, undefined, undefined, undefined, formation),
+      stepSimulation(
+        prev,
+        params,
+        rngRef.current,
+        { interventionId: activeInterventionId },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        formation,
+      ),
     );
-  }, [params, interventionId, formation]);
+  }, [params, activeInterventionId, formation]);
 
   useEffect(() => {
     if (!running) return;
@@ -166,7 +183,7 @@ function SimulationApp({ scenario }: Props) {
           prev,
           params,
           rngRef.current,
-          { interventionId },
+          { interventionId: activeInterventionId },
           undefined,
           undefined,
           undefined,
@@ -176,7 +193,7 @@ function SimulationApp({ scenario }: Props) {
       });
     }, TICK_INTERVAL_MS);
     return () => window.clearInterval(id);
-  }, [running, params, interventionId, formation]);
+  }, [running, params, activeInterventionId, formation]);
 
   const handleStartPause = useCallback(() => {
     if (simState.finished) return;
@@ -188,15 +205,15 @@ function SimulationApp({ scenario }: Props) {
   }, []);
 
   const handleReset = useCallback(() => {
-    resetSimulation(seed, params, interventionId, presetId);
-  }, [resetSimulation, seed, params, interventionId, presetId]);
+    resetSimulation(seed, params, activeInterventionId, presetId);
+  }, [resetSimulation, seed, params, activeInterventionId, presetId]);
 
   const handleSeedChange = useCallback(
     (nextSeed: number) => {
       setSeed(nextSeed);
-      resetSimulation(nextSeed, params, interventionId, presetId);
+      resetSimulation(nextSeed, params, activeInterventionId, presetId);
     },
-    [resetSimulation, params, interventionId, presetId],
+    [resetSimulation, params, activeInterventionId, presetId],
   );
 
   const handlePresetChange = useCallback(
@@ -204,17 +221,21 @@ function SimulationApp({ scenario }: Props) {
       const preset = getPresetForScenario(scenario, nextPresetId);
       setPresetId(preset.id);
       setParams(preset.params);
-      resetSimulation(seed, preset.params, interventionId, preset.id);
+      resetSimulation(seed, preset.params, activeInterventionId, preset.id);
     },
-    [resetSimulation, scenario, seed, interventionId],
+    [resetSimulation, scenario, seed, activeInterventionId],
   );
 
   const handleInterventionChange = useCallback(
     (nextInterventionId: InterventionScenarioId) => {
-      setInterventionId(nextInterventionId);
-      resetSimulation(seed, params, nextInterventionId, presetId);
+      const normalized = normalizeInterventionForPresentation(
+        nextInterventionId,
+        scenario.presentation,
+      );
+      setInterventionId(normalized);
+      resetSimulation(seed, params, normalized, presetId);
     },
-    [resetSimulation, seed, params, presetId],
+    [resetSimulation, seed, params, presetId, scenario.presentation],
   );
 
   return (
@@ -239,8 +260,10 @@ function SimulationApp({ scenario }: Props) {
           Tick: {simState.tick} {simState.finished ? "(終了)" : running ? "(実行中)" : "(一時停止)"}
         </p>
         <p className="current-condition">
-          プリセット: {getPresetById(presetId).name} / seed: {seed} / 介入:{" "}
-          {getInterventionById(interventionId).name}
+          プリセット: {getPresetById(presetId).name} / seed: {seed}
+          {scenario.presentation.showInterventionControls
+            ? ` / 介入: ${getInterventionById(activeInterventionId).name}`
+            : ""}
         </p>
       </header>
 
@@ -260,6 +283,7 @@ function SimulationApp({ scenario }: Props) {
             hasPendingResetChanges={hasPendingResetChanges}
             collapseSliders={isMobile}
             presets={scenarioPresets}
+            presentation={scenario.presentation}
           />
           <ExpressionDisplaySettings
             settings={expressionDisplaySettings}
@@ -269,34 +293,43 @@ function SimulationApp({ scenario }: Props) {
             settings={speechBubbleDisplaySettings}
             onSettingsChange={setSpeechBubbleDisplaySettings}
           />
-          <InterventionSelector
-            interventionId={interventionId}
-            onInterventionChange={handleInterventionChange}
-          />
-          <AgentLegend />
+          {scenario.presentation.showInterventionControls && (
+            <InterventionSelector
+              interventionId={activeInterventionId}
+              onInterventionChange={handleInterventionChange}
+              availableInterventionIds={scenario.presentation.availableInterventionIds}
+            />
+          )}
+          <AgentLegend presentation={scenario.presentation} />
           <MonteCarloPanel
             presetId={presetId}
             params={params}
             seed={seed}
-            interventionId={interventionId}
+            interventionId={activeInterventionId}
             singleSimRunning={running}
             onBeforeRun={handlePauseForMonteCarlo}
+            formation={formation}
+            presentation={scenario.presentation}
           />
-          <InterventionComparisonPanel
-            presetId={presetId}
-            params={params}
-            seed={seed}
-            interventionId={interventionId}
-            singleSimRunning={running}
-            onBeforeRun={handlePauseForMonteCarlo}
-          />
+          {scenario.presentation.showInterventionControls && (
+            <InterventionComparisonPanel
+              presetId={presetId}
+              params={params}
+              seed={seed}
+              interventionId={activeInterventionId}
+              singleSimRunning={running}
+              onBeforeRun={handlePauseForMonteCarlo}
+            />
+          )}
           <SpeechEffectsComparisonPanel
             presetId={presetId}
             params={params}
             seed={seed}
-            interventionId={interventionId}
+            interventionId={activeInterventionId}
             singleSimRunning={running}
             onBeforeRun={handlePauseForMonteCarlo}
+            formation={formation}
+            presentation={scenario.presentation}
           />
         </aside>
 
@@ -313,9 +346,14 @@ function SimulationApp({ scenario }: Props) {
         </section>
 
         <aside className="sidebar-right">
-          <ObserverJoinerInspector state={simState} params={params} />
+          <ObserverJoinerInspector state={simState} params={params} seed={seed} presetId={presetId} />
           <SimulationSummaryPanel state={simState} />
-          <EventLog state={simState} />
+          <EventLog
+            state={simState}
+            presentation={scenario.presentation}
+            seed={seed}
+            presetId={presetId}
+          />
         </aside>
       </main>
     </div>

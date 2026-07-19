@@ -1,5 +1,5 @@
 import type { SpeechEvent } from "../simulation/speech";
-import { resolveSpeechEventText } from "../simulation/speechTemplates";
+import { resolveSpeechEventText, type SpeechTextContext } from "../simulation/speechTemplates";
 import { formatSpeechDestination } from "./speechDisplay";
 
 /**
@@ -12,8 +12,12 @@ import { formatSpeechDestination } from "./speechDisplay";
  * - 折り返し・吹き出し内での配置は`thoughtBubbleLayout.ts`の既存関数(`wrapThoughtText`
  *   経由)をそのまま再利用するため、ここでは1本の文字列を返すだけでよい。
  */
-export function formatSpeechBubbleText(event: SpeechEvent, labelById: Map<string, string>): string {
+export function formatSpeechBubbleText(
+  event: SpeechEvent,
+  labelById: Map<string, string>,
+  context?: SpeechTextContext,
+): string {
   const destination = formatSpeechDestination(event, labelById);
-  const text = resolveSpeechEventText(event);
+  const text = resolveSpeechEventText(event, context);
   return `💬${text}${destination ? `→${destination}` : ""}`;
 }

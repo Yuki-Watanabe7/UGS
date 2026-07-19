@@ -1,4 +1,6 @@
 import type { SimParams } from "../simulation/types";
+import type { ScenarioPresentation } from "../presentation/scenarioPresentation";
+import { AFTER_PARTY_PRESENTATION } from "../presentation/scenarioPresentation";
 
 /**
  * "immediate": 実行中のシミュレーションにも次tickから反映される。
@@ -14,6 +16,12 @@ export type SliderDef = {
   max: number;
   step: number;
   applyMode: ApplyMode;
+};
+
+export type PresentedSliderDef = SliderDef & {
+  description: string;
+  editable: boolean;
+  fixedValueLabel?: string;
 };
 
 export const SLIDERS: SliderDef[] = [
@@ -33,6 +41,22 @@ export const SLIDERS: SliderDef[] = [
 export const RESET_REQUIRED_PARAM_KEYS: (keyof SimParams)[] = SLIDERS.filter(
   (slider) => slider.applyMode === "resetRequired",
 ).map((slider) => slider.key);
+
+/** シナリオ別の表示可否・ラベル・説明を、共通の数値範囲へ重ねた操作項目一覧 */
+export function getSlidersForPresentation(
+  presentation: ScenarioPresentation = AFTER_PARTY_PRESENTATION,
+): PresentedSliderDef[] {
+  return SLIDERS.filter((slider) => presentation.parameters[slider.key].visible).map((slider) => {
+    const parameter = presentation.parameters[slider.key];
+    return {
+      ...slider,
+      label: parameter.label,
+      description: parameter.description,
+      editable: parameter.editable,
+      fixedValueLabel: parameter.fixedValueLabel,
+    };
+  });
+}
 
 export const APPLY_MODE_LABEL: Record<ApplyMode, string> = {
   immediate: "即時反映",

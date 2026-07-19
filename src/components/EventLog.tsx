@@ -5,6 +5,11 @@ import type { ExpressedStance, DivergenceFactor } from "../simulation/socialExpr
 import { classifyDivergenceScene, DIVERGENCE_SCENE_FACTOR } from "../simulation/socialExpression";
 import { buildAgentLabelMap, formatSpeechDebugMeta, formatSpeechLogMessage } from "./speechDisplay";
 import { formatEffectLine, formatInterpretationFactorLine, formatInterpretationLine } from "./speechEffectsDisplay";
+import type { ScenarioPresentation } from "../presentation/scenarioPresentation";
+import {
+  AFTER_PARTY_PRESENTATION,
+  resolveScenarioLogMessage,
+} from "../presentation/scenarioPresentation";
 
 type FilterKey =
   | "all"
@@ -20,20 +25,31 @@ type FilterKey =
   | "trust"
   | "tie";
 
-const FILTERS: Array<{ key: FilterKey; label: string; tag?: LogTag }> = [
-  { key: "all", label: "全ログ" },
-  { key: "observerJoiner", label: "observerJoinerのみ", tag: "observerJoiner" },
-  { key: "nucleus", label: "核形成イベントのみ", tag: "nucleus" },
-  { key: "groupConfirmed", label: "グループ成立イベントのみ", tag: "groupConfirmed" },
-  { key: "joinFailure", label: "参加失敗・再探索のみ", tag: "joinFailure" },
-  { key: "unassigned", label: "未割当確定のみ", tag: "unassigned" },
-  { key: "leave", label: "離脱イベントのみ", tag: "leave" },
-  { key: "speech", label: "発言のみ" },
-  { key: "speechEffect", label: "発言効果のみ" },
-  { key: "divergence", label: "乖離発言のみ" },
-  { key: "trust", label: "信頼更新のみ" },
-  { key: "tie", label: "関係性変化のみ" },
-];
+function filtersForPresentation(
+  presentation: ScenarioPresentation,
+): Array<{ key: FilterKey; label: string; tag?: LogTag }> {
+  const filters: Array<{ key: FilterKey; label: string; tag?: LogTag }> = [
+    { key: "all", label: "全ログ" },
+    {
+      key: "observerJoiner",
+      label: presentation.id === "classroomPair" ? "待ちやすい生徒のみ" : "observerJoinerのみ",
+      tag: "observerJoiner",
+    },
+    { key: "nucleus", label: presentation.eventLog.nucleusFilter, tag: "nucleus" },
+    { key: "groupConfirmed", label: presentation.eventLog.confirmedFilter, tag: "groupConfirmed" },
+    { key: "joinFailure", label: presentation.eventLog.joinFailureFilter, tag: "joinFailure" },
+    { key: "unassigned", label: "未割当確定のみ", tag: "unassigned" },
+    { key: "speech", label: "発言のみ" },
+    { key: "speechEffect", label: "発言効果のみ" },
+    { key: "divergence", label: "乖離発言のみ" },
+    { key: "trust", label: "信頼更新のみ" },
+    { key: "tie", label: "関係性変化のみ" },
+  ];
+  if (presentation.eventLog.showLeaveFilter) {
+    filters.splice(6, 0, { key: "leave", label: presentation.eventLog.leaveFilter, tag: "leave" });
+  }
+  return filters;
+}
 
 const STANCE_LABEL: Record<ExpressedStance, string> = { positive: "積極的", none: "無表明", negative: "消極的" };
 const FACTOR_LABEL: Record<DivergenceFactor, string> = { reserve: "遠慮", conformity: "同調", impression: "社交辞令" };
@@ -62,24 +78,40 @@ type TimelineRow =
 
 type Props = {
   state: SimulationState;
+  presentation?: ScenarioPresentation;
+  seed?: number;
+  presetId?: string;
 };
 
-function buildTimeline(state: SimulationState, labelById: Map<string, string>): TimelineRow[] {
+function buildTimeline(
+  state: SimulationState,
+  labelById: Map<string, string>,
+  presentation: ScenarioPresentation,
+  seed?: number,
+  presetId?: string,
+): TimelineRow[] {
   const stateRows: TimelineRow[] = state.log.map((entry, i) => ({
     kind: "state",
     key: `state-${entry.tick}-${i}`,
     tick: entry.tick,
-    message: entry.message,
+    message: resolveScenarioLogMessage(entry, presentation),
     tags: entry.tags,
   }));
   const speechLog: SpeechEvent[] = state.speechLog ?? [];
-  const speechRows: TimelineRow[] = speechLog.map((event) => ({
-    kind: "speech",
-    key: event.id,
-    tick: event.tick,
-    message: formatSpeechLogMessage(event, labelById),
-    meta: formatSpeechDebugMeta(event, labelById),
-  }));
+  const speechRows: TimelineRow[] = speechLog.map((event) => {
+    const agent = state.agents.find((candidate) => candidate.id === event.speakerId);
+    const context =
+      agent && seed !== undefined && presetId !== undefined
+        ? { agent, seed, presetId, scenarioId: presentation.id }
+        : undefined;
+    return {
+      kind: "speech",
+      key: event.id,
+      tick: event.tick,
+      message: formatSpeechLogMessage(event, labelById, context),
+      meta: formatSpeechDebugMeta(event, labelById),
+    };
+  });
   const interpretationRows: TimelineRow[] = (state.speechInterpretationLog ?? []).map((interpretation) => ({
     kind: "speechInterpretation",
     key: interpretation.id,
@@ -91,7 +123,7 @@ function buildTimeline(state: SimulationState, labelById: Map<string, string>): 
     kind: "speechEffect",
     key: effect.id,
     tick: effect.occurredTick,
-    message: formatEffectLine(effect, labelById),
+    message: formatEffectLine(effect, labelById, presentation.id),
     meta: `speechEventId: ${effect.speechEventId} / reason: ${effect.reason} / speaker: ${labelById.get(effect.speakerId) ?? effect.speakerId}`,
   }));
   // Issue #119: 乖離発言(本心と建前がずれた発言)を、発言ログの`expression`から抽出する。
@@ -147,15 +179,24 @@ function buildTimeline(state: SimulationState, labelById: Map<string, string>): 
   ].sort((a, b) => a.tick - b.tick);
 }
 
-export function EventLog({ state }: Props) {
+export function EventLog({
+  state,
+  presentation = AFTER_PARTY_PRESENTATION,
+  seed,
+  presetId,
+}: Props) {
   const [filter, setFilter] = useState<FilterKey>("all");
   const [showAllRows, setShowAllRows] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
   const labelById = useMemo(() => buildAgentLabelMap(state.agents), [state.agents]);
-  const timeline = useMemo(() => buildTimeline(state, labelById), [state, labelById]);
+  const filters = useMemo(() => filtersForPresentation(presentation), [presentation]);
+  const timeline = useMemo(
+    () => buildTimeline(state, labelById, presentation, seed, presetId),
+    [state, labelById, presentation, seed, presetId],
+  );
 
-  const activeTag = FILTERS.find((f) => f.key === filter)?.tag;
+  const activeTag = filters.find((f) => f.key === filter)?.tag;
   const filteredRows = useMemo(() => {
     if (filter === "all") return timeline;
     if (filter === "speech") return timeline.filter((row) => row.kind === "speech");
@@ -198,7 +239,7 @@ export function EventLog({ state }: Props) {
           value={filter}
           onChange={(e) => setFilter(e.target.value as FilterKey)}
         >
-          {FILTERS.map((f) => (
+          {filters.map((f) => (
             <option key={f.key} value={f.key}>
               {f.label}
             </option>

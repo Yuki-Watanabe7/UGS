@@ -1,5 +1,5 @@
 import type { SpeechEvent, SpeechIntent } from "../simulation/speech";
-import { resolveSpeechEventText } from "../simulation/speechTemplates";
+import { resolveSpeechEventText, type SpeechTextContext } from "../simulation/speechTemplates";
 import { formatTick } from "../simulation/time";
 import type { Agent } from "../simulation/types";
 
@@ -44,10 +44,14 @@ export function formatSpeechDestination(event: SpeechEvent, labelById: Map<strin
  * 構造化されたSpeechEventの主要属性(speaker/target・audience/intent)をこの文言だけから
  * 追跡できることが目的(Issue #81の受け入れ条件)。
  */
-export function formatSpeechLogMessage(event: SpeechEvent, labelById: Map<string, string>): string {
+export function formatSpeechLogMessage(
+  event: SpeechEvent,
+  labelById: Map<string, string>,
+  context?: SpeechTextContext,
+): string {
   const speakerLabel = resolveLabel(event.speakerId, labelById);
   const destination = formatSpeechDestination(event, labelById);
-  const text = resolveSpeechEventText(event);
+  const text = resolveSpeechEventText(event, context);
   return `${formatTick(event.tick)} ${speakerLabel}さんが${destination ?? ""}「${text}」と発言(${speechIntentLabel(event.intent)})`;
 }
 

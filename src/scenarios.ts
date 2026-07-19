@@ -1,4 +1,9 @@
 import { PRESETS, type ScenarioPreset } from "./simulation/presets";
+import {
+  AFTER_PARTY_PRESENTATION,
+  CLASSROOM_PRESENTATION,
+  type ScenarioPresentation,
+} from "./presentation/scenarioPresentation";
 
 export type ScenarioCategoryId = "after-party" | "classroom";
 
@@ -13,6 +18,7 @@ export type ScenarioConfig = {
   introText: string;
   presetIds: readonly string[];
   initialPresetId: string;
+  presentation: ScenarioPresentation;
 };
 
 export const SCENARIOS: readonly ScenarioConfig[] = [
@@ -35,6 +41,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
       "leftover-free-grouping",
     ],
     initialPresetId: "natural",
+    presentation: AFTER_PARTY_PRESENTATION,
   },
   {
     id: "classroom",
@@ -49,6 +56,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
       "先生が自由にペアを作るよう促した教室で、2人組が並行して形成される過程を可視化します。誘う側と待つ側、満員になったペアからの再探索、締切時の未割当を観察できます。",
     presetIds: ["classroom-pair"],
     initialPresetId: "classroom-pair",
+    presentation: CLASSROOM_PRESENTATION,
   },
 ] as const;
 

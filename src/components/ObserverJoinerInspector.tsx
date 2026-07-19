@@ -1,7 +1,6 @@
 import { buildAgentInspection, buildObserverJoinerInspection } from "../simulation/inspection";
 import type {
   AgentAssignmentStatus,
-  AgentState,
   ApproachFailureReason,
   GroupCandidateStatus,
   ObserverJoinerInspection,
@@ -15,6 +14,7 @@ import type {
   SpeechRelation,
 } from "../simulation/types";
 import type { ExpressedStance, PublicExpressionFactorKey } from "../simulation/socialExpression";
+import type { SpeechTextContext } from "../simulation/speechTemplates";
 import { buildAgentLabelMap, formatSpeechDebugMeta, formatSpeechLogMessage } from "./speechDisplay";
 import {
   formatActiveEffectStatusLine,
@@ -25,26 +25,19 @@ import {
   formatInterpretationLine,
   formatReceptionLine,
 } from "./speechEffectsDisplay";
+import { getScenarioPresentation, type ScenarioPresentation } from "../presentation/scenarioPresentation";
 
 type Props = {
   state: SimulationState;
   params: SimParams;
+  seed?: number;
+  presetId?: string;
 };
 
 const SPEECH_RELATION_LABEL: Record<SpeechRelation, string> = {
   speaker: "話者",
   target: "対象",
   audience: "周囲",
-};
-
-const AGENT_STATE_LABEL: Record<AgentState, string> = {
-  undecided: "未定",
-  forming: "輪を形成中",
-  approaching: "接近中",
-  joined: "参加済み",
-  leaving: "離脱中",
-  left: "離脱済み",
-  unassigned: "未割当",
 };
 
 const ASSIGNMENT_STATUS_LABEL: Record<AgentAssignmentStatus, string> = {
@@ -112,9 +105,11 @@ function formatDistance(value: number): string {
 function SpeechEffectDetailBlock({
   detail,
   labelById,
+  presentation,
 }: {
   detail: ObserverSpeechEffectDetail;
   labelById: Map<string, string>;
+  presentation: ScenarioPresentation;
 }) {
   if (!detail.reception && !detail.interpretation && !detail.effect) {
     return (
@@ -159,7 +154,9 @@ function SpeechEffectDetailBlock({
 
       {detail.effect && (
         <>
-          <div className="observer-inspector-effect-line">{formatEffectLine(detail.effect, labelById)}</div>
+          <div className="observer-inspector-effect-line">
+            {formatEffectLine(detail.effect, labelById, presentation.id)}
+          </div>
           <div className="observer-inspector-effect-line">{formatActiveEffectStatusLine(detail.activeEffectStatus)}</div>
         </>
       )}
@@ -171,19 +168,29 @@ function SpeechHistoryEntry({
   entry,
   detail,
   labelById,
+  context,
+  presentation,
 }: {
   entry: ObserverSpeechHistoryEntry;
   detail?: ObserverSpeechEffectDetail;
   labelById: Map<string, string>;
+  context: SpeechTextContext;
+  presentation: ScenarioPresentation;
 }) {
   return (
     <div className="observer-inspector-speech-entry">
       <div className="observer-inspector-speech-message">
         <span className="observer-inspector-speech-relation">{SPEECH_RELATION_LABEL[entry.relation]}</span>
-        {formatSpeechLogMessage(entry.event, labelById)}
+        {formatSpeechLogMessage(entry.event, labelById, context)}
       </div>
       <div className="observer-inspector-speech-meta">{formatSpeechDebugMeta(entry.event, labelById)}</div>
-      {detail && <SpeechEffectDetailBlock detail={detail} labelById={labelById} />}
+      {detail && (
+        <SpeechEffectDetailBlock
+          detail={detail}
+          labelById={labelById}
+          presentation={presentation}
+        />
+      )}
     </div>
   );
 }
@@ -195,9 +202,11 @@ function SpeechHistoryEntry({
 function ActiveEffectSummaryList({
   summaries,
   labelById,
+  presentation,
 }: {
   summaries: ObserverJoinerInspection["activeEffectSummaries"];
   labelById: Map<string, string>;
+  presentation: ScenarioPresentation;
 }) {
   if (summaries.length === 0) {
     return <p className="observer-inspector-speech-empty">現在作用中の発言効果はありません。</p>;
@@ -206,7 +215,9 @@ function ActiveEffectSummaryList({
     <div className="observer-inspector-speech-list">
       {summaries.map((summary) => (
         <div key={`${summary.dimension}-${summary.targetGroupId ?? ""}`} className="observer-inspector-speech-entry">
-          <div className="observer-inspector-speech-message">{formatAggregatedEffectSummary(summary)}</div>
+          <div className="observer-inspector-speech-message">
+            {formatAggregatedEffectSummary(summary, presentation.id)}
+          </div>
           {summary.positiveContributions.length > 0 && (
             <ul className="observer-inspector-factor-list">
               {summary.positiveContributions.map((c) => (
@@ -378,9 +389,17 @@ function TieSummaryList({
 function InspectionCard({
   inspection,
   labelById,
+  presentation,
+  seed,
+  presetId,
+  agentById,
 }: {
   inspection: ObserverJoinerInspection;
   labelById: Map<string, string>;
+  presentation: ScenarioPresentation;
+  seed?: number;
+  presetId?: string;
+  agentById: Map<string, SimulationState["agents"][number]>;
 }) {
   const isNearLeaving = inspection.leaveMargin <= LEAVE_MARGIN_WARNING_THRESHOLD;
   const hasNearestGroup = inspection.nearestGroupId !== undefined;
@@ -389,7 +408,7 @@ function InspectionCard({
     <div className={`observer-inspector-card${isNearLeaving ? " observer-inspector-card--warning" : ""}`}>
       <div className="observer-inspector-row observer-inspector-row--header">
         <span className="observer-inspector-label-name">{inspection.label}</span>
-        <span className="observer-inspector-state">{AGENT_STATE_LABEL[inspection.state]}</span>
+        <span className="observer-inspector-state">{presentation.agentStateLabels[inspection.state]}</span>
       </div>
 
       <div className="observer-inspector-row">
@@ -491,6 +510,13 @@ function InspectionCard({
               entry={entry}
               detail={inspection.speechEffectDetails[i]}
               labelById={labelById}
+              presentation={presentation}
+              context={{
+                scenarioId: presentation.id,
+                seed,
+                presetId,
+                agent: agentById.get(entry.event.speakerId),
+              }}
             />
           ))}
         </div>
@@ -501,7 +527,11 @@ function InspectionCard({
       <div className="observer-inspector-row observer-inspector-row--header">
         <span>現在作用中の発言効果</span>
       </div>
-      <ActiveEffectSummaryList summaries={inspection.activeEffectSummaries} labelById={labelById} />
+      <ActiveEffectSummaryList
+        summaries={inspection.activeEffectSummaries}
+        labelById={labelById}
+        presentation={presentation}
+      />
 
       <div className="observer-inspector-divider" />
 
@@ -528,7 +558,21 @@ function InspectionCard({
 }
 
 /** Issue #135: 学校ペア形成では全員分を一覧できるよう、割当履歴に絞ったcompact cardを使う */
-function ClassroomInspectionCard({ inspection }: { inspection: ObserverJoinerInspection }) {
+function ClassroomInspectionCard({
+  inspection,
+  labelById,
+  presentation,
+  seed,
+  presetId,
+  agentById,
+}: {
+  inspection: ObserverJoinerInspection;
+  labelById: Map<string, string>;
+  presentation: ScenarioPresentation;
+  seed?: number;
+  presetId?: string;
+  agentById: Map<string, SimulationState["agents"][number]>;
+}) {
   return (
     <div
       className={`observer-inspector-card classroom-agent-inspector-card assignment-${inspection.assignmentStatus}`}
@@ -536,7 +580,7 @@ function ClassroomInspectionCard({ inspection }: { inspection: ObserverJoinerIns
     >
       <div className="observer-inspector-row observer-inspector-row--header">
         <span className="observer-inspector-label-name">{inspection.label}</span>
-        <span className="observer-inspector-state">{AGENT_STATE_LABEL[inspection.state]}</span>
+        <span className="observer-inspector-state">{presentation.agentStateLabels[inspection.state]}</span>
       </div>
       <div className="observer-inspector-row">
         <span>割当状況</span>
@@ -566,16 +610,44 @@ function ClassroomInspectionCard({ inspection }: { inspection: ObserverJoinerIns
             : "なし"}
         </span>
       </div>
+      {inspection.speechHistory.length > 0 && (
+        <details className="observer-inspector-effect-details classroom-agent-speech-details">
+          <summary>関連する発言・認知・効果({inspection.speechHistory.length}件)</summary>
+          <div className="observer-inspector-speech-list">
+            {inspection.speechHistory.slice(-HISTORY_DISPLAY_LIMIT).map((entry, i, recentEntries) => (
+              <SpeechHistoryEntry
+                key={entry.event.id}
+                entry={entry}
+                detail={
+                  inspection.speechEffectDetails[
+                    inspection.speechEffectDetails.length - recentEntries.length + i
+                  ]
+                }
+                labelById={labelById}
+                presentation={presentation}
+                context={{
+                  scenarioId: presentation.id,
+                  seed,
+                  presetId,
+                  agent: agentById.get(entry.event.speakerId),
+                }}
+              />
+            ))}
+          </div>
+        </details>
+      )}
     </div>
   );
 }
 
-export function ObserverJoinerInspector({ state, params }: Props) {
-  const isClassroomPair = state.formationScenarioId === "classroomPair";
+export function ObserverJoinerInspector({ state, params, seed, presetId }: Props) {
+  const presentation = getScenarioPresentation(state.formationScenarioId);
+  const isClassroomPair = presentation.id === "classroomPair";
   const inspections = isClassroomPair
     ? buildAgentInspection(state, params)
     : buildObserverJoinerInspection(state, params);
   const labelById = buildAgentLabelMap(state.agents);
+  const agentById = new Map(state.agents.map((agent) => [agent.id, agent]));
 
   return (
     <div className={`panel observer-inspector${isClassroomPair ? " classroom-agent-inspector" : ""}`}>
@@ -587,12 +659,28 @@ export function ObserverJoinerInspector({ state, params }: Props) {
       ) : isClassroomPair ? (
         <div className="classroom-agent-inspector-grid">
           {inspections.map((inspection) => (
-            <ClassroomInspectionCard key={inspection.agentId} inspection={inspection} />
+            <ClassroomInspectionCard
+              key={inspection.agentId}
+              inspection={inspection}
+              labelById={labelById}
+              presentation={presentation}
+              seed={seed}
+              presetId={presetId}
+              agentById={agentById}
+            />
           ))}
         </div>
       ) : (
         inspections.map((inspection) => (
-          <InspectionCard key={inspection.agentId} inspection={inspection} labelById={labelById} />
+          <InspectionCard
+            key={inspection.agentId}
+            inspection={inspection}
+            labelById={labelById}
+            presentation={presentation}
+            seed={seed}
+            presetId={presetId}
+            agentById={agentById}
+          />
         ))
       )}
     </div>

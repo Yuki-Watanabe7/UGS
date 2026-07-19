@@ -13,6 +13,7 @@ import { createInitialState, stepSimulation } from "./engine";
 import { SeededRandom } from "./random";
 import { buildSimulationSummary, buildSpeechEffectsRunSummary } from "./summary";
 import { DEFAULT_MAX_TICKS, metricDelta, optionalMetricDelta, summarizeRuns } from "./monteCarlo";
+import type { FormationRuntimeOptions } from "./formationPolicy";
 
 /**
  * Issue #99: 発言効果ON/OFF paired比較。同一preset由来`params`・`intervention`・`baseSeed`・`runs`で、
@@ -31,11 +32,12 @@ function runSingleCondition(
   enabled: boolean,
   maxTicks: number,
   intervention: InterventionRuntimeOptions | undefined,
+  formation: FormationRuntimeOptions | undefined,
 ): { runResult: MonteCarloRunResult; speechEffectsRunSummary: SpeechEffectsRunSummary } {
   const rng = new SeededRandom(seed);
-  let state = createInitialState(seed, params, intervention, { enabled });
+  let state = createInitialState(seed, params, intervention, { enabled }, undefined, undefined, undefined, formation);
   while (!state.finished && state.tick < maxTicks) {
-    state = stepSimulation(state, params, rng, intervention, { enabled });
+    state = stepSimulation(state, params, rng, intervention, { enabled }, undefined, undefined, undefined, formation);
   }
 
   const summary = buildSimulationSummary(state);
@@ -84,7 +86,7 @@ export function runSpeechEffectsMonteCarlo(
   config: SpeechEffectsMonteCarloConfig,
   enabled: boolean,
 ): SpeechEffectsMonteCarloResult {
-  const { baseSeed, runs: runCount, params, maxTicks, intervention } = config;
+  const { baseSeed, runs: runCount, params, maxTicks, intervention, formation } = config;
   const resolvedMaxTicks = maxTicks ?? DEFAULT_MAX_TICKS;
 
   const runs: MonteCarloRunResult[] = [];
@@ -97,6 +99,7 @@ export function runSpeechEffectsMonteCarlo(
       enabled,
       resolvedMaxTicks,
       intervention,
+      formation,
     );
     runs.push(runResult);
     speechEffectsRuns.push(speechEffectsRunSummary);
