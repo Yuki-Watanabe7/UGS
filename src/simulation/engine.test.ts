@@ -631,6 +631,72 @@ describe("stepSimulation: structured event metadata", () => {
     expect(confirmedEntry?.metadata?.memberCount).toBe(3);
   });
 
+  it("attaches agentApproached (Issue #136) when a non-observerJoiner starts approaching a candidate", () => {
+    const candidate: GroupCandidate = {
+      id: "group-1",
+      x: 405,
+      y: 260,
+      memberIds: ["founder"],
+      status: "forming",
+      age: 0,
+    };
+    const agents: Agent[] = [
+      makeAgent({ id: "founder", state: "forming", x: 405, y: 260 }),
+      // undecided, close enough that attractiveness/approachProbability isn't the bottleneck for this seed
+      makeAgent({ id: "seeker", state: "undecided", x: 400, y: 260, willingness: 1, conformity: 1, influenceAvoidance: 0 }),
+    ];
+    const state: SimulationState = {
+      tick: 5,
+      agents,
+      groupCandidates: [candidate],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    // 候補との距離(5)がJOIN_DISTANCE(26)未満なため、接近を選んだ同一tick内でそのまま
+    // joinedまで進むこともある。ここで確認したいのは"agentApproached"が記録されること自体なので、
+    // 最終状態がapproaching/joinedいずれであってもよい
+    let found: SimulationState | undefined;
+    for (let seed = 1; seed <= 50 && !found; seed++) {
+      const next = runTicks(state, DEFAULT_PARAMS, seed, 1);
+      if (next.log.some((e) => e.eventType === "agentApproached" && e.metadata?.agentId === "seeker")) {
+        found = next;
+      }
+    }
+
+    expect(found).toBeDefined();
+    const approachedEntry = found!.log.find((e) => e.eventType === "agentApproached");
+    expect(approachedEntry).toBeDefined();
+    expect(approachedEntry?.metadata).toMatchObject({ agentId: "seeker", agentLabel: "X", groupId: "group-1" });
+    // observerJoiner専用のeventTypeはこのagentには発生しない
+    expect(found!.log.some((e) => e.eventType === "observerApproached")).toBe(false);
+  });
+
+  it("tracks maxStress (Issue #136) as the running peak, independent of the current stress value", () => {
+    // stressが既にピークへ達したあと引き下がった状態を再現し、maxStressがそのピークを保持し続ける
+    // ことを確認する(通常のstress蓄積は増分が常に0以上のため、ここでは既に高いmaxStressを持つ
+    // agentがさらにstressを蓄積してもmaxStressが現在値未満に落ちないことを検証する)
+    const agent = makeAgent({ id: "solo", state: "undecided", stress: 0.1, maxStress: 0.8, willingness: 1, ambiguityTolerance: 0 });
+    const state: SimulationState = {
+      tick: 0,
+      agents: [agent],
+      groupCandidates: [],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+    };
+
+    const next = runTicks(state, { ...DEFAULT_PARAMS, ambiguityDuration: 1 }, 1, 1);
+    const solo = next.agents[0];
+
+    expect(solo.stress).toBeGreaterThan(0.1);
+    expect(solo.maxStress).toBeGreaterThanOrEqual(0.8);
+    expect(solo.maxStress).toBeGreaterThanOrEqual(solo.stress);
+  });
+
   it("records observerJoinedForming when an observerJoiner joins an unconfirmed candidate", () => {
     const unconfirmedCandidate: GroupCandidate = {
       id: "group-1",

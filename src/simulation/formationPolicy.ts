@@ -428,3 +428,22 @@ export function getFormationPolicyById(id: FormationScenarioId, formationDeadlin
 export function resolveFormationPolicy(options?: FormationRuntimeOptions): FormationPolicy {
   return getFormationPolicyById(options?.scenarioId ?? "afterParty", options?.formationDeadlineTick);
 }
+
+/**
+ * Issue #136: 特定の候補(GroupCandidate)に依存しない、そのポリシーの「標準的な」収容人数を解決する。
+ * `resolveGroupCapacity`は候補固有のオーバーライドを優先する設計だが、classroomPairのように
+ * 候補に関わらず常に固定サイズ(2人)を返すポリシーでは、まだ存在しないダミー候補を渡しても
+ * 同じ結果が得られる。Monte Carlo集計(`pairFormation.ts`)が「奇数人口では何人が必然的に
+ * 割当不可能か」を判定する際に使う。
+ */
+export function resolveNominalGroupCapacity(policy: FormationPolicy, params: SimParams): GroupCapacity {
+  const nominalCandidate: GroupCandidate = {
+    id: "__nominal__",
+    x: 0,
+    y: 0,
+    memberIds: [],
+    status: "forming",
+    age: 0,
+  };
+  return policy.resolveGroupCapacity(nominalCandidate, params);
+}
