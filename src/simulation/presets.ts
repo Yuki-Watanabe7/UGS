@@ -32,7 +32,7 @@ export type ScenarioPreset = {
 export const PRESETS: ScenarioPreset[] = [
   {
     id: "natural",
-    name: "1. 自然に二次会が成立する場",
+    name: "自然に二次会が成立する場",
     description:
       "主導者がいて、二次会意欲の高い人も複数いる。observerJoinerも参加しやすい標準的なケース。",
     params: {
@@ -45,7 +45,7 @@ export const PRESETS: ScenarioPreset[] = [
   },
   {
     id: "ambiguous-dissolve",
-    name: "2. 曖昧なまま解散する場",
+    name: "曖昧なまま解散する場",
     description:
       "主導者がおらず、皆が様子見のまま時間切れになる。observerJoinerは帰宅しやすい。",
     params: {
@@ -59,7 +59,7 @@ export const PRESETS: ScenarioPreset[] = [
   },
   {
     id: "strong-leader",
-    name: "3. 強い主導者が場を作る場",
+    name: "強い主導者が場を作る場",
     description:
       "一人の強い主導者が早期に核を作り、多くの人がそこに引き寄せられる。",
     params: {
@@ -72,7 +72,7 @@ export const PRESETS: ScenarioPreset[] = [
   },
   {
     id: "late-join-culture",
-    name: "4. 後乗りしやすい文化",
+    name: "後乗りしやすい文化",
     description:
       "すでに形成されたグループへの参加コストが低い。observerJoinerが参加しやすい。",
     params: {
@@ -85,7 +85,7 @@ export const PRESETS: ScenarioPreset[] = [
   },
   {
     id: "leftover-free-grouping",
-    name: "5. 自由グループ作りで余りやすい場",
+    name: "自由グループ作りで余りやすい場",
     description:
       "全体をまとめる主導者はおらず、既存の仲良しグループだけが自然に固まっていく。既存の関係性が強く、後から混ざる余地が少ない。observerJoinerが孤立しやすい。",
     params: {
@@ -98,7 +98,7 @@ export const PRESETS: ScenarioPreset[] = [
   },
   {
     id: "classroom-pair",
-    name: "6. 教室で自由にペアを作る場(Phase 2)",
+    name: "教室で自由にペアを作る場",
     description:
       "先生が「自由にペアを作ってください」と指示する教室。2人定員の複数ペアが並行して形成され、" +
       "退出はできない。全員割当か締切tickの到達で終了し、人数が奇数なら1人は未割当のまま残り得る。" +

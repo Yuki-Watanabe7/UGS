@@ -1,5 +1,5 @@
 import type { SimParams } from "../simulation/types";
-import { PRESETS } from "../simulation/presets";
+import type { ScenarioPreset } from "../simulation/presets";
 import { APPLY_MODE_LABEL, SLIDERS } from "./sliderConfig";
 
 type Props = {
@@ -16,6 +16,7 @@ type Props = {
   hasPendingResetChanges: boolean;
   // スマホ幅では詳細パラメータを折りたたんで、基本操作を優先表示する
   collapseSliders?: boolean;
+  presets: readonly ScenarioPreset[];
 };
 
 export function ControlPanel({
@@ -31,6 +32,7 @@ export function ControlPanel({
   onParamsChange,
   hasPendingResetChanges,
   collapseSliders = false,
+  presets,
 }: Props) {
   const sliders = (
     <div className="sliders">
@@ -84,7 +86,7 @@ export function ControlPanel({
       <label className="field">
         <span>シナリオプリセット</span>
         <select value={presetId} onChange={(e) => onPresetChange(e.target.value)}>
-          {PRESETS.map((preset) => (
+          {presets.map((preset) => (
             <option key={preset.id} value={preset.id}>
               {preset.name}
             </option>
@@ -92,7 +94,7 @@ export function ControlPanel({
         </select>
       </label>
       <p className="preset-description">
-        {PRESETS.find((p) => p.id === presetId)?.description}
+        {presets.find((p) => p.id === presetId)?.description}
       </p>
 
       {hasPendingResetChanges && (

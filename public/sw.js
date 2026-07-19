@@ -11,7 +11,7 @@
 // パスはすべてsw.jsの配置場所(GitHub Pagesでは /UGS/)からの相対で解決されるため、
 // base pathをハードコードしない。
 
-const CACHE_NAME = "ugs-cache-v1";
+const CACHE_NAME = "ugs-cache-v2";
 
 // オフライン時に最低限必要なアプリシェル。JS/CSSはファイル名にハッシュが付くため
 // ここには列挙できず、install時にシェルHTMLを解析して参照先を一緒にプリキャッシュする
@@ -61,8 +61,10 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put("./", copy));
+          if (response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put("./", copy));
+          }
           return response;
         })
         .catch(() => caches.match("./", MATCH_OPTS)),
