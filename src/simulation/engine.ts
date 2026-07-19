@@ -443,23 +443,31 @@ function recordApproachFailure(
 
   if (eventType === "approachTargetInvalidated") {
     const reasonText = APPROACH_FAILURE_REASON_TEXT[reason];
+    const targetText =
+      formationPolicy.id === "classroomPair" && failedCandidateId
+        ? `ペア候補 ${failedCandidateId}`
+        : "輪";
     pushLog(
       log,
       tick,
       agent.isObserverJoiner
-        ? `observerJoinerが向かっていた輪が${reasonText}、接近を中断した`
-        : `${agent.label}さんが向かっていた輪が${reasonText}、接近を中断した`,
+        ? `observerJoinerが向かっていた${targetText}が${reasonText}、接近を中断した`
+        : `${agent.label}さんが向かっていた${targetText}が${reasonText}、接近を中断した`,
       tags,
       "approachTargetInvalidated",
       failureMetadata,
     );
   } else {
+    const targetText =
+      formationPolicy.id === "classroomPair" && failedCandidateId
+        ? `ペア候補 ${failedCandidateId}`
+        : "輪";
     pushLog(
       log,
       tick,
       agent.isObserverJoiner
-        ? `observerJoinerが輪に到着したが、既に満員で参加できなかった`
-        : `${agent.label}さんが輪に到着したが、既に満員で参加できなかった`,
+        ? `observerJoinerが${targetText}に到着したが、既に満員で参加できなかった`
+        : `${agent.label}さんが${targetText}に到着したが、既に満員で参加できなかった`,
       tags,
       "joinFailedCapacity",
       failureMetadata,
@@ -717,13 +725,21 @@ export function stepSimulation(
         pushLog(
           log,
           tick,
-          `observerJoinerが${candidate.status === "confirmed" ? "成立済みグループ" : "できかけの輪"}に近づき始めた`,
+          formationPolicy.id === "classroomPair"
+            ? `observerJoinerがペア候補 ${candidate.id} に近づき始めた`
+            : `observerJoinerが${candidate.status === "confirmed" ? "成立済みグループ" : "できかけの輪"}に近づき始めた`,
           ["observerJoiner"],
           "observerApproached",
           { agentId: agent.id, agentLabel: agent.label, groupId: candidate.id, groupStatus: candidate.status },
         );
       } else {
-        pushLog(log, tick, `${agent.label}さんが輪の近くに移動`);
+        pushLog(
+          log,
+          tick,
+          formationPolicy.id === "classroomPair"
+            ? `${agent.label}さんがペア候補 ${candidate.id} に近づき始めた`
+            : `${agent.label}さんが輪の近くに移動`,
+        );
       }
     } else if (agent.isObserverJoiner && rng.chance(0.1)) {
       pushLog(log, tick, `observerJoinerは様子見を継続`, ["observerJoiner"]);
@@ -775,8 +791,12 @@ export function stepSimulation(
           log,
           tick,
           candidate.status === "confirmed"
-            ? `observerJoinerが成立済みグループに参加`
-            : `observerJoinerが未確定の輪に合流`,
+            ? formationPolicy.id === "classroomPair"
+              ? `observerJoinerがペア候補 ${candidate.id} に参加`
+              : `observerJoinerが成立済みグループに参加`
+            : formationPolicy.id === "classroomPair"
+              ? `observerJoinerがペア候補 ${candidate.id} に合流`
+              : `observerJoinerが未確定の輪に合流`,
           ["observerJoiner"],
           candidate.status === "confirmed" ? "observerJoinedConfirmed" : "observerJoinedForming",
           {
@@ -792,8 +812,12 @@ export function stepSimulation(
           log,
           tick,
           candidate.status === "confirmed"
-            ? `${agent.label}さんが成立済みグループに参加`
-            : `${agent.label}さんが輪に合流`,
+            ? formationPolicy.id === "classroomPair"
+              ? `${agent.label}さんがペア候補 ${candidate.id} に参加`
+              : `${agent.label}さんが成立済みグループに参加`
+            : formationPolicy.id === "classroomPair"
+              ? `${agent.label}さんがペア候補 ${candidate.id} に合流`
+              : `${agent.label}さんが輪に合流`,
         );
       }
     }
@@ -947,7 +971,7 @@ export function stepSimulation(
       const capacity = formationPolicy.resolveGroupCapacity(candidate, effectiveParams);
       const confirmedMessage =
         formationPolicy.id === "classroomPair"
-          ? `${nearbyCount}人のペアが成立した`
+          ? `ペア候補 ${candidate.id} が${nearbyCount}人で成立した`
           : `${nearbyCount}人が集まり二次会グループが成立`;
       pushLog(log, tick, confirmedMessage, ["groupConfirmed"], "groupConfirmed", {
         groupId: candidate.id,

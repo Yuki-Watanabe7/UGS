@@ -1,5 +1,6 @@
 import type {
   Agent,
+  AgentAssignmentStatus,
   ObserverActiveEffectStatus,
   ObserverJoinerInspection,
   ObserverSocialExpressionSnapshot,
@@ -257,6 +258,23 @@ function buildActiveEffectSummaries(agentId: string, state: SimulationState): Ag
   return summaries;
 }
 
+/** Issue #135: AgentStateと再探索回数から、学校ペア形成向けの表示状態を決定的に導出する */
+function assignmentStatusFor(agent: Agent): AgentAssignmentStatus {
+  if (agent.state === "joined") return "assigned";
+  if (agent.state === "forming") return "waitingForPartner";
+  if (agent.state === "approaching") return "approaching";
+  if (agent.state === "unassigned") return "unassigned";
+  if (agent.state === "leaving") return "leaving";
+  if (agent.state === "left") return "left";
+  return (agent.searchRestartCount ?? 0) > 0 ? "searchingAgain" : "searching";
+}
+
+function currentGroupIdFor(agent: Agent, state: SimulationState): string | undefined {
+  if (agent.joinedGroupId !== undefined) return agent.joinedGroupId;
+  if (agent.state !== "forming") return undefined;
+  return state.groupCandidates.find((candidate) => candidate.memberIds.includes(agent.id))?.id;
+}
+
 function buildInspection(
   agent: Agent,
   state: SimulationState,
@@ -265,6 +283,13 @@ function buildInspection(
 ): ObserverJoinerInspection {
   const candidate = nearestCandidate(agent, state.groupCandidates);
   const speechHistory = buildSpeechHistory(agent.id, state.speechLog ?? []);
+  const failureEntries = state.log.filter(
+    (entry) =>
+      (entry.eventType === "approachTargetInvalidated" || entry.eventType === "joinFailedCapacity") &&
+      entry.metadata?.agentId === agent.id,
+  );
+  const lastFailure = failureEntries.at(-1);
+  const currentGroupId = currentGroupIdFor(agent, state);
 
   return {
     agentId: agent.id,
@@ -304,7 +329,22 @@ function buildInspection(
     tieSummaries: buildTieSummaries(agent.id, state),
     searchRestartCount: agent.searchRestartCount ?? 0,
     capacityFailureCount: agent.capacityFailureCount ?? 0,
+    assignmentStatus: assignmentStatusFor(agent),
+    approachTargetGroupId: agent.state === "approaching" ? agent.joinedGroupId : undefined,
+    currentGroupId,
+    joinFailureCount: failureEntries.length,
+    lastFailureReason: lastFailure?.metadata?.reason,
+    lastFailureTick: lastFailure?.tick,
   };
+}
+
+/**
+ * Issue #135: 全agentの観察データをagent配列順で組み立てる。学校シナリオのagent Inspector向け。
+ * 既存のobserverJoiner専用APIは下で従来どおりobserverのみを返し、後方互換を維持する。
+ */
+export function buildAgentInspection(state: SimulationState, params: SimParams): ObserverJoinerInspection[] {
+  const phase4 = buildPhase4Context(state, params);
+  return state.agents.map((agent) => buildInspection(agent, state, params, phase4));
 }
 
 /**

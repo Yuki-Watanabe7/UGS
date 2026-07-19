@@ -189,3 +189,65 @@ describe("ObserverJoinerInspector speech history", () => {
     expect(html).toContain("現在作用中の発言効果");
   });
 });
+
+describe("ObserverJoinerInspector classroom assignment history", () => {
+  it("shows every agent with approach target, failure/restart counts, and the last failure reason", () => {
+    const founder = makeAgent({ id: "founder", label: "発起人", state: "forming" });
+    const joiner = makeAgent({
+      id: "joiner",
+      label: "参加者B",
+      state: "approaching",
+      joinedGroupId: "pair-candidate-a",
+      searchRestartCount: 2,
+      capacityFailureCount: 1,
+    });
+    const html = render(
+      makeState({
+        formationScenarioId: "classroomPair",
+        agents: [founder, joiner],
+        groupCandidates: [
+          {
+            id: "pair-candidate-a",
+            x: 100,
+            y: 100,
+            memberIds: ["founder"],
+            status: "forming",
+            age: 1,
+            minGroupSize: 2,
+            maxGroupSize: 2,
+          },
+        ],
+        log: [
+          {
+            tick: 7,
+            message: "参加者Bが満員により再探索した",
+            tags: ["joinFailure"],
+            eventType: "joinFailedCapacity",
+            metadata: { agentId: "joiner", reason: "capacityFull" },
+          },
+        ],
+      }),
+    );
+
+    expect(html).toContain("エージェントインスペクター");
+    expect(html).toContain("発起人");
+    expect(html).toContain("参加者B");
+    expect(html).toContain("pair-candidate-a");
+    expect(html).toContain("参加失敗");
+    expect(html).toContain("1回");
+    expect(html).toContain("再探索");
+    expect(html).toContain("2回");
+    expect(html).toContain("満員（tick 7）");
+  });
+
+  it("keeps the after-party inspector limited to observerJoiners", () => {
+    const observer = makeAgent({ id: "observer", label: "Observer", isObserverJoiner: true });
+    const plain = makeAgent({ id: "plain", label: "Plain" });
+    const html = render(makeState({ formationScenarioId: "afterParty", agents: [observer, plain] }));
+
+    expect(html).toContain("observerJoinerインスペクター");
+    expect(html).toContain("Observer");
+    expect(html).not.toContain("Plain");
+    expect(html).not.toContain("エージェントインスペクター");
+  });
+});

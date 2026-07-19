@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildObserverJoinerInspection } from "./inspection";
+import { buildAgentInspection, buildObserverJoinerInspection } from "./inspection";
 import { attractiveness } from "./engine";
 import { createSpeechEvent } from "./speech";
 import { DEFAULT_PARAMS } from "./presets";
@@ -280,6 +280,71 @@ describe("buildObserverJoinerInspection", () => {
     const [inspection] = buildObserverJoinerInspection(state, DEFAULT_PARAMS);
 
     expect(inspection.speechHistory.map((h) => h.event.id)).toEqual([first.id, second.id]);
+  });
+});
+
+describe("buildAgentInspection", () => {
+  it("returns every agent and derives classroom assignment/failure history", () => {
+    const waiting = makeAgent({ id: "waiting", state: "forming" });
+    const approaching = makeAgent({
+      id: "approaching",
+      state: "approaching",
+      joinedGroupId: "pair-a",
+      searchRestartCount: 2,
+      capacityFailureCount: 1,
+    });
+    const unassigned = makeAgent({ id: "unassigned", state: "unassigned", searchRestartCount: 3 });
+    const state = makeState({
+      agents: [waiting, approaching, unassigned],
+      groupCandidates: [
+        { id: "pair-a", x: 400, y: 260, memberIds: ["waiting"], status: "forming", age: 1, maxGroupSize: 2 },
+      ],
+      log: [
+        {
+          tick: 4,
+          message: "満員",
+          tags: ["joinFailure"],
+          eventType: "joinFailedCapacity",
+          metadata: { agentId: "approaching", reason: "capacityFull" },
+        },
+        {
+          tick: 6,
+          message: "期限切れ",
+          tags: ["joinFailure"],
+          eventType: "approachTargetInvalidated",
+          metadata: { agentId: "approaching", reason: "groupExpired" },
+        },
+      ],
+    });
+
+    const inspections = buildAgentInspection(state, DEFAULT_PARAMS);
+
+    expect(inspections.map((inspection) => inspection.agentId)).toEqual(["waiting", "approaching", "unassigned"]);
+    expect(inspections[0]).toMatchObject({ assignmentStatus: "waitingForPartner", currentGroupId: "pair-a" });
+    expect(inspections[1]).toMatchObject({
+      assignmentStatus: "approaching",
+      approachTargetGroupId: "pair-a",
+      currentGroupId: "pair-a",
+      joinFailureCount: 2,
+      searchRestartCount: 2,
+      lastFailureReason: "groupExpired",
+      lastFailureTick: 6,
+    });
+    expect(inspections[2]).toMatchObject({ assignmentStatus: "unassigned", joinFailureCount: 0 });
+  });
+
+  it("distinguishes first-time searching from searching again", () => {
+    const inspections = buildAgentInspection(
+      makeState({
+        agents: [
+          makeAgent({ id: "first", state: "undecided" }),
+          makeAgent({ id: "retry", state: "undecided", searchRestartCount: 1 }),
+        ],
+      }),
+      DEFAULT_PARAMS,
+    );
+
+    expect(inspections.map((inspection) => inspection.assignmentStatus)).toEqual(["searching", "searchingAgain"]);
   });
 });
 
