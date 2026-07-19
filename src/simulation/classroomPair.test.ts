@@ -280,6 +280,36 @@ describe("classroomPair scenario: engine integration (Issues #132 / #134)", () =
     );
   });
 
+  it("reproduces per-pair confirm ticks and the full join-failure/re-search event sequence for the same seed (受入条件: 再現性)", () => {
+    const params: SimParams = { ...DEFAULT_PARAMS, populationSize: 19, numLeaders: 0, overallWillingness: 0.7 };
+    const run1 = runClassroomToEnd(99, params, 150);
+    const run2 = runClassroomToEnd(99, params, 150);
+
+    // 各ペアの成立tick(groupId毎)が完全一致する
+    const confirmTicksByGroup = (state: SimulationState) =>
+      state.log
+        .filter((entry) => entry.eventType === "groupConfirmed")
+        .map((entry) => ({ tick: entry.tick, groupId: entry.metadata?.groupId }));
+    expect(confirmTicksByGroup(run2)).toEqual(confirmTicksByGroup(run1));
+
+    // 参加失敗(容量起因)・再探索・接近先無効化のイベント列(tick・agentId・metadata)が完全一致する
+    const reSearchSequence = (state: SimulationState) =>
+      state.log
+        .filter(
+          (entry) =>
+            entry.eventType === "joinFailedCapacity" ||
+            entry.eventType === "approachTargetInvalidated" ||
+            entry.eventType === "searchRestarted",
+        )
+        .map((entry) => ({ tick: entry.tick, eventType: entry.eventType, metadata: entry.metadata }));
+    expect(reSearchSequence(run2)).toEqual(reSearchSequence(run1));
+
+    // 未割当確定時の探索スナップショット(再探索回数・満員失敗回数等)も完全一致する
+    const unassignedSnapshots = (state: SimulationState) =>
+      state.log.filter((entry) => entry.eventType === "agentUnassigned").map((entry) => entry.metadata);
+    expect(unassignedSnapshots(run2)).toEqual(unassignedSnapshots(run1));
+  });
+
   it("createInitialState defaults formationDeadlineTick fall back for classroomPair across ticks when the caller omits it", () => {
     const params: SimParams = { ...DEFAULT_PARAMS, populationSize: 10, numLeaders: 0 };
     const rng = new SeededRandom(5);

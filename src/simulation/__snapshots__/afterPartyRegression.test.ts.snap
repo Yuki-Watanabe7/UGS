@@ -1,0 +1,146 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`afterParty既存プリセットの回帰スナップショット (Issue #137) > プリセット「ambiguous-dissolve」のMonte Carlo集計指標に回帰がない 1`] = `
+{
+  "averageFirstGroupConfirmedTick": undefined,
+  "averageJoinedCount": 0,
+  "averageLeftCount": 9.875,
+  "groupFailureRate": 1,
+  "lateJoinSuccessRate": 0,
+  "observerJoinerJoinRate": 0,
+  "observerJoinerLeaveRate": 1,
+  "runs": 8,
+}
+`;
+
+exports[`afterParty既存プリセットの回帰スナップショット (Issue #137) > プリセット「ambiguous-dissolve」の単発seed(1000)の終了サマリーに回帰がない 1`] = `
+{
+  "approaching": 0,
+  "forming": 0,
+  "joined": 0,
+  "leaving": 0,
+  "left": 11,
+  "unassigned": 0,
+  "undecided": 3,
+}
+`;
+
+exports[`afterParty既存プリセットの回帰スナップショット (Issue #137) > プリセット「ambiguous-dissolve」の単発seed(1000)の終了サマリーに回帰がない 2`] = `"maxTicksReached"`;
+
+exports[`afterParty既存プリセットの回帰スナップショット (Issue #137) > プリセット「ambiguous-dissolve」の単発seed(1000)の終了サマリーに回帰がない 3`] = `400`;
+
+exports[`afterParty既存プリセットの回帰スナップショット (Issue #137) > プリセット「late-join-culture」のMonte Carlo集計指標に回帰がない 1`] = `
+{
+  "averageFirstGroupConfirmedTick": 30,
+  "averageJoinedCount": 14,
+  "averageLeftCount": 0,
+  "groupFailureRate": 0,
+  "lateJoinSuccessRate": 1,
+  "observerJoinerJoinRate": 1,
+  "observerJoinerLeaveRate": 0,
+  "runs": 8,
+}
+`;
+
+exports[`afterParty既存プリセットの回帰スナップショット (Issue #137) > プリセット「late-join-culture」の単発seed(1000)の終了サマリーに回帰がない 1`] = `
+{
+  "approaching": 0,
+  "forming": 0,
+  "joined": 14,
+  "leaving": 0,
+  "left": 0,
+  "unassigned": 0,
+  "undecided": 0,
+}
+`;
+
+exports[`afterParty既存プリセットの回帰スナップショット (Issue #137) > プリセット「late-join-culture」の単発seed(1000)の終了サマリーに回帰がない 2`] = `"allSettled"`;
+
+exports[`afterParty既存プリセットの回帰スナップショット (Issue #137) > プリセット「late-join-culture」の単発seed(1000)の終了サマリーに回帰がない 3`] = `83`;
+
+exports[`afterParty既存プリセットの回帰スナップショット (Issue #137) > プリセット「leftover-free-grouping」のMonte Carlo集計指標に回帰がない 1`] = `
+{
+  "averageFirstGroupConfirmedTick": 15.125,
+  "averageJoinedCount": 10.25,
+  "averageLeftCount": 2,
+  "groupFailureRate": 0,
+  "lateJoinSuccessRate": 0.5,
+  "observerJoinerJoinRate": 0.5,
+  "observerJoinerLeaveRate": 0.5,
+  "runs": 8,
+}
+`;
+
+exports[`afterParty既存プリセットの回帰スナップショット (Issue #137) > プリセット「leftover-free-grouping」の単発seed(1000)の終了サマリーに回帰がない 1`] = `
+{
+  "approaching": 0,
+  "forming": 0,
+  "joined": 6,
+  "leaving": 0,
+  "left": 5,
+  "unassigned": 0,
+  "undecided": 3,
+}
+`;
+
+exports[`afterParty既存プリセットの回帰スナップショット (Issue #137) > プリセット「leftover-free-grouping」の単発seed(1000)の終了サマリーに回帰がない 2`] = `"maxTicksReached"`;
+
+exports[`afterParty既存プリセットの回帰スナップショット (Issue #137) > プリセット「leftover-free-grouping」の単発seed(1000)の終了サマリーに回帰がない 3`] = `400`;
+
+exports[`afterParty既存プリセットの回帰スナップショット (Issue #137) > プリセット「natural」のMonte Carlo集計指標に回帰がない 1`] = `
+{
+  "averageFirstGroupConfirmedTick": 14.875,
+  "averageJoinedCount": 14,
+  "averageLeftCount": 0,
+  "groupFailureRate": 0,
+  "lateJoinSuccessRate": 1,
+  "observerJoinerJoinRate": 1,
+  "observerJoinerLeaveRate": 0,
+  "runs": 8,
+}
+`;
+
+exports[`afterParty既存プリセットの回帰スナップショット (Issue #137) > プリセット「natural」の単発seed(1000)の終了サマリーに回帰がない 1`] = `
+{
+  "approaching": 0,
+  "forming": 0,
+  "joined": 14,
+  "leaving": 0,
+  "left": 0,
+  "unassigned": 0,
+  "undecided": 0,
+}
+`;
+
+exports[`afterParty既存プリセットの回帰スナップショット (Issue #137) > プリセット「natural」の単発seed(1000)の終了サマリーに回帰がない 2`] = `"allSettled"`;
+
+exports[`afterParty既存プリセットの回帰スナップショット (Issue #137) > プリセット「natural」の単発seed(1000)の終了サマリーに回帰がない 3`] = `48`;
+
+exports[`afterParty既存プリセットの回帰スナップショット (Issue #137) > プリセット「strong-leader」のMonte Carlo集計指標に回帰がない 1`] = `
+{
+  "averageFirstGroupConfirmedTick": 29.75,
+  "averageJoinedCount": 14,
+  "averageLeftCount": 0,
+  "groupFailureRate": 0,
+  "lateJoinSuccessRate": 1,
+  "observerJoinerJoinRate": 1,
+  "observerJoinerLeaveRate": 0,
+  "runs": 8,
+}
+`;
+
+exports[`afterParty既存プリセットの回帰スナップショット (Issue #137) > プリセット「strong-leader」の単発seed(1000)の終了サマリーに回帰がない 1`] = `
+{
+  "approaching": 0,
+  "forming": 0,
+  "joined": 14,
+  "leaving": 0,
+  "left": 0,
+  "unassigned": 0,
+  "undecided": 0,
+}
+`;
+
+exports[`afterParty既存プリセットの回帰スナップショット (Issue #137) > プリセット「strong-leader」の単発seed(1000)の終了サマリーに回帰がない 2`] = `"allSettled"`;
+
+exports[`afterParty既存プリセットの回帰スナップショット (Issue #137) > プリセット「strong-leader」の単発seed(1000)の終了サマリーに回帰がない 3`] = `92`;

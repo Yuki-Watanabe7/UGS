@@ -440,6 +440,7 @@ stateDiagram-v2
 - [発言効果の適用・減衰](speech-effects-application-model.md)
 - [複数発言効果の競合・累積](speech-effects-aggregation-model.md)
 - [発言効果のpaired Monte Carlo比較](speech-effects-paired-monte-carlo.md)
+- [FormationPolicyの責務と拡張方法](formation-policy-model.md)
 
 ## 10. 意図的にモデル化していないもの
 
@@ -447,7 +448,10 @@ stateDiagram-v2
 - 過去の合流・離脱・発言履歴による性格特性の変化
 - 全候補を同時比較する選択や、距離を連続的に含む魅力度
 - 衝突回避、遮蔽物、方向、騒音などの精密な物理モデル
-- 現実世界での係数の妥当性や統計的効果量の主張
+- 現実世界での係数の妥当性や統計的効果量の主張(二次会・教室ペア形成いずれも、実証データによる較正は行っていない)
+- (`classroomPair`固有)教師が未割当者同士を引き合わせるなどの教師側の介入
+- (`classroomPair`固有)3〜4人班のような可変・2人以外の定員。現状は常に2人固定で、人口が奇数でも
+  自動的に3人班へは広がらない(拡張方法は[FormationPolicyの責務と拡張方法](formation-policy-model.md)を参照)
 
 これらを将来導入する場合は、現行の固定関係・固定特性・最寄り候補のみという前提を変更するため、
 新しいモデル仮説として数式、状態、検証方法を別途定義する必要がある。
