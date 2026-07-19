@@ -84,4 +84,38 @@ describe("SimulationSummaryPanel", () => {
     expect(html).toContain("未離脱");
     expect(html).toContain("未発生");
   });
+
+  it("shows the classroom finish reason and unassigned-agent list", () => {
+    const unassigned = makeAgent({ id: "u1", label: "U", state: "unassigned", searchRestartCount: 2 });
+    const log: LogEntry[] = [
+      {
+        tick: 20,
+        message: "",
+        tags: ["unassigned"],
+        eventType: "agentUnassigned",
+        metadata: {
+          agentId: "u1",
+          previousAgentState: "approaching",
+          searchRestartCount: 2,
+          capacityFailureCount: 1,
+          stress: 0.7,
+        },
+      },
+      {
+        tick: 20,
+        message: "",
+        tags: ["simulation"],
+        eventType: "simulationFinished",
+        metadata: { assignedCount: 18, unassignedCount: 1, finishReason: "deadlineReached" },
+      },
+    ];
+    const state = makeState({ agents: [unassigned], log, tick: 20, finished: true });
+
+    const html = renderToStaticMarkup(createElement(SimulationSummaryPanel, { state }));
+
+    expect(html).toContain("締切到達");
+    expect(html).toContain("未割当者一覧");
+    expect(html).toContain("確定前: 接近中");
+    expect(html).toContain("再探索2回");
+  });
 });

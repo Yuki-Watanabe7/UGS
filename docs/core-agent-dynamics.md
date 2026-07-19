@@ -342,6 +342,22 @@ stateDiagram-v2
     removed --> [*]: 配列から除去
 ```
 
+### 6.3 学校のペア形成ポリシー
+
+`classroomPair`では同じAgent/GroupCandidateとtickループを使うが、次のルールへ差し替える。
+
+- 候補の成立最小人数と最大定員はどちらも2。成立済みペアへ3人目を追加しない。
+- stressは観察値として蓄積するが、しきい値を超えても`leaving | left`へ遷移しない。
+- 全Agentが`joined`になれば、締切前でも`allAssigned`として終了する。
+- `formationDeadlineTick`に達した時点でペア未成立の`undecided | forming | approaching`を
+  終端状態`unassigned`へ確定し、`deadlineReached`として終了する。
+- 人口が奇数でも最大定員を3へ広げない。そのため少なくとも1人は未割当になり得る。
+- 未割当確定時はagent ID、確定直前の探索状態・対象候補、再探索回数、満員による失敗回数、
+  最後に失敗した候補、stressを`agentUnassigned`イベントへ保存する。
+
+`simulationFinished`イベントは`assignedCount`、`unassignedCount`、`finishReason`を持つ。同じseed・入力・
+処理順序なら、ペア所属だけでなく未割当者と終了理由も同じになる。
+
 ## 7. 介入と発言効果は基本式のどこへ作用するか
 
 ### 7.1 介入

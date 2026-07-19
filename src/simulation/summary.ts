@@ -76,6 +76,7 @@ export function buildSimulationSummary(state: SimulationState): SimulationSummar
     joined: 0,
     leaving: 0,
     left: 0,
+    unassigned: 0,
   };
   for (const agent of state.agents) {
     stateCounts[agent.state] += 1;
@@ -88,15 +89,34 @@ export function buildSimulationSummary(state: SimulationState): SimulationSummar
     .filter((agent) => agent.isObserverJoiner)
     .map((agent) => buildObserverJoinerRunSummary(agent, state.log, firstGroupConfirmedTick));
 
-  const finishedTick = state.finished
-    ? (state.log.find((entry) => entry.eventType === "simulationFinished")?.tick ?? state.tick)
-    : undefined;
+  const finishedEntry = state.log.find((entry) => entry.eventType === "simulationFinished");
+  const finishedTick = state.finished ? (finishedEntry?.tick ?? state.tick) : undefined;
+  const unassignedAgents = state.agents
+    .filter((agent) => agent.state === "unassigned")
+    .map((agent) => {
+      const event = state.log.find(
+        (entry) => entry.eventType === "agentUnassigned" && entry.metadata?.agentId === agent.id,
+      );
+      return {
+        agentId: agent.id,
+        label: agent.label,
+        previousState: event?.metadata?.previousAgentState,
+        targetGroupId: event?.metadata?.groupId,
+        searchRestartCount: event?.metadata?.searchRestartCount ?? agent.searchRestartCount ?? 0,
+        capacityFailureCount: event?.metadata?.capacityFailureCount ?? agent.capacityFailureCount ?? 0,
+        lastFailedCandidateId: event?.metadata?.lastFailedCandidateId ?? agent.lastFailedCandidateId,
+        stress: event?.metadata?.stress ?? agent.stress,
+      };
+    });
 
   return {
     finished: state.finished,
     finishedTick,
+    finishReason: finishedEntry?.metadata?.finishReason,
     joinedCount: stateCounts.joined,
     leftCount: stateCounts.left,
+    unassignedCount: stateCounts.unassigned,
+    unassignedAgents,
     stateCounts,
     observerJoiners,
     firstNucleusTick: minTick(ticksFor(state.log, "nucleusCreated")),

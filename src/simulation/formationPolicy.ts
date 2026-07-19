@@ -1,4 +1,4 @@
-import type { ApproachFailureReason, Agent, GroupCandidate, SimParams } from "./types";
+import type { ApproachFailureReason, Agent, GroupCandidate, SimParams, SimulationFinishReason } from "./types";
 import { clamp, distance } from "./model";
 
 /**
@@ -122,6 +122,12 @@ export interface FormationPolicy {
   isFinished(agents: Agent[], tick: number): boolean;
 
   /**
+   * Issue #134: 責務5の判定理由。未終了ならundefinedを返す。
+   * `isFinished`と同じ条件を、`simulationFinished`の構造化metadataへ保持できる形で返す。
+   */
+  finishReason(agents: Agent[], tick: number): SimulationFinishReason | undefined;
+
+  /**
    * 責務6(Issue #131): 候補の成立最小人数・収容最大人数を解決する。候補固有のオーバーライド
    * (`GroupCandidate.minGroupSize`/`maxGroupSize`)が設定されていればそちらを優先するのが一般的な実装。
    */
@@ -168,6 +174,13 @@ const AFTER_PARTY_GATHER_RADIUS = 60;
 // 責務8(Issue #133): 満員による参加失敗1回あたりの追加stress基礎割合。willingnessが高いほど
 // 「入りたかったのに入れなかった」ショックが大きくなるよう、agent.willingnessに掛けて使う
 const JOIN_FAILURE_STRESS_RATE = 0.08;
+
+function afterPartyFinishReason(agents: Agent[], tick: number): SimulationFinishReason | undefined {
+  const allSettled = agents.every((a) => a.state === "joined" || a.state === "left");
+  if (allSettled) return "allSettled";
+  if (tick >= MAX_SIMULATION_TICKS) return "maxTicksReached";
+  return undefined;
+}
 
 export const afterPartyPolicy: FormationPolicy = {
   id: "afterParty",
@@ -242,8 +255,11 @@ export const afterPartyPolicy: FormationPolicy = {
   },
 
   isFinished(agents, tick) {
-    const allSettled = agents.every((a) => a.state === "joined" || a.state === "left");
-    return allSettled || tick >= MAX_SIMULATION_TICKS;
+    return afterPartyFinishReason(agents, tick) !== undefined;
+  },
+
+  finishReason(agents, tick) {
+    return afterPartyFinishReason(agents, tick);
   },
 
   resolveGroupCapacity(candidate, params) {
@@ -294,6 +310,16 @@ const CLASSROOM_STRESS_RATE = 0.005;
 const CLASSROOM_JOIN_FAILURE_STRESS_RATE = 0.1;
 // `formationDeadlineTick`省略時の既定値
 export const DEFAULT_CLASSROOM_PAIR_DEADLINE_TICK = 200;
+
+function classroomPairFinishReason(
+  agents: Agent[],
+  tick: number,
+  formationDeadlineTick: number,
+): SimulationFinishReason | undefined {
+  if (agents.every((a) => a.state === "joined")) return "allAssigned";
+  if (tick >= formationDeadlineTick) return "deadlineReached";
+  return undefined;
+}
 
 function createClassroomPairPolicy(formationDeadlineTick: number): FormationPolicy {
   return {
@@ -354,8 +380,11 @@ function createClassroomPairPolicy(formationDeadlineTick: number): FormationPoli
     },
 
     isFinished(agents, tick) {
-      const allPaired = agents.every((a) => a.state === "joined");
-      return allPaired || tick >= formationDeadlineTick;
+      return classroomPairFinishReason(agents, tick, formationDeadlineTick) !== undefined;
+    },
+
+    finishReason(agents, tick) {
+      return classroomPairFinishReason(agents, tick, formationDeadlineTick);
     },
 
     resolveGroupCapacity(candidate) {

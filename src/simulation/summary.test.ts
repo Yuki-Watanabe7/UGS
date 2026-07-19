@@ -45,6 +45,7 @@ describe("buildSimulationSummary: stateCounts / joinedCount / leftCount", () => 
       makeAgent({ id: "c", state: "left" }),
       makeAgent({ id: "d", state: "undecided" }),
       makeAgent({ id: "e", state: "leaving" }),
+      makeAgent({ id: "f", state: "unassigned" }),
     ];
     const state = makeState({ agents });
 
@@ -52,6 +53,7 @@ describe("buildSimulationSummary: stateCounts / joinedCount / leftCount", () => 
 
     expect(summary.joinedCount).toBe(2);
     expect(summary.leftCount).toBe(1);
+    expect(summary.unassignedCount).toBe(1);
     expect(summary.stateCounts).toEqual({
       undecided: 1,
       forming: 0,
@@ -59,7 +61,64 @@ describe("buildSimulationSummary: stateCounts / joinedCount / leftCount", () => 
       joined: 2,
       leaving: 1,
       left: 1,
+      unassigned: 1,
     });
+  });
+});
+
+describe("buildSimulationSummary: classroom unassigned / finish reason (Issue #134)", () => {
+  it("lists unassigned agents with their structured search snapshots and finish reason", () => {
+    const unassigned = makeAgent({
+      id: "unassigned-1",
+      label: "U",
+      state: "unassigned",
+      stress: 0.8,
+      searchRestartCount: 3,
+      capacityFailureCount: 2,
+      lastFailedCandidateId: "pair-old",
+    });
+    const log: LogEntry[] = [
+      {
+        tick: 20,
+        message: "",
+        tags: ["unassigned"],
+        eventType: "agentUnassigned",
+        metadata: {
+          agentId: "unassigned-1",
+          groupId: "pair-target",
+          previousAgentState: "approaching",
+          searchRestartCount: 3,
+          capacityFailureCount: 2,
+          lastFailedCandidateId: "pair-old",
+          stress: 0.8,
+        },
+      },
+      {
+        tick: 20,
+        message: "",
+        tags: ["simulation"],
+        eventType: "simulationFinished",
+        metadata: { assignedCount: 2, unassignedCount: 1, finishReason: "deadlineReached" },
+      },
+    ];
+    const state = makeState({ agents: [unassigned], log, tick: 20, finished: true });
+
+    const summary = buildSimulationSummary(state);
+
+    expect(summary.finishReason).toBe("deadlineReached");
+    expect(summary.unassignedCount).toBe(1);
+    expect(summary.unassignedAgents).toEqual([
+      {
+        agentId: "unassigned-1",
+        label: "U",
+        previousState: "approaching",
+        targetGroupId: "pair-target",
+        searchRestartCount: 3,
+        capacityFailureCount: 2,
+        lastFailedCandidateId: "pair-old",
+        stress: 0.8,
+      },
+    ]);
   });
 });
 

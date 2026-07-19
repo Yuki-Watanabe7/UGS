@@ -1024,17 +1024,57 @@ export function stepSimulation(
     return true;
   });
 
-  const finished = formationPolicy.isFinished(agents, tick);
+  // Issue #134: boolだけでなく終了理由も同じpolicy境界から受け取り、終了イベントへ構造化して残す。
+  // `allAssigned`はdeadlineと同一tickに成立した場合も優先される(classroomPairPolicy側の判定順)。
+  const finishReason = formationPolicy.finishReason(agents, tick);
+  const finished = finishReason !== undefined;
 
   if (finished && !state.finished) {
-    const joinedCount = agents.filter((a) => a.state === "joined").length;
-    // Issue #132: 教室ペア形成シナリオでは「帰宅」概念がない代わりに、人口が奇数の場合に
-    // 起こりうる「未割当のまま終了」を明示する
+    // Issue #134: 学校シナリオがdeadlineで終了した場合、探索途中の状態をイベントmetadataへ
+    // スナップショットしてから、未参加agentを専用の終端状態へ確定する。joinedGroupIdは探索先を
+    // 表す一時値なので、イベントのgroupIdへ退避したうえでagent本体からは除去する。
+    if (formationPolicy.id === "classroomPair" && finishReason === "deadlineReached") {
+      for (const agent of agents) {
+        if (agent.state === "joined") continue;
+
+        const previousAgentState = agent.state;
+        const targetGroupId =
+          agent.joinedGroupId ?? candidates.find((candidate) => candidate.memberIds.includes(agent.id))?.id;
+        pushLog(
+          log,
+          tick,
+          `${agent.label}さんは締切時点でペアが成立せず、未割当となった`,
+          ["unassigned"],
+          "agentUnassigned",
+          {
+            agentId: agent.id,
+            agentLabel: agent.label,
+            groupId: targetGroupId,
+            previousAgentState,
+            searchRestartCount: agent.searchRestartCount ?? 0,
+            capacityFailureCount: agent.capacityFailureCount ?? 0,
+            lastFailedCandidateId: agent.lastFailedCandidateId,
+            stress: agent.stress,
+          },
+        );
+        agent.state = "unassigned";
+        agent.joinedGroupId = undefined;
+        agent.vx = 0;
+        agent.vy = 0;
+      }
+    }
+
+    const assignedCount = agents.filter((a) => a.state === "joined").length;
+    const unassignedCount = agents.filter((a) => a.state === "unassigned").length;
     const finishedMessage =
       formationPolicy.id === "classroomPair"
-        ? `シミュレーション終了: ペア成立${joinedCount}人 / 未割当${agents.length - joinedCount}人`
-        : `シミュレーション終了: 参加${joinedCount}人 / 帰宅${agents.filter((a) => a.state === "left").length}人`;
-    pushLog(log, tick, finishedMessage, ["simulation"], "simulationFinished");
+        ? `シミュレーション終了: ペア成立${assignedCount}人 / 未割当${unassignedCount}人 / 終了理由: ${finishReason}`
+        : `シミュレーション終了: 参加${assignedCount}人 / 帰宅${agents.filter((a) => a.state === "left").length}人`;
+    pushLog(log, tick, finishedMessage, ["simulation"], "simulationFinished", {
+      assignedCount,
+      unassignedCount,
+      finishReason,
+    });
   }
 
   const nextState: SimulationState = {

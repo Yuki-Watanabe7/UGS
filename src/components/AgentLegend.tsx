@@ -1,5 +1,5 @@
 const ITEMS: Array<{ color: string; label: string }> = [
-  { color: "#9ca3af", label: "gray: 未定" },
+  { color: "#9ca3af", label: "gray: 未定 / 締切時点で未割当" },
   { color: "#3b82f6", label: "blue: 二次会に向かう意思が強まりつつある" },
   { color: "#22c55e", label: "green: 輪/グループに合流済み(形成中の輪 or 成立済みグループ)" },
   { color: "#ef4444", label: "red: 帰宅方向" },

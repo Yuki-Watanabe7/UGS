@@ -47,7 +47,7 @@ function runClassroomToEnd(
   return state;
 }
 
-describe("classroomPair scenario: engine integration (Issue #132)", () => {
+describe("classroomPair scenario: engine integration (Issues #132 / #134)", () => {
   it("pairs up a 20-person population into at most 10 pairs, and no agent belongs to more than one pair", () => {
     const params: SimParams = { ...DEFAULT_PARAMS, populationSize: 20, numLeaders: 0, overallWillingness: 0.8 };
     const state = runClassroomToEnd(7, params, 150);
@@ -149,29 +149,134 @@ describe("classroomPair scenario: engine integration (Issue #132)", () => {
 
     expect(next.finished).toBe(true);
     expect(next.tick).toBeLessThan(200);
+    expect(next.agents.every((agent) => agent.state === "joined")).toBe(true);
+    expect(next.log.filter((entry) => entry.eventType === "agentUnassigned")).toHaveLength(0);
+    expect(next.log.find((entry) => entry.eventType === "simulationFinished")?.metadata).toMatchObject({
+      assignedCount: 2,
+      unassignedCount: 0,
+      finishReason: "allAssigned",
+    });
   });
 
-  it("hits the deadline with an unassigned agent left over for an odd population (受入条件: deadline到達時に未割当者を残したまま終了できる)", () => {
-    const params: SimParams = { ...DEFAULT_PARAMS, populationSize: 15, numLeaders: 0, overallWillingness: 0.6 };
-    const deadline = 60;
+  it("confirms every unresolved agent as unassigned at the deadline and records its search snapshot", () => {
+    const confirmedPair: GroupCandidate = {
+      id: "pair-confirmed",
+      x: 100,
+      y: 100,
+      memberIds: ["paired-a", "paired-b"],
+      status: "confirmed",
+      age: 1,
+    };
+    const searchingPair: GroupCandidate = {
+      id: "pair-searching",
+      x: 700,
+      y: 450,
+      memberIds: ["forming-agent"],
+      status: "forming",
+      age: 0,
+    };
+    const agents: Agent[] = [
+      makeAgent({ id: "paired-a", state: "joined", joinedGroupId: "pair-confirmed" }),
+      makeAgent({ id: "paired-b", state: "joined", joinedGroupId: "pair-confirmed" }),
+      makeAgent({ id: "undecided-agent", willingness: 0, state: "undecided" }),
+      makeAgent({ id: "forming-agent", state: "forming", joinedGroupId: "pair-searching", x: 700, y: 450 }),
+      makeAgent({
+        id: "approaching-agent",
+        state: "approaching",
+        joinedGroupId: "pair-searching",
+        x: 20,
+        y: 20,
+        searchRestartCount: 2,
+        capacityFailureCount: 1,
+        lastFailedCandidateId: "pair-old",
+        stress: 0.75,
+      }),
+    ];
+    const state: SimulationState = {
+      tick: 9,
+      agents,
+      groupCandidates: [confirmedPair, searchingPair],
+      log: [],
+      width: 800,
+      height: 520,
+      finished: false,
+      formationScenarioId: "classroomPair",
+      formationDeadlineTick: 10,
+    };
+
+    const next = stepSimulation(state, DEFAULT_PARAMS, new SeededRandom(1));
+
+    expect(next.finished).toBe(true);
+    expect(next.agents.filter((agent) => agent.state === "joined")).toHaveLength(2);
+    expect(next.agents.filter((agent) => agent.state === "unassigned")).toHaveLength(3);
+    expect(next.agents.some((agent) => agent.state === "undecided" || agent.state === "forming" || agent.state === "approaching")).toBe(
+      false,
+    );
+
+    const unassignedEvents = next.log.filter((entry) => entry.eventType === "agentUnassigned");
+    expect(unassignedEvents).toHaveLength(3);
+    expect(unassignedEvents.map((entry) => entry.metadata?.agentId)).toEqual([
+      "undecided-agent",
+      "forming-agent",
+      "approaching-agent",
+    ]);
+    expect(unassignedEvents.find((entry) => entry.metadata?.agentId === "approaching-agent")?.metadata).toMatchObject({
+      groupId: "pair-searching",
+      previousAgentState: "approaching",
+      searchRestartCount: 2,
+      capacityFailureCount: 1,
+      lastFailedCandidateId: "pair-old",
+      stress: 0.75,
+    });
+    expect(unassignedEvents.find((entry) => entry.metadata?.agentId === "forming-agent")?.metadata).toMatchObject({
+      groupId: "pair-searching",
+      previousAgentState: "forming",
+    });
+    expect(next.log.find((entry) => entry.eventType === "simulationFinished")?.metadata).toMatchObject({
+      assignedCount: 2,
+      unassignedCount: 3,
+      finishReason: "deadlineReached",
+    });
+  });
+
+  it("handles 19 people without over-capacity or duplicate membership and leaves at least one person unassigned", () => {
+    const params: SimParams = { ...DEFAULT_PARAMS, populationSize: 19, numLeaders: 0, overallWillingness: 0.6 };
+    const deadline = 100;
     const state = runClassroomToEnd(11, params, deadline);
 
     expect(state.finished).toBe(true);
     expect(state.tick).toBe(deadline);
-    const unassigned = state.agents.filter((a) => a.state !== "joined");
-    // 奇数人口なので「全員割当」には決して到達できず、必ず奇数人が未割当のまま残る
+    const unassigned = state.agents.filter((a) => a.state === "unassigned");
+    // 奇数人口では2人定員のままなので「全員割当」には到達せず、3人組へ自動変更もしない。
     expect(unassigned.length % 2).toBe(1);
     expect(unassigned.length).toBeGreaterThanOrEqual(1);
+
+    const memberships = state.groupCandidates
+      .filter((candidate) => candidate.status === "confirmed")
+      .flatMap((candidate) => {
+        expect(candidate.memberIds).toHaveLength(2);
+        return candidate.memberIds;
+      });
+    expect(new Set(memberships).size).toBe(memberships.length);
+    expect(state.log.find((entry) => entry.eventType === "simulationFinished")?.metadata?.finishReason).toBe(
+      "deadlineReached",
+    );
   });
 
-  it("reproduces the same pairings and finish tick for the same seed (受入条件: 再現性)", () => {
-    const params: SimParams = { ...DEFAULT_PARAMS, populationSize: 16, numLeaders: 0, overallWillingness: 0.7 };
+  it("reproduces the same pairings, unassigned agents, and finish reason for the same seed (受入条件: 再現性)", () => {
+    const params: SimParams = { ...DEFAULT_PARAMS, populationSize: 19, numLeaders: 0, overallWillingness: 0.7 };
     const run1 = runClassroomToEnd(99, params, 150);
     const run2 = runClassroomToEnd(99, params, 150);
 
     expect(run2.tick).toBe(run1.tick);
     expect(run2.agents.map((a) => ({ id: a.id, state: a.state, joinedGroupId: a.joinedGroupId }))).toEqual(
       run1.agents.map((a) => ({ id: a.id, state: a.state, joinedGroupId: a.joinedGroupId })),
+    );
+    expect(
+      run2.log.filter((entry) => entry.eventType === "agentUnassigned").map((entry) => entry.metadata?.agentId),
+    ).toEqual(run1.log.filter((entry) => entry.eventType === "agentUnassigned").map((entry) => entry.metadata?.agentId));
+    expect(run2.log.find((entry) => entry.eventType === "simulationFinished")?.metadata?.finishReason).toBe(
+      run1.log.find((entry) => entry.eventType === "simulationFinished")?.metadata?.finishReason,
     );
   });
 
