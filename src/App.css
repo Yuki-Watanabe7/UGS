@@ -488,6 +488,34 @@
   fill: #0b0d12;
 }
 
+.resolved-groups-region-bg {
+  fill: rgba(20, 83, 45, 0.13);
+}
+
+.resolved-groups-region-boundary {
+  stroke: rgba(74, 222, 128, 0.55);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+}
+
+.resolved-groups-region-title,
+.forming-groups-region-title {
+  fill: #86efac;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.forming-groups-region-title {
+  fill: #bfdbfe;
+}
+
+.resolved-groups-overflow {
+  fill: #fde68a;
+  font-size: 10px;
+  font-weight: 700;
+}
+
 .candidate-ring {
   fill: rgba(59, 130, 246, 0.06);
   stroke: rgba(59, 130, 246, 0.45);

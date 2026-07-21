@@ -340,6 +340,7 @@ function SimulationApp({ scenario }: Props) {
             width={simState.width}
             height={simState.height}
             formationScenarioId={simState.formationScenarioId}
+            runId={runId}
             thoughts={visibleThoughts}
             speeches={visibleSpeeches}
           />

@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import type { Agent, GroupCandidate } from "../simulation/types";
 import type { FormationScenarioId } from "../simulation/formationPolicy";
 import type { ExpressionIntent } from "../simulation/expression";
@@ -6,6 +7,12 @@ import { ThoughtBubble } from "./ThoughtBubble";
 import { SpeechBubble } from "./SpeechBubble";
 import { computeThoughtBubbleLayouts, type ThoughtBubblePlacementInput } from "./thoughtBubbleLayout";
 import { getScenarioPresentation, type ScenarioPresentation } from "../presentation/scenarioPresentation";
+import {
+  deriveGroupVisualLayout,
+  isEvacuatedClassroomCandidate,
+  updateGroupVisualSlotRegistry,
+  type GroupVisualSlotRegistry,
+} from "./groupVisualLayout";
 
 /**
  * 表示すべき心の声1件分。文言生成・寿命管理は呼び出し側(表示管理レイヤー)の責務で、ここでは受け取るだけ。
@@ -43,6 +50,8 @@ type Props = {
   height: number;
   /** Issue #135: 学校ペア形成でのみ容量・割当状態を詳しく表示する */
   formationScenarioId?: FormationScenarioId;
+  /** Reset・seed・preset・scenario変更時に、成立済みグループの表示slotを初期化する実行ID */
+  runId?: number | string;
   /** 現在表示すべき心の声。未指定/空配列なら既存のCanvas表示から変化しない */
   thoughts?: ThoughtBubbleDisplay[];
   /** 現在表示すべき発言。未指定/空配列なら発言吹き出しは表示しない */
@@ -274,17 +283,64 @@ export function SimulationCanvas({
   width,
   height,
   formationScenarioId,
+  runId = 0,
   thoughts = [],
   speeches = [],
 }: Props) {
   const presentation = getScenarioPresentation(formationScenarioId);
   const isClassroomPair = presentation.id === "classroomPair";
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [viewportWidth, setViewportWidth] = useState(width);
+  const slotRegistryRef = useRef<GroupVisualSlotRegistry>({
+    resetKey: `${formationScenarioId ?? "afterParty"}:${runId}`,
+    assignments: new Map(),
+  });
+  const slotResetKey = `${formationScenarioId ?? "afterParty"}:${runId}`;
+  const evacuatedCandidateIds = groupCandidates
+    .filter((candidate) => isEvacuatedClassroomCandidate(candidate, formationScenarioId))
+    .map((candidate) => candidate.id);
+  slotRegistryRef.current = updateGroupVisualSlotRegistry(
+    slotRegistryRef.current,
+    slotResetKey,
+    evacuatedCandidateIds,
+  );
+
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const updateWidth = () => {
+      const measuredWidth = svg.getBoundingClientRect().width;
+      if (measuredWidth > 0) setViewportWidth(measuredWidth);
+    };
+    updateWidth();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(svg);
+    return () => observer.disconnect();
+  }, [width]);
+
+  const visualLayout = deriveGroupVisualLayout({
+    agents,
+    groupCandidates,
+    width,
+    height,
+    formationScenarioId,
+    slotAssignments: slotRegistryRef.current.assignments,
+    viewportWidth,
+  });
+  const visualAgents = agents
+    .map((agent) => {
+      const visual = visualLayout.agents.get(agent.id);
+      if (!visual?.isVisible) return undefined;
+      return visual ? { ...agent, x: visual.x, y: visual.y } : agent;
+    })
+    .filter((agent): agent is Agent => agent !== undefined);
   const speakingAgentIds = new Set(speeches.map((speech) => speech.agentId));
-  const speechInputs = buildSpeechPlacementInputs(agents, speeches, width, height);
+  const speechInputs = buildSpeechPlacementInputs(visualAgents, speeches, width, height);
   // Issue #119: 乖離発言では本心(心の声)を発言と対に同時表示する。話者本人の通常の心の声は
   // 引き続き除外(`speakingAgentIds`)し、代わりにこの本心オーバーレイを別layoutとして並べる。
-  const innerThoughtInputs = buildInnerThoughtPlacementInputs(agents, speeches, width, height);
-  const thoughtInputs = buildThoughtPlacementInputs(agents, thoughts, width, height, speakingAgentIds);
+  const innerThoughtInputs = buildInnerThoughtPlacementInputs(visualAgents, speeches, width, height);
+  const thoughtInputs = buildThoughtPlacementInputs(visualAgents, thoughts, width, height, speakingAgentIds);
   // 発言を先に並べてcomputeThoughtBubbleLayoutsへ渡すことで、重ならない候補位置の
   // 確保を発言吹き出し優先で行う(心の声と発言の間の重なりも避けるため、まとめて同じ衝突回避に通す)。
   // 本心オーバーレイは対になる発言の直後に置き、発言側の配置を優先させる。
@@ -293,6 +349,7 @@ export function SimulationCanvas({
   return (
     <div className="panel canvas-panel">
       <svg
+        ref={svgRef}
         viewBox={`0 0 ${width} ${height}`}
         width="100%"
         height={height}
@@ -301,18 +358,54 @@ export function SimulationCanvas({
       >
         <rect x={0} y={0} width={width} height={height} className="canvas-bg" />
 
+        {isClassroomPair && visualLayout.resolvedRegion && (
+          <g className="resolved-groups-region" aria-label="成立済みのペア表示領域">
+            <rect
+              x={visualLayout.resolvedRegion.x}
+              y={visualLayout.resolvedRegion.y}
+              width={visualLayout.resolvedRegion.width}
+              height={visualLayout.resolvedRegion.height}
+              className="resolved-groups-region-bg"
+            />
+            <text x={12} y={17} className="resolved-groups-region-title">
+              成立済みのペア
+            </text>
+            <line
+              x1={0}
+              y1={visualLayout.resolvedRegion.height}
+              x2={width}
+              y2={visualLayout.resolvedRegion.height}
+              className="resolved-groups-region-boundary"
+            />
+            <text
+              x={12}
+              y={visualLayout.resolvedRegion.height + 16}
+              className="forming-groups-region-title"
+            >
+              相手を探している生徒
+            </text>
+            {visualLayout.resolvedRegion.overflowCount > 0 && (
+              <text x={width - 12} y={17} textAnchor="end" className="resolved-groups-overflow">
+                +{visualLayout.resolvedRegion.overflowCount}組は下の一覧で確認
+              </text>
+            )}
+          </g>
+        )}
+
         {isClassroomPair &&
-          agents.map((agent) => {
+          visualAgents.map((agent) => {
             if (agent.state !== "approaching" || !agent.joinedGroupId) return null;
             const target = groupCandidates.find((candidate) => candidate.id === agent.joinedGroupId);
             if (!target) return null;
+            const targetVisual = visualLayout.candidates.get(target.id);
+            if (!targetVisual || targetVisual.isEvacuated) return null;
             return (
               <line
                 key={`approach-${agent.id}-${target.id}`}
                 x1={agent.x}
                 y1={agent.y}
-                x2={target.x}
-                y2={target.y}
+                x2={targetVisual.center.x}
+                y2={targetVisual.center.y}
                 className="approach-link"
                 aria-label={`${agent.label}からペア候補 ${target.id} への接近`}
               />
@@ -320,6 +413,8 @@ export function SimulationCanvas({
           })}
 
         {groupCandidates.map((candidate) => {
+          const candidateVisual = visualLayout.candidates.get(candidate.id);
+          if (!candidateVisual?.isVisible) return null;
           const fading =
             candidate.status === "dissolving" ||
             candidate.status === "dissolved" ||
@@ -327,21 +422,31 @@ export function SimulationCanvas({
           const classroomState = isClassroomPair ? classroomCandidateState(candidate, agents) : undefined;
           const maxSize = classroomCandidateMaxSize(candidate);
           const openSlots = Math.max(0, maxSize - candidate.memberIds.length);
+          const labelY = candidateVisual.isEvacuated
+            ? candidateVisual.center.y - candidateVisual.displayRadius - 8
+            : candidateVisual.center.y - 60;
+          const capacityY = candidateVisual.isEvacuated
+            ? candidateVisual.center.y - candidateVisual.displayRadius + 7
+            : candidateVisual.center.y - 44;
           return (
             <g
               key={candidate.id}
               opacity={fading ? 0.35 : 1}
               data-candidate-state={classroomState}
+              data-evacuated={candidateVisual.isEvacuated || undefined}
+              data-visual-slot={
+                candidateVisual.slotIndex === undefined ? undefined : candidateVisual.slotIndex + 1
+              }
               aria-label={
                 classroomState
-                  ? `ペア候補 ${candidate.id}: ${classroomCandidateStateLabel(classroomState)}、${candidate.memberIds.length}/${maxSize}、空き${openSlots}`
+                  ? `ペア候補 ${candidate.id}: ${classroomCandidateStateLabel(classroomState)}、${candidate.memberIds.length}/${maxSize}、空き${openSlots}${candidateVisual.slotIndex === undefined ? "" : `、成立済み表示 ${candidateVisual.slotIndex + 1}`}`
                   : undefined
               }
             >
               <circle
-                cx={candidate.x}
-                cy={candidate.y}
-                r={54}
+                cx={candidateVisual.center.x}
+                cy={candidateVisual.center.y}
+                r={candidateVisual.displayRadius}
                 className={
                   classroomState
                     ? `candidate-ring classroom-${classroomState}`
@@ -349,13 +454,15 @@ export function SimulationCanvas({
                 }
               />
 
-              <text x={candidate.x} y={candidate.y - 60} className="candidate-label">
-                {classroomState
+              <text x={candidateVisual.center.x} y={labelY} className="candidate-label">
+                {candidateVisual.slotIndex !== undefined
+                  ? `成立済み #${candidateVisual.slotIndex + 1}`
+                  : classroomState
                   ? classroomCandidateStateLabel(classroomState)
                   : `${candidateLabel(candidate, presentation)} (${candidate.memberIds.length})`}
               </text>
               {classroomState && (
-                <text x={candidate.x} y={candidate.y - 44} className="candidate-capacity-label">
+                <text x={candidateVisual.center.x} y={capacityY} className="candidate-capacity-label">
                   {candidate.memberIds.length} / {maxSize}（空き{openSlots}）
                 </text>
               )}
@@ -363,13 +470,18 @@ export function SimulationCanvas({
           );
         })}
 
-        {agents.map((agent) => {
+        {visualAgents.map((agent) => {
           const r = radiusFor(agent);
           const opacity = agent.state === "left" ? 0.3 : 1;
           const statusLabel = isClassroomPair ? agentStatusLabel(agent) : undefined;
           const stateClass = agentStateClass(agent, isClassroomPair);
           return (
-            <g key={agent.id} opacity={opacity} data-agent-state={stateClass}>
+            <g
+              key={agent.id}
+              opacity={opacity}
+              data-agent-state={stateClass}
+              data-visual-candidate={visualLayout.agents.get(agent.id)?.candidateId}
+            >
               <circle
                 cx={agent.x}
                 cy={agent.y}
@@ -421,10 +533,11 @@ export function SimulationCanvas({
                 const maxSize = classroomCandidateMaxSize(candidate);
                 const openSlots = Math.max(0, maxSize - candidate.memberIds.length);
                 const approachers = candidateApproachers(candidate, agents);
+                const slotIndex = visualLayout.candidates.get(candidate.id)?.slotIndex;
                 return (
                   <li key={candidate.id} className={`canvas-pair-status-item ${state}`}>
                     <span className="canvas-pair-status-id" title={candidate.id}>
-                      {candidate.id}
+                      {slotIndex === undefined ? candidate.id : `#${slotIndex + 1} ${candidate.id}`}
                     </span>
                     <strong>{classroomCandidateStateLabel(state)}</strong>
                     <span>
