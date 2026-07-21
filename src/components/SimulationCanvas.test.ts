@@ -25,6 +25,10 @@ function makeAgent(overrides: Partial<Agent>): Agent {
   };
 }
 
+function svgMarkup(html: string, className: string): string {
+  return html.match(new RegExp(`<svg[^>]*class="${className}"[^>]*>[\\s\\S]*?</svg>`))?.[0] ?? "";
+}
+
 describe("SimulationCanvas thought bubbles", () => {
   const baseProps = { groupCandidates: [], width: 800, height: 520 };
 
@@ -288,7 +292,44 @@ describe("SimulationCanvas classroom pair progress", () => {
     expect(html).toContain("#1 full-pair");
     expect(html).toContain("決まってよかった");
     expect(html).toContain("よろしくね");
+    const resolvedCanvas = svgMarkup(html, "resolved-groups-canvas");
+    const simulationCanvas = svgMarkup(html, "simulation-field-canvas");
+    expect(resolvedCanvas).toContain('data-evacuated="true"');
+    expect(resolvedCanvas).toContain("決まってよかった");
+    expect(resolvedCanvas).toContain("よろしくね");
+    expect(simulationCanvas).not.toContain('data-evacuated="true"');
+    expect(simulationCanvas).not.toContain("決まってよかった");
+    expect(simulationCanvas).not.toContain("よろしくね");
     expect(JSON.stringify({ agents, candidates })).toBe(before);
+  });
+
+  it("renders resolved and in-progress groups in separate SVG boxes with no shared drawing surface", () => {
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        ...baseProps,
+        agents: [
+          makeAgent({ id: "a", state: "joined", joinedGroupId: "full-pair" }),
+          makeAgent({ id: "b", state: "joined", joinedGroupId: "full-pair" }),
+          makeAgent({ id: "founder", state: "forming" }),
+          makeAgent({ id: "joiner", state: "approaching", joinedGroupId: "forming-pair" }),
+        ],
+        groupCandidates: [
+          candidate({ id: "full-pair", status: "confirmed", memberIds: ["a", "b"] }),
+          candidate({ id: "forming-pair", status: "forming", memberIds: ["founder"] }),
+        ],
+      }),
+    );
+    const resolvedCanvas = svgMarkup(html, "resolved-groups-canvas");
+    const simulationCanvas = svgMarkup(html, "simulation-field-canvas");
+
+    expect(resolvedCanvas).not.toBe("");
+    expect(simulationCanvas).not.toBe("");
+    expect(resolvedCanvas).toContain("full-pair");
+    expect(resolvedCanvas).not.toContain("forming-pair");
+    expect(resolvedCanvas).not.toContain("approach-link");
+    expect(simulationCanvas).toContain("forming-pair");
+    expect(simulationCanvas).toContain("approach-link");
+    expect(simulationCanvas).not.toContain("full-pair");
   });
 
   it("leaves a forming candidate and approaching link at simulation coordinates", () => {

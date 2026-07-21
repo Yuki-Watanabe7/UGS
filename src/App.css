@@ -484,6 +484,39 @@
   padding: 8px;
 }
 
+.canvas-visual-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.resolved-groups-box,
+.simulation-field.classroom {
+  overflow: hidden;
+  border: 1px solid #2f3545;
+  border-radius: 8px;
+}
+
+.resolved-groups-box {
+  border-color: rgba(74, 222, 128, 0.45);
+  background: #0b0d12;
+}
+
+.resolved-groups-canvas,
+.simulation-field-canvas {
+  display: block;
+}
+
+.simulation-field-title {
+  margin: 0;
+  padding: 7px 10px;
+  border-bottom: 1px solid #2f3545;
+  background: rgba(30, 64, 175, 0.12);
+  color: #bfdbfe;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+}
+
 .canvas-bg {
   fill: #0b0d12;
 }
@@ -492,22 +525,11 @@
   fill: rgba(20, 83, 45, 0.13);
 }
 
-.resolved-groups-region-boundary {
-  stroke: rgba(74, 222, 128, 0.55);
-  stroke-width: 1.5;
-  stroke-dasharray: 6 4;
-}
-
-.resolved-groups-region-title,
-.forming-groups-region-title {
+.resolved-groups-region-title {
   fill: #86efac;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.03em;
-}
-
-.forming-groups-region-title {
-  fill: #bfdbfe;
 }
 
 .resolved-groups-overflow {
