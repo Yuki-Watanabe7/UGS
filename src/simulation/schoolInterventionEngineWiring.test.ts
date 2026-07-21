@@ -38,6 +38,8 @@ describe("school intervention hook wiring: no-op invariance (Issue #156)", () =>
       lastTriggeredAtTick: {},
       temporaryEffectExpiryByAgentId: {},
       recommendedGroupIdByAgentId: {},
+      recommendedPeerIdByAgentId: {},
+      recommendationIssuedAtTick: {},
       anonymouslyNotifiedAgentIds: [],
       forcedAssignmentApplied: false,
     });

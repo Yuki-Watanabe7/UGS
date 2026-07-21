@@ -217,10 +217,38 @@ export type SimulationEventType =
    * 全てこのeventTypeと`SimulationEventMetadata`の共通フィールドを使って構造化ログを残す想定
    * (受入条件: 表示用messageの解析に依存せず後続の集計がmetadataから算出できる)。
    */
-  | "schoolInterventionTriggered";
+  | "schoolInterventionTriggered"
+  /**
+   * Issue #158: `anonymous-help-signal`。長時間未決定の生徒本人が、公開の場で名指しされずに
+   * 教師へ支援を要請したことを認知した(通知そのものはagentを移動・所属させない)。
+   */
+  | "anonymousHelpRequested"
+  /** Issue #158: `teacher-recommendation`。教師が対象agentへ候補(班または未決定者peer)を推薦した */
+  | "teacherRecommendationIssued"
+  /** Issue #158: `teacher-recommendation`。推薦を対象agentが受け入れた(直接所属はさせない) */
+  | "teacherRecommendationAccepted"
+  /** Issue #158: `teacher-recommendation`。推薦を対象agentが断った */
+  | "teacherRecommendationDeclined"
+  /** Issue #158: `teacher-recommendation`。推薦可能な候補(空きのある班/未決定peer)が存在しなかった */
+  | "teacherRecommendationUnavailable"
+  /**
+   * Issue #158: `teacher-recommendation`。受諾済みの推薦先が、その後(満員化/消滅/期限切れ等で)
+   * 無効化された。無効化後の参加失敗・再探索は既存の`approachTargetInvalidated`/`searchRestarted`
+   * 経路へそのまま接続する(このeventTypeは推薦固有の追跡目的のみ)。
+   */
+  | "teacherRecommendationTargetInvalidated";
 
-/** Issue #156: `schoolInterventionTriggered`の`metadata.outcome`。表示文言の解析に依存しない結果分類 */
-export type SchoolInterventionOutcome = "presented" | "accepted" | "declined" | "assigned" | "unassignable";
+/**
+ * Issue #156: `schoolInterventionTriggered`の`metadata.outcome`。表示文言の解析に依存しない結果分類。
+ * Issue #158: `unavailable`(推薦可能な候補が存在しない/受諾済み推薦先が無効化された)を追加。
+ */
+export type SchoolInterventionOutcome =
+  | "presented"
+  | "accepted"
+  | "declined"
+  | "assigned"
+  | "unassignable"
+  | "unavailable";
 
 /** `eventType`ごとに必要な範囲で付与される集計用の補助情報。全フィールド任意 */
 export type SimulationEventMetadata = {
@@ -275,10 +303,24 @@ export type SimulationEventMetadata = {
   outcome?: SchoolInterventionOutcome;
   /**
    * Issue #157: `schoolInterventionTriggered`(`nearby-peer-prompt`)用。声かけを促した相手側
-   * (`agentId`側と組になるもう一方)のagentID/表示名
+   * (`agentId`側と組になるもう一方)のagentID/表示名。Issue #158では`teacher-recommendation`が
+   * 新規ペア形成推薦(`recommendationTargetKind: "peer"`)の推薦先peerとしても再利用する。
    */
   secondAgentId?: string;
   secondAgentLabel?: string;
+  /** Issue #158: `teacherRecommendation*`用。推薦対象の種別(既存候補の班 or 未決定者peerとの新規候補形成) */
+  recommendationTargetKind?: "group" | "peer";
+  /** Issue #158: `teacherRecommendation*`用。候補選択スコアの主要要素(推薦対象までの距離) */
+  recommendationDistance?: number;
+  /** Issue #158: `teacherRecommendation*`用。候補選択スコアの主要要素(対象agentと既存clique関係にあるか) */
+  recommendationSameClique?: boolean;
+  /** Issue #158: `teacherRecommendationAccepted`/`teacherRecommendationDeclined`用。受諾確率(0-1) */
+  recommendationAcceptanceProbability?: number;
+  /**
+   * Issue #158: `schoolInterventionTriggered`(`teacher-recommendation`、outcome: "assigned")用。
+   * 推薦(`teacherRecommendationAccepted`)が発行されたtickから、実際にその班へ参加するまでの経過tick
+   */
+  ticksSinceRecommendation?: number;
 };
 
 export type LogEntry = {

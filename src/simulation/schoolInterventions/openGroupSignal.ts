@@ -29,7 +29,11 @@ export const OPEN_GROUP_SIGNAL_ATTRACTIVENESS_BOOST = 0.15;
  */
 const EFFECT_DURATION_TICKS = 2;
 
-function candidateHasVacancy(candidate: GroupCandidate, ctx: SchoolInterventionContext): boolean {
+/**
+ * Issue #158: `teacher-recommendation`が推薦候補の絞り込み(容量違反回避)にも再利用する
+ * (export済み。判定ロジック自体はopen-group-signal導入時のものと同一)。
+ */
+export function candidateHasVacancy(candidate: GroupCandidate, ctx: SchoolInterventionContext): boolean {
   if (candidate.status !== "forming" && candidate.status !== "confirmed") return false;
   const capacity = ctx.formationPolicy.resolveGroupCapacity(candidate, ctx.params);
   if (!Number.isFinite(capacity.maxGroupSize)) return true;

@@ -7,6 +7,8 @@ import { SeededRandom } from "./random";
 // 参照はいずれもhandler関数の呼び出し時点(モジュール評価完了後)に限られるため安全(TDZの影響を受けない)。
 import { nearbyPeerPromptIntervention } from "./schoolInterventions/nearbyPeerPrompt";
 import { openGroupSignalIntervention } from "./schoolInterventions/openGroupSignal";
+import { anonymousHelpSignalIntervention } from "./schoolInterventions/anonymousHelpSignal";
+import { teacherRecommendationIntervention } from "./schoolInterventions/teacherRecommendation";
 
 /**
  * Issue #156 (Phase 4): 学校向け介入(教師介入)の実行契約。
@@ -220,8 +222,19 @@ export type InterventionRuntimeState = {
   lastTriggeredAtTick: Record<string, number>;
   /** agentId -> 一時効果の期限tick */
   temporaryEffectExpiryByAgentId: Record<string, number>;
-  /** agentId -> 推薦先groupId */
+  /** agentId -> 推薦先groupId(Issue #158: `teacher-recommendation`が受諾済みの班推薦を追跡する) */
   recommendedGroupIdByAgentId: Record<string, string>;
+  /**
+   * Issue #158: agentId -> 推薦先peerAgentId。`teacher-recommendation`が受諾済みの新規組み合わせ推薦
+   * (既存候補が無く、他の未決定agentとのペア形成を推薦した場合)を追跡する
+   */
+  recommendedPeerIdByAgentId: Record<string, string>;
+  /**
+   * Issue #158: agentId -> 受諾済み推薦(`recommendedGroupIdByAgentId`)が発行されたtick。
+   * その後実際にその班へ参加した際、`schoolInterventionTriggered`(outcome: "assigned")の
+   * `metadata.effectStartedAtTick`との差分から「推薦から参加までのtick」を導出するために保持する。
+   */
+  recommendationIssuedAtTick: Record<string, number>;
   /** 匿名通知済みagentId一覧 */
   anonymouslyNotifiedAgentIds: string[];
   /** 締切時強制割当を実行済みか */
@@ -235,6 +248,8 @@ export function createInitialInterventionRuntimeState(): InterventionRuntimeStat
     lastTriggeredAtTick: {},
     temporaryEffectExpiryByAgentId: {},
     recommendedGroupIdByAgentId: {},
+    recommendedPeerIdByAgentId: {},
+    recommendationIssuedAtTick: {},
     anonymouslyNotifiedAgentIds: [],
     forcedAssignmentApplied: false,
   };
@@ -281,6 +296,8 @@ export function advanceInterventionEffects(
 const SCHOOL_INTERVENTION_POLICIES: Partial<Record<InterventionScenarioId, SchoolIntervention>> = {
   "nearby-peer-prompt": nearbyPeerPromptIntervention,
   "open-group-signal": openGroupSignalIntervention,
+  "anonymous-help-signal": anonymousHelpSignalIntervention,
+  "teacher-recommendation": teacherRecommendationIntervention,
 };
 
 /**

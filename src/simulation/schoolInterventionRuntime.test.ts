@@ -192,6 +192,8 @@ describe("createInitialInterventionRuntimeState", () => {
       lastTriggeredAtTick: {},
       temporaryEffectExpiryByAgentId: {},
       recommendedGroupIdByAgentId: {},
+      recommendedPeerIdByAgentId: {},
+      recommendationIssuedAtTick: {},
       anonymouslyNotifiedAgentIds: [],
       forcedAssignmentApplied: false,
     });
