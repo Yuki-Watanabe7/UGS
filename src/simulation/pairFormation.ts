@@ -111,6 +111,11 @@ export function buildPairFormationRunSummary(state: SimulationState, params: Sim
   const observerJoinerMetrics = agentMetrics.filter((metric) => metric.isObserverJoiner);
 
   const confirmedGroups = state.groupCandidates.filter((candidate) => candidate.status === "confirmed");
+  const groupSizeDistribution: Record<number, number> = {};
+  for (const group of confirmedGroups) {
+    const size = group.memberIds.length;
+    groupSizeDistribution[size] = (groupSizeDistribution[size] ?? 0) + 1;
+  }
   const homogeneousCount = confirmedGroups.filter((candidate) => isCliqueHomogeneous(candidate, state.agents)).length;
   const sameCliquePairRate = confirmedGroups.length === 0 ? undefined : homogeneousCount / confirmedGroups.length;
   const crossCliquePairRate = sameCliquePairRate === undefined ? undefined : 1 - sameCliquePairRate;
@@ -138,6 +143,7 @@ export function buildPairFormationRunSummary(state: SimulationState, params: Sim
     assignedCount: state.agents.filter((agent) => agent.state === "joined").length,
     unassignedCount,
     lastAssignedAgent,
+    groupSizeDistribution,
     agentMetrics,
     populationAverages: averagesFor(agentMetrics),
     observerJoinerAverages: averagesFor(observerJoinerMetrics),

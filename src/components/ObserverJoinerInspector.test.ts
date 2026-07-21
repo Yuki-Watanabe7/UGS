@@ -240,6 +240,27 @@ describe("ObserverJoinerInspector classroom assignment history", () => {
     expect(html).toContain("満員（tick 7）");
   });
 
+  it("shows current/min/max size and forming/confirmed-vacancy/full for a variable-capacity (3-4) group (Issue #155)", () => {
+    const inThree = makeAgent({ id: "in-three", label: "参加者C", state: "joined", joinedGroupId: "group-3" });
+    const inFour = makeAgent({ id: "in-four", label: "参加者D", state: "joined", joinedGroupId: "group-4" });
+    const html = render(
+      makeState({
+        formationScenarioId: "classroomPair",
+        formationClassroomGroupSize: { minGroupSize: 3, maxGroupSize: 4 },
+        agents: [inThree, inFour],
+        groupCandidates: [
+          { id: "group-3", x: 0, y: 0, memberIds: ["in-three", "x1", "x2"], status: "confirmed", age: 5 },
+          { id: "group-4", x: 0, y: 0, memberIds: ["in-four", "y1", "y2", "y3"], status: "confirmed", age: 5 },
+        ],
+      }),
+    );
+
+    expect(html).toContain("班の人数・容量");
+    expect(html).toContain("現在3人 / 最小3人 / 最大4人・成立済み・空きあり");
+    expect(html).toContain("現在4人 / 最小3人 / 最大4人・確定・満員");
+    expect(html).not.toContain("ペアの人数・容量");
+  });
+
   it("keeps the after-party inspector limited to observerJoiners", () => {
     const observer = makeAgent({ id: "observer", label: "Observer", isObserverJoiner: true });
     const plain = makeAgent({ id: "plain", label: "Plain" });

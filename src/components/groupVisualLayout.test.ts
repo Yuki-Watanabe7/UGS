@@ -93,6 +93,30 @@ describe("group visual layout eligibility and slot stability", () => {
     expect(isEvacuatedClassroomCandidate(makeCandidate(0), "afterParty")).toBe(false);
   });
 
+  it("resolves the fallback max group size from classroomGroupSize instead of always assuming 2 (Issue #155)", () => {
+    // engine.tsは実運用でGroupCandidate.maxGroupSizeを書き込まないため、候補側にオーバーライドが
+    // ない場合はclassroomGroupSizeへフォールバックする。classroomGroupSizeを渡し忘れると常に
+    // 2人固定にフォールバックしてしまい(既存の後方互換の既定値)、3〜4人班の3人成立・空きあり
+    // 状態が「満員」として誤って退避されてしまう。classroomGroupSizeを渡せばそれを正しく防げる。
+    const threeMemberConfirmed = makeCandidate(0, 3, { minGroupSize: undefined, maxGroupSize: undefined });
+
+    expect(isEvacuatedClassroomCandidate(threeMemberConfirmed, "classroomPair")).toBe(true);
+    expect(
+      isEvacuatedClassroomCandidate(threeMemberConfirmed, "classroomPair", { minGroupSize: 3, maxGroupSize: 4 }),
+    ).toBe(false);
+    expect(
+      isEvacuatedClassroomCandidate(
+        { ...threeMemberConfirmed, memberIds: ["m0", "m1", "m2", "m3"] },
+        "classroomPair",
+        { minGroupSize: 3, maxGroupSize: 4 },
+      ),
+    ).toBe(true);
+    // classroomGroupSize省略時は既存どおり2人固定へフォールバックする(後方互換)
+    expect(
+      isEvacuatedClassroomCandidate(makeCandidate(0, 2, { minGroupSize: undefined, maxGroupSize: undefined }), "classroomPair"),
+    ).toBe(true);
+  });
+
   it("keeps existing slots across candidate reordering and does not reuse disappeared slots in one run", () => {
     const first = reconcileGroupVisualSlots(new Map(), ["pair-a", "pair-b"]);
     const reordered = reconcileGroupVisualSlots(first, ["pair-b", "pair-a", "pair-c"]);

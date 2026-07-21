@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Agent, GroupCandidate } from "../simulation/types";
-import type { FormationScenarioId } from "../simulation/formationPolicy";
+import type { FormationScenarioId, GroupSizeRule } from "../simulation/formationPolicy";
 import type { ExpressionIntent } from "../simulation/expression";
 import type { SpeechIntent } from "../simulation/speech";
 import { ThoughtBubble } from "./ThoughtBubble";
@@ -51,6 +51,12 @@ type Props = {
   height: number;
   /** Issue #135: 学校ペア形成でのみ容量・割当状態を詳しく表示する */
   formationScenarioId?: FormationScenarioId;
+  /**
+   * Issue #155: 選択中の学校向け班人数設定。ペア/班の表示語彙(`getScenarioPresentation`)と
+   * 容量ラベルの解決にのみ使う(シミュレーション座標・状態遷移には影響しない)。未指定時は
+   * 既定の2人固定(`DEFAULT_CLASSROOM_PAIR_GROUP_SIZE`)として扱う。
+   */
+  formationClassroomGroupSize?: GroupSizeRule;
   /** Reset・seed・preset・scenario変更時に、成立済みグループの表示slotを初期化する実行ID */
   runId?: number | string;
   /** 現在表示すべき心の声。未指定/空配列なら既存のCanvas表示から変化しない */
@@ -129,21 +135,49 @@ function candidateLabel(candidate: GroupCandidate, presentation: ScenarioPresent
   }
 }
 
-type ClassroomCandidateVisualState = "waiting" | "approaching" | "full" | "resolved";
+type ClassroomCandidateVisualState =
+  | "waiting"
+  | "approaching"
+  | "confirmed-vacancy"
+  | "full"
+  | "resolved";
 
-function classroomCandidateMaxSize(candidate: GroupCandidate): number {
+/**
+ * Issue #155: `engine.ts`は`GroupCandidate.maxGroupSize`/`minGroupSize`自体を書き込まない
+ * (候補固有オーバーライドの仕組みのみ)ため、実際の運用ではほぼ常に`candidate.maxGroupSize`は
+ * undefinedになる。選択中の学校向け班人数設定(`presentation.groupUnit`)から解決した
+ * `fallbackMax`/`fallbackMin`を使わずに固定値2へフォールバックすると、3人班・4人班・3〜4人班で
+ * 「満員」判定や成立済み領域への退避タイミングが常に2人基準のまま狂ってしまう。
+ */
+function classroomCandidateMaxSize(candidate: GroupCandidate, fallbackMax: number): number {
   return candidate.maxGroupSize !== undefined && Number.isFinite(candidate.maxGroupSize)
     ? candidate.maxGroupSize
-    : 2;
+    : fallbackMax;
+}
+
+function classroomCandidateMinSize(candidate: GroupCandidate, fallbackMin: number): number {
+  return candidate.minGroupSize !== undefined && Number.isFinite(candidate.minGroupSize)
+    ? candidate.minGroupSize
+    : fallbackMin;
 }
 
 function candidateApproachers(candidate: GroupCandidate, agents: Agent[]): Agent[] {
   return agents.filter((agent) => agent.state === "approaching" && agent.joinedGroupId === candidate.id);
 }
 
+/**
+ * Issue #155: 3〜4人班のような可変定員(min<max)では、成立最小人数に達して`status`が
+ * "confirmed"になった後も、収容最大人数までは新規の合流を受け付け続ける(#154の
+ * `resolveGroupCapacity`/`isJoinable`参照)。これを"full"(収容最大人数に到達し、これ以上
+ * 合流できない)と区別せずに表示すると、まだ空きのある班が「満員」に見えてしまうため、
+ * `memberIds.length >= maxSize`のときのみ"full"とし、それ未満で"confirmed"なら
+ * "confirmed-vacancy"(成立済み・空きあり)を返す。固定定員(min===max)では
+ * 成立=満員が同時に起こるため、この区別は実質的に発生しない(従来どおり"full"のみ)。
+ */
 function classroomCandidateState(
   candidate: GroupCandidate,
   agents: Agent[],
+  fallbackMax: number,
 ): ClassroomCandidateVisualState {
   if (
     candidate.status === "dissolving" ||
@@ -152,23 +186,26 @@ function classroomCandidateState(
   ) {
     return "resolved";
   }
-  if (
-    candidate.status === "confirmed" ||
-    candidate.memberIds.length >= classroomCandidateMaxSize(candidate)
-  ) {
+  const maxSize = classroomCandidateMaxSize(candidate, fallbackMax);
+  if (candidate.memberIds.length >= maxSize) {
     return "full";
+  }
+  if (candidate.status === "confirmed") {
+    return "confirmed-vacancy";
   }
   return candidateApproachers(candidate, agents).length > 0 ? "approaching" : "waiting";
 }
 
-function classroomCandidateStateLabel(state: ClassroomCandidateVisualState): string {
+function classroomCandidateStateLabel(state: ClassroomCandidateVisualState, unitWord: string): string {
   switch (state) {
     case "waiting":
       return "相手待ち";
     case "approaching":
       return "接近者あり";
+    case "confirmed-vacancy":
+      return `${unitWord}成立・空きあり`;
     case "full":
-      return "ペア確定・満員";
+      return `${unitWord}確定・満員`;
     case "resolved":
       return "解消済み";
   }
@@ -336,8 +373,10 @@ function CandidateGlyph({ candidate, visual, agents, isClassroomPair, presentati
     candidate.status === "dissolving" ||
     candidate.status === "dissolved" ||
     candidate.status === "expired";
-  const classroomState = isClassroomPair ? classroomCandidateState(candidate, agents) : undefined;
-  const maxSize = classroomCandidateMaxSize(candidate);
+  const unitWord = presentation.groupUnit?.unitWord ?? "ペア";
+  const fallbackMax = presentation.groupUnit?.maxGroupSize ?? 2;
+  const classroomState = isClassroomPair ? classroomCandidateState(candidate, agents, fallbackMax) : undefined;
+  const maxSize = classroomCandidateMaxSize(candidate, fallbackMax);
   const openSlots = Math.max(0, maxSize - candidate.memberIds.length);
   const labelY = visual.isEvacuated
     ? visual.center.y - visual.displayRadius - 8
@@ -354,7 +393,7 @@ function CandidateGlyph({ candidate, visual, agents, isClassroomPair, presentati
       data-visual-slot={visual.slotIndex === undefined ? undefined : visual.slotIndex + 1}
       aria-label={
         classroomState
-          ? `ペア候補 ${candidate.id}: ${classroomCandidateStateLabel(classroomState)}、${candidate.memberIds.length}/${maxSize}、空き${openSlots}${visual.slotIndex === undefined ? "" : `、成立済み表示 ${visual.slotIndex + 1}`}`
+          ? `${unitWord}候補 ${candidate.id}: ${classroomCandidateStateLabel(classroomState, unitWord)}、${candidate.memberIds.length}/${maxSize}、空き${openSlots}${visual.slotIndex === undefined ? "" : `、成立済み表示 ${visual.slotIndex + 1}`}`
           : undefined
       }
     >
@@ -373,7 +412,7 @@ function CandidateGlyph({ candidate, visual, agents, isClassroomPair, presentati
         {visual.slotIndex !== undefined
           ? `成立済み #${visual.slotIndex + 1}`
           : classroomState
-            ? classroomCandidateStateLabel(classroomState)
+            ? classroomCandidateStateLabel(classroomState, unitWord)
             : `${candidateLabel(candidate, presentation)} (${candidate.memberIds.length})`}
       </text>
       {classroomState && (
@@ -429,12 +468,16 @@ export function SimulationCanvas({
   width,
   height,
   formationScenarioId,
+  formationClassroomGroupSize,
   runId = 0,
   thoughts = [],
   speeches = [],
 }: Props) {
-  const presentation = getScenarioPresentation(formationScenarioId);
+  const presentation = getScenarioPresentation(formationScenarioId, formationClassroomGroupSize);
   const isClassroomPair = presentation.id === "classroomPair";
+  const unitWord = presentation.groupUnit?.unitWord ?? "ペア";
+  const fallbackMax = presentation.groupUnit?.maxGroupSize ?? 2;
+  const fallbackMin = presentation.groupUnit?.minGroupSize ?? 2;
   const svgRef = useRef<SVGSVGElement>(null);
   const [viewportWidth, setViewportWidth] = useState(width);
   const slotRegistryRef = useRef<GroupVisualSlotRegistry>({
@@ -443,7 +486,9 @@ export function SimulationCanvas({
   });
   const slotResetKey = `${formationScenarioId ?? "afterParty"}:${runId}`;
   const evacuatedCandidateIds = groupCandidates
-    .filter((candidate) => isEvacuatedClassroomCandidate(candidate, formationScenarioId))
+    .filter((candidate) =>
+      isEvacuatedClassroomCandidate(candidate, formationScenarioId, formationClassroomGroupSize),
+    )
     .map((candidate) => candidate.id);
   slotRegistryRef.current = updateGroupVisualSlotRegistry(
     slotRegistryRef.current,
@@ -471,6 +516,7 @@ export function SimulationCanvas({
     width,
     height,
     formationScenarioId,
+    classroomGroupSize: formationClassroomGroupSize,
     slotAssignments: slotRegistryRef.current.assignments,
     viewportWidth,
   });
@@ -542,7 +588,7 @@ export function SimulationCanvas({
                     x2={targetVisual.center.x}
                     y2={targetVisual.center.y}
                     className="approach-link"
-                    aria-label={`${agent.label}からペア候補 ${target.id} への接近`}
+                    aria-label={`${agent.label}から${unitWord}候補 ${target.id} への接近`}
                   />
                 );
               })}
@@ -570,14 +616,14 @@ export function SimulationCanvas({
         </section>
 
         {isClassroomPair && visualLayout.resolvedRegion && (
-          <section className="resolved-groups-box" aria-label="成立済みのペア表示領域">
+          <section className="resolved-groups-box" aria-label={`成立済みの${unitWord}表示領域`}>
             <svg
               className="resolved-groups-canvas"
               viewBox={`0 0 ${width} ${visualLayout.resolvedRegion.height}`}
               width="100%"
               height={visualLayout.resolvedRegion.height}
               role="img"
-              aria-label="成立済みのペア"
+              aria-label={`成立済みの${unitWord}`}
             >
               <rect
                 x={visualLayout.resolvedRegion.x}
@@ -587,7 +633,7 @@ export function SimulationCanvas({
                 className="resolved-groups-region-bg"
               />
               <text x={12} y={17} className="resolved-groups-region-title">
-                成立済みのペア
+                成立済みの{unitWord}
               </text>
               {visualLayout.resolvedRegion.overflowCount > 0 && (
                 <text x={width - 12} y={17} textAnchor="end" className="resolved-groups-overflow">
@@ -619,29 +665,30 @@ export function SimulationCanvas({
       </div>
 
       {isClassroomPair && (
-        <section className="canvas-pair-status" aria-label="ペア候補の進行状況と空き枠">
-          <h3>ペア候補の進行状況</h3>
+        <section className="canvas-group-status" aria-label={`${unitWord}候補の進行状況と空き枠`}>
+          <h3>{unitWord}候補の進行状況</h3>
           {groupCandidates.length === 0 ? (
-            <p className="canvas-pair-status-empty">現在のペア候補はありません</p>
+            <p className="canvas-group-status-empty">現在の{unitWord}候補はありません</p>
           ) : (
-            <ul className="canvas-pair-status-list">
+            <ul className="canvas-group-status-list">
               {groupCandidates.map((candidate) => {
-                const state = classroomCandidateState(candidate, agents);
-                const maxSize = classroomCandidateMaxSize(candidate);
+                const state = classroomCandidateState(candidate, agents, fallbackMax);
+                const minSize = classroomCandidateMinSize(candidate, fallbackMin);
+                const maxSize = classroomCandidateMaxSize(candidate, fallbackMax);
                 const openSlots = Math.max(0, maxSize - candidate.memberIds.length);
                 const approachers = candidateApproachers(candidate, agents);
                 const slotIndex = visualLayout.candidates.get(candidate.id)?.slotIndex;
                 return (
-                  <li key={candidate.id} className={`canvas-pair-status-item ${state}`}>
-                    <span className="canvas-pair-status-id" title={candidate.id}>
+                  <li key={candidate.id} className={`canvas-group-status-item ${state}`}>
+                    <span className="canvas-group-status-id" title={candidate.id}>
                       {slotIndex === undefined ? candidate.id : `#${slotIndex + 1} ${candidate.id}`}
                     </span>
-                    <strong>{classroomCandidateStateLabel(state)}</strong>
+                    <strong>{classroomCandidateStateLabel(state, unitWord)}</strong>
                     <span>
-                      {candidate.memberIds.length}/{maxSize}・空き{openSlots}
+                      現在{candidate.memberIds.length}人 / 最小{minSize}人 / 最大{maxSize}人・空き{openSlots}
                     </span>
                     {approachers.length > 0 && (
-                      <span className="canvas-pair-status-approachers">
+                      <span className="canvas-group-status-approachers">
                         接近: {approachers.map((agent) => agent.label).join("、")}
                       </span>
                     )}

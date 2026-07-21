@@ -1,5 +1,5 @@
 import type { Agent, GroupCandidate } from "../simulation/types";
-import type { FormationScenarioId } from "../simulation/formationPolicy";
+import type { FormationScenarioId, GroupSizeRule } from "../simulation/formationPolicy";
 
 export type Point = {
   x: number;
@@ -56,24 +56,36 @@ const RING_HORIZONTAL_SAFETY = 12;
 const MEMBER_EDGE_MARGIN = 14;
 const DEFAULT_CLASSROOM_GROUP_SIZE = 2;
 
-function finiteGroupSize(candidate: GroupCandidate): number {
-  return candidate.maxGroupSize !== undefined && Number.isFinite(candidate.maxGroupSize)
-    ? Math.max(1, candidate.maxGroupSize)
-    : DEFAULT_CLASSROOM_GROUP_SIZE;
+/**
+ * 候補固有のオーバーライド(`candidate.maxGroupSize`。通常は未設定)を優先し、なければ選択中の
+ * 学校向け班人数設定(`classroomGroupSize`、Issue #154の`GroupSizeRule`)の`maxGroupSize`を使う。
+ * どちらも無ければ現行FormationPolicyの既定値である2人固定として扱う(古い学校stateとの後方互換)。
+ * `engine.ts`は`GroupCandidate.maxGroupSize`自体を書き込まない(候補固有オーバーライドの仕組みのみ)
+ * ため、Issue #155で3人班・4人班・3〜4人班プリセットを追加した際、この`classroomGroupSize`を
+ * 渡し忘れると常に2人固定にフォールバックしてしまう(「満員」判定・退避タイミングが狂う)点に注意。
+ */
+function finiteGroupSize(candidate: GroupCandidate, classroomGroupSize?: GroupSizeRule): number {
+  if (candidate.maxGroupSize !== undefined && Number.isFinite(candidate.maxGroupSize)) {
+    return Math.max(1, candidate.maxGroupSize);
+  }
+  return classroomGroupSize?.maxGroupSize ?? DEFAULT_CLASSROOM_GROUP_SIZE;
 }
 
 /**
  * 成立済み領域へ退避する境界。解散・期限切れ表示は既存の実座標フェードを維持し、slotを占有しない。
- * `maxGroupSize`未指定の古い学校stateは、現行FormationPolicyの既定値である2人として扱う。
+ * 可変定員(min<max)では、成立(confirmed)後も収容最大人数までは合流を受け付け続けるため、
+ * 「成立」だけでなく実際に`maxGroupSize`へ到達したときだけ退避させる(受入条件: 成立済みだが
+ * 空きのある班は、まだ合流できるあいだメインの形成領域に残る)。
  */
 export function isEvacuatedClassroomCandidate(
   candidate: GroupCandidate,
   formationScenarioId?: FormationScenarioId,
+  classroomGroupSize?: GroupSizeRule,
 ): boolean {
   return (
     formationScenarioId === "classroomPair" &&
     candidate.status === "confirmed" &&
-    candidate.memberIds.length >= finiteGroupSize(candidate)
+    candidate.memberIds.length >= finiteGroupSize(candidate, classroomGroupSize)
   );
 }
 
@@ -122,6 +134,8 @@ type DeriveGroupVisualLayoutInput = {
   width: number;
   height: number;
   formationScenarioId?: FormationScenarioId;
+  /** Issue #155: 選択中の学校向け班人数設定。`finiteGroupSize`のフォールバック解決にのみ使う */
+  classroomGroupSize?: GroupSizeRule;
   slotAssignments: ReadonlyMap<string, number>;
   /** CSS上の表示幅。SVG viewBox幅と異なる場合でも狭幅用の列数を選べるようにする。 */
   viewportWidth?: number;
@@ -159,12 +173,13 @@ export function deriveGroupVisualLayout({
   width,
   height,
   formationScenarioId,
+  classroomGroupSize,
   slotAssignments,
   viewportWidth = width,
 }: DeriveGroupVisualLayoutInput): GroupVisualLayout {
   const candidateLayouts = new Map<string, CandidateVisualLayout>();
   const evacuatedCandidates = groupCandidates.filter((candidate) =>
-    isEvacuatedClassroomCandidate(candidate, formationScenarioId),
+    isEvacuatedClassroomCandidate(candidate, formationScenarioId, classroomGroupSize),
   );
 
   for (const candidate of groupCandidates) candidateLayouts.set(candidate.id, defaultCandidateLayout(candidate));

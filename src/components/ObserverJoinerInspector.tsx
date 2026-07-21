@@ -1,4 +1,5 @@
 import { buildAgentInspection, buildObserverJoinerInspection } from "../simulation/inspection";
+import { getFormationPolicyById } from "../simulation/formationPolicy";
 import type {
   AgentAssignmentStatus,
   ApproachFailureReason,
@@ -64,6 +65,21 @@ const GROUP_STATUS_LABEL: Record<GroupCandidateStatus, string> = {
   dissolving: "解散中",
   dissolved: "解散済み",
   expired: "期限切れ",
+};
+
+/** Issue #155: 学校シナリオでagentの現在の班について表示する、人数・容量の状態 */
+type ClassroomGroupCapacityInfo = {
+  currentSize: number;
+  minGroupSize: number;
+  maxGroupSize: number;
+  /** "forming" = 未成立(最小人数未満)、"confirmed-vacancy" = 成立済みだが空きあり、"full" = 収容最大人数に到達 */
+  capacityState: "forming" | "confirmed-vacancy" | "full";
+};
+
+const CLASSROOM_GROUP_CAPACITY_STATE_LABEL: Record<ClassroomGroupCapacityInfo["capacityState"], string> = {
+  forming: "形成中(未成立)",
+  "confirmed-vacancy": "成立済み・空きあり",
+  full: "確定・満員",
 };
 
 const STANCE_LABEL: Record<ExpressedStance, string> = {
@@ -565,6 +581,7 @@ function ClassroomInspectionCard({
   seed,
   presetId,
   agentById,
+  groupCapacityById,
 }: {
   inspection: ObserverJoinerInspection;
   labelById: Map<string, string>;
@@ -572,7 +589,13 @@ function ClassroomInspectionCard({
   seed?: number;
   presetId?: string;
   agentById: Map<string, SimulationState["agents"][number]>;
+  groupCapacityById: ReadonlyMap<string, ClassroomGroupCapacityInfo>;
 }) {
+  const unitWord = presentation.groupUnit?.unitWord ?? "ペア";
+  const currentGroupCapacity = inspection.currentGroupId
+    ? groupCapacityById.get(inspection.currentGroupId)
+    : undefined;
+
   return (
     <div
       className={`observer-inspector-card classroom-agent-inspector-card assignment-${inspection.assignmentStatus}`}
@@ -591,9 +614,18 @@ function ClassroomInspectionCard({
         <span title={inspection.approachTargetGroupId}>{inspection.approachTargetGroupId ?? "なし"}</span>
       </div>
       <div className="observer-inspector-row">
-        <span>現在のペア候補</span>
+        <span>現在の{unitWord}候補</span>
         <span title={inspection.currentGroupId}>{inspection.currentGroupId ?? "なし"}</span>
       </div>
+      {currentGroupCapacity && (
+        <div className="observer-inspector-row" data-capacity-state={currentGroupCapacity.capacityState}>
+          <span>{unitWord}の人数・容量</span>
+          <span>
+            現在{currentGroupCapacity.currentSize}人 / 最小{currentGroupCapacity.minGroupSize}人 / 最大
+            {currentGroupCapacity.maxGroupSize}人・{CLASSROOM_GROUP_CAPACITY_STATE_LABEL[currentGroupCapacity.capacityState]}
+          </span>
+        </div>
+      )}
       <div className="observer-inspector-row">
         <span>参加失敗</span>
         <span>{inspection.joinFailureCount}回</span>
@@ -641,13 +673,43 @@ function ClassroomInspectionCard({
 }
 
 export function ObserverJoinerInspector({ state, params, seed, presetId }: Props) {
-  const presentation = getScenarioPresentation(state.formationScenarioId);
+  const presentation = getScenarioPresentation(state.formationScenarioId, state.formationClassroomGroupSize);
   const isClassroomPair = presentation.id === "classroomPair";
   const inspections = isClassroomPair
     ? buildAgentInspection(state, params)
     : buildObserverJoinerInspection(state, params);
   const labelById = buildAgentLabelMap(state.agents);
   const agentById = new Map(state.agents.map((agent) => [agent.id, agent]));
+  // Issue #155: 現在人数・最小/最大人数・forming/confirmed-with-vacancy/fullをagentごとのカードで
+  // 確認できるよう、候補ごとに一度だけ実際のFormationPolicy(#154で一般化済み)から容量を解決する。
+  const formationPolicy = isClassroomPair
+    ? getFormationPolicyById(
+        state.formationScenarioId ?? "afterParty",
+        state.formationDeadlineTick,
+        state.formationClassroomGroupSize,
+      )
+    : undefined;
+  const groupCapacityById = new Map<string, ClassroomGroupCapacityInfo>(
+    formationPolicy
+      ? state.groupCandidates
+          .filter((candidate) => candidate.status === "forming" || candidate.status === "confirmed")
+          .map((candidate) => {
+            const capacity = formationPolicy.resolveGroupCapacity(candidate, params);
+            const currentSize = candidate.memberIds.length;
+            const capacityState: ClassroomGroupCapacityInfo["capacityState"] =
+              currentSize >= capacity.maxGroupSize ? "full" : candidate.status === "confirmed" ? "confirmed-vacancy" : "forming";
+            return [
+              candidate.id,
+              {
+                currentSize,
+                minGroupSize: capacity.minGroupSize,
+                maxGroupSize: capacity.maxGroupSize,
+                capacityState,
+              },
+            ];
+          })
+      : [],
+  );
 
   return (
     <div className={`panel observer-inspector${isClassroomPair ? " classroom-agent-inspector" : ""}`}>
@@ -667,6 +729,7 @@ export function ObserverJoinerInspector({ state, params, seed, presetId }: Props
               seed={seed}
               presetId={presetId}
               agentById={agentById}
+              groupCapacityById={groupCapacityById}
             />
           ))}
         </div>

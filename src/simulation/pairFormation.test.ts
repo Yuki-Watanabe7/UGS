@@ -96,6 +96,52 @@ describe("buildPairFormationRunSummary: 成立ペア数・成立tick・最後に
   });
 });
 
+describe("buildPairFormationRunSummary: 班サイズ分布 (Issue #155)", () => {
+  it("成立したグループを最終人数別に集計する(3〜4人班のような可変定員での内訳を確認できる)", () => {
+    const agents: Agent[] = [
+      makeAgent({ id: "a", state: "joined", joinedGroupId: "group-1" }),
+      makeAgent({ id: "b", state: "joined", joinedGroupId: "group-1" }),
+      makeAgent({ id: "c", state: "joined", joinedGroupId: "group-1" }),
+      makeAgent({ id: "d", state: "joined", joinedGroupId: "group-2" }),
+      makeAgent({ id: "e", state: "joined", joinedGroupId: "group-2" }),
+      makeAgent({ id: "f", state: "joined", joinedGroupId: "group-2" }),
+      makeAgent({ id: "g", state: "joined", joinedGroupId: "group-2" }),
+    ];
+    const state = makeState({
+      agents,
+      groupCandidates: [
+        { id: "group-1", x: 0, y: 0, memberIds: ["a", "b", "c"], status: "confirmed", age: 3 },
+        { id: "group-2", x: 0, y: 0, memberIds: ["d", "e", "f", "g"], status: "confirmed", age: 3 },
+      ],
+      log: [groupConfirmedEntry(5, "group-1", 3), groupConfirmedEntry(12, "group-2", 4)],
+      finished: true,
+    });
+
+    const summary = buildPairFormationRunSummary(state, DEFAULT_PARAMS);
+
+    expect(summary.groupSizeDistribution).toEqual({ 3: 1, 4: 1 });
+  });
+
+  it("成立が1件もなければ空オブジェクトを返す", () => {
+    const state = makeState({ agents: [makeAgent({ id: "a" })] });
+
+    const summary = buildPairFormationRunSummary(state, DEFAULT_PARAMS);
+
+    expect(summary.groupSizeDistribution).toEqual({});
+  });
+
+  it("forming中の未成立候補は分布に含めない", () => {
+    const state = makeState({
+      agents: [makeAgent({ id: "a", state: "forming", joinedGroupId: "group-1" })],
+      groupCandidates: [{ id: "group-1", x: 0, y: 0, memberIds: ["a"], status: "forming", age: 1 }],
+    });
+
+    const summary = buildPairFormationRunSummary(state, DEFAULT_PARAMS);
+
+    expect(summary.groupSizeDistribution).toEqual({});
+  });
+});
+
 describe("buildPairFormationRunSummary: agent別の接近回数・参加失敗回数・再探索回数", () => {
   it("agentApproached/observerApproachedのeventTypeから接近回数を、参加失敗イベントから失敗回数を数える", () => {
     const agents: Agent[] = [

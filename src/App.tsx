@@ -37,6 +37,7 @@ import { AppLink } from "./components/AppLink";
 import {
   getPresetForScenario,
   getPresetsForScenario,
+  resolvePresentationForPreset,
   type ScenarioConfig,
 } from "./scenarios";
 import { normalizeInterventionForPresentation } from "./presentation/scenarioPresentation";
@@ -50,6 +51,7 @@ function formationOptionsForPreset(presetId: string): FormationRuntimeOptions {
   return {
     scenarioId: preset.formationScenarioId ?? "afterParty",
     formationDeadlineTick: preset.formationDeadlineTick,
+    classroomGroupSize: preset.formationClassroomGroupSize,
   };
 }
 
@@ -65,9 +67,15 @@ function SimulationApp({ scenario }: Props) {
   const [params, setParams] = useState<SimParams>(initialPreset.params);
   const [seed, setSeed] = useState(INITIAL_SEED);
   const [interventionId, setInterventionId] = useState<InterventionScenarioId>("none");
+  // Issue #155: プリセットごとの班人数設定(ペア/3人班/4人班/3〜4人班)に応じて、ペア/班の表示語彙・
+  // 容量表示を動的に解決する。二次会シナリオでは常にシナリオ固定の静的な presentation と同一になる。
+  const presentation = useMemo(
+    () => resolvePresentationForPreset(scenario, getPresetById(presetId)),
+    [scenario, presetId],
+  );
   const activeInterventionId = normalizeInterventionForPresentation(
     interventionId,
-    scenario.presentation,
+    presentation,
   );
   const [running, setRunning] = useState(false);
   // Issue #98/#119: 状態ログ・observerJoiner Inspector・CanvasでPhase 3(発言効果)およびPhase 4
@@ -135,7 +143,7 @@ function SimulationApp({ scenario }: Props) {
   const activeThoughts = useActiveExpressions(simState, seed, runId, {
     enabled: expressionDisplaySettings.enabled,
     maxConcurrent: EXPRESSION_DISPLAY_DENSITY_MAX_CONCURRENT[expressionDisplaySettings.density],
-    scenarioId: scenario.presentation.id,
+    scenarioId: presentation.id,
   });
   const visibleThoughts = filterThoughtsForDisplay(activeThoughts, expressionDisplaySettings.target);
 
@@ -144,7 +152,7 @@ function SimulationApp({ scenario }: Props) {
     // Issue #119: 乖離場面で発言(建前)と対に本心(心の声)を同時表示するための決定的選択の種・プリセット
     seed,
     presetId,
-    scenarioId: scenario.presentation.id,
+    scenarioId: presentation.id,
   });
 
   const hasPendingResetChanges = RESET_REQUIRED_PARAM_KEYS.some(
@@ -230,12 +238,12 @@ function SimulationApp({ scenario }: Props) {
     (nextInterventionId: InterventionScenarioId) => {
       const normalized = normalizeInterventionForPresentation(
         nextInterventionId,
-        scenario.presentation,
+        presentation,
       );
       setInterventionId(normalized);
       resetSimulation(seed, params, normalized, presetId);
     },
-    [resetSimulation, seed, params, presetId, scenario.presentation],
+    [resetSimulation, seed, params, presetId, presentation],
   );
 
   return (
@@ -261,7 +269,7 @@ function SimulationApp({ scenario }: Props) {
         </p>
         <p className="current-condition">
           プリセット: {getPresetById(presetId).name} / seed: {seed}
-          {scenario.presentation.showInterventionControls
+          {presentation.showInterventionControls
             ? ` / 介入: ${getInterventionById(activeInterventionId).name}`
             : ""}
         </p>
@@ -283,7 +291,7 @@ function SimulationApp({ scenario }: Props) {
             hasPendingResetChanges={hasPendingResetChanges}
             collapseSliders={isMobile}
             presets={scenarioPresets}
-            presentation={scenario.presentation}
+            presentation={presentation}
           />
           <ExpressionDisplaySettings
             settings={expressionDisplaySettings}
@@ -293,14 +301,14 @@ function SimulationApp({ scenario }: Props) {
             settings={speechBubbleDisplaySettings}
             onSettingsChange={setSpeechBubbleDisplaySettings}
           />
-          {scenario.presentation.showInterventionControls && (
+          {presentation.showInterventionControls && (
             <InterventionSelector
               interventionId={activeInterventionId}
               onInterventionChange={handleInterventionChange}
-              availableInterventionIds={scenario.presentation.availableInterventionIds}
+              availableInterventionIds={presentation.availableInterventionIds}
             />
           )}
-          <AgentLegend presentation={scenario.presentation} />
+          <AgentLegend presentation={presentation} />
           <MonteCarloPanel
             presetId={presetId}
             params={params}
@@ -309,9 +317,9 @@ function SimulationApp({ scenario }: Props) {
             singleSimRunning={running}
             onBeforeRun={handlePauseForMonteCarlo}
             formation={formation}
-            presentation={scenario.presentation}
+            presentation={presentation}
           />
-          {scenario.presentation.showInterventionControls && (
+          {presentation.showInterventionControls && (
             <InterventionComparisonPanel
               presetId={presetId}
               params={params}
@@ -329,7 +337,7 @@ function SimulationApp({ scenario }: Props) {
             singleSimRunning={running}
             onBeforeRun={handlePauseForMonteCarlo}
             formation={formation}
-            presentation={scenario.presentation}
+            presentation={presentation}
           />
         </aside>
 
@@ -340,6 +348,7 @@ function SimulationApp({ scenario }: Props) {
             width={simState.width}
             height={simState.height}
             formationScenarioId={simState.formationScenarioId}
+            formationClassroomGroupSize={simState.formationClassroomGroupSize}
             runId={runId}
             thoughts={visibleThoughts}
             speeches={visibleSpeeches}
@@ -348,10 +357,10 @@ function SimulationApp({ scenario }: Props) {
 
         <aside className="sidebar-right">
           <ObserverJoinerInspector state={simState} params={params} seed={seed} presetId={presetId} />
-          <SimulationSummaryPanel state={simState} />
+          <SimulationSummaryPanel state={simState} params={params} />
           <EventLog
             state={simState}
-            presentation={scenario.presentation}
+            presentation={presentation}
             seed={seed}
             presetId={presetId}
           />

@@ -1,7 +1,10 @@
 import { buildSimulationSummary } from "../simulation/summary";
+import { buildPairFormationRunSummary } from "../simulation/pairFormation";
+import { DEFAULT_PARAMS } from "../simulation/presets";
 import type {
   AgentState,
   ObserverJoinerRunSummary,
+  SimParams,
   SimulationFinishReason,
   SimulationState,
 } from "../simulation/types";
@@ -9,6 +12,12 @@ import { getScenarioPresentation, type ScenarioPresentation } from "../presentat
 
 type Props = {
   state: SimulationState;
+  /**
+   * Issue #155: 学校シナリオの終了サマリー(班サイズ分布・構造的未割当)の導出にのみ使う
+   * (`buildPairFormationRunSummary`の必須引数)。`classroomPair`のFormationPolicyは実際には
+   * この値を参照しないため、省略時は`DEFAULT_PARAMS`にフォールバックする。二次会シナリオでは未使用。
+   */
+  params?: SimParams;
 };
 
 const AGENT_STATE_ORDER: AgentState[] = [
@@ -42,7 +51,8 @@ function joinedGroupKindLabel(
 ): string {
   if (summary.joinedTick === undefined) return NOT_JOINED;
   if (presentation.id === "classroomPair") {
-    return summary.joinedGroupStatus === "confirmed" ? "成立済みペア" : "形成中のペア候補";
+    const unitWord = presentation.groupUnit?.unitWord ?? "ペア";
+    return summary.joinedGroupStatus === "confirmed" ? `成立済み${unitWord}` : `形成中の${unitWord}候補`;
   }
   return summary.joinedGroupStatus === "confirmed" ? "成立済みグループ" : "未確定の輪";
 }
@@ -55,6 +65,7 @@ function ObserverJoinerSummaryCard({
   presentation: ScenarioPresentation;
 }) {
   const isClassroomPair = presentation.id === "classroomPair";
+  const unitWord = presentation.groupUnit?.unitWord ?? "ペア";
   return (
     <div className="simulation-summary-card">
       <div className="simulation-summary-row simulation-summary-row--header">
@@ -62,7 +73,7 @@ function ObserverJoinerSummaryCard({
         <span className="simulation-summary-state">{presentation.agentStateLabels[summary.finalState]}</span>
       </div>
       <div className="simulation-summary-row">
-        <span>{isClassroomPair ? "ペア成立tick" : "参加tick"}</span>
+        <span>{isClassroomPair ? `${unitWord}成立tick` : "参加tick"}</span>
         <span>{formatTick(summary.joinedTick, NOT_JOINED)}</span>
       </div>
       <div className="simulation-summary-row">
@@ -72,7 +83,7 @@ function ObserverJoinerSummaryCard({
       {isClassroomPair ? (
         <div className="simulation-summary-row">
           <span>最終割当</span>
-          <span>{summary.finalState === "joined" ? "ペア成立" : "未割当"}</span>
+          <span>{summary.finalState === "joined" ? `${unitWord}成立` : "未割当"}</span>
         </div>
       ) : (
         <>
@@ -94,10 +105,20 @@ function ObserverJoinerSummaryCard({
   );
 }
 
-export function SimulationSummaryPanel({ state }: Props) {
+export function SimulationSummaryPanel({ state, params = DEFAULT_PARAMS }: Props) {
   const summary = buildSimulationSummary(state);
-  const presentation = getScenarioPresentation(state.formationScenarioId);
+  const presentation = getScenarioPresentation(state.formationScenarioId, state.formationClassroomGroupSize);
   const isClassroomPair = presentation.id === "classroomPair";
+  const unitWord = presentation.groupUnit?.unitWord ?? "ペア";
+  // Issue #155: 班サイズ分布・構造的未割当は学校シナリオでのみ意味を持つ集計軸のため、
+  // 二次会シナリオでは導出自体をスキップする(`buildPairFormationRunSummary`は
+  // `state.formationScenarioId`非依存の汎用関数だが、表示上不要な計算は避ける)。
+  const pairFormation = isClassroomPair ? buildPairFormationRunSummary(state, params) : undefined;
+  const groupSizeEntries = pairFormation
+    ? Object.entries(pairFormation.groupSizeDistribution)
+        .map(([size, count]) => ({ size: Number(size), count }))
+        .sort((a, b) => a.size - b.size)
+    : [];
 
   return (
     <div className="panel simulation-summary">
@@ -179,7 +200,7 @@ export function SimulationSummaryPanel({ state }: Props) {
       </section>
 
       <section className="simulation-summary-section">
-        <h3>{isClassroomPair ? "ペア形成サマリー" : "グループ形成サマリー"}</h3>
+        <h3>{isClassroomPair ? `${unitWord}形成サマリー` : "グループ形成サマリー"}</h3>
         <div className="simulation-summary-row">
           <span>{presentation.summary.firstNucleusTick}</span>
           <span>{formatTick(summary.firstNucleusTick, NOT_OCCURRED)}</span>
@@ -197,6 +218,48 @@ export function SimulationSummaryPanel({ state }: Props) {
           <span>{summary.groupFailure ? "はい" : "いいえ"}</span>
         </div>
       </section>
+
+      {isClassroomPair && pairFormation && (
+        <section className="simulation-summary-section">
+          <h3>{unitWord}人数の内訳</h3>
+          <div className="simulation-summary-row">
+            <span>割当人数</span>
+            <span>{pairFormation.assignedCount}</span>
+          </div>
+          <div className="simulation-summary-row">
+            <span>未割当人数</span>
+            <span>{pairFormation.unassignedCount}</span>
+          </div>
+          {pairFormation.structuralUnassignedFloor !== undefined && (
+            <>
+              <div className="simulation-summary-row">
+                <span>構造的未割当人数(定員上どうしても割り切れない人数)</span>
+                <span>{pairFormation.structuralUnassignedFloor}</span>
+              </div>
+              <div className="simulation-summary-row">
+                <span>構造的未割当を超える未割当人数</span>
+                <span>{pairFormation.excessUnassignedCount}</span>
+              </div>
+            </>
+          )}
+          {groupSizeEntries.length === 0 ? (
+            <p className="simulation-summary-empty">まだ成立した{unitWord}はありません。</p>
+          ) : (
+            <div className="simulation-summary-card">
+              <div className="simulation-summary-row simulation-summary-row--header">
+                <span className="simulation-summary-label-name">{unitWord}サイズ分布</span>
+                <span>{pairFormation.confirmedPairCount}{unitWord}成立</span>
+              </div>
+              {groupSizeEntries.map(({ size, count }) => (
+                <div className="simulation-summary-row" key={size}>
+                  <span>{size}人{unitWord}</span>
+                  <span>{count}{unitWord}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }

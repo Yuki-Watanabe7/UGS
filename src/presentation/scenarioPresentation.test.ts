@@ -18,7 +18,9 @@ import { SeededRandom } from "../simulation/random";
 import {
   AFTER_PARTY_PRESENTATION,
   CLASSROOM_PRESENTATION,
+  getScenarioPresentation,
   normalizeInterventionForPresentation,
+  resolveClassroomPresentation,
   resolveScenarioLogMessage,
 } from "./scenarioPresentation";
 
@@ -136,6 +138,68 @@ describe("scenario presentation: classroom rendering audit", () => {
     expectNoClassroomForbiddenTerms(html);
   });
 
+  it("audits a full 3〜4-person variable-capacity (classroom-group-3-4) run with 班 vocabulary end to end", () => {
+    const preset = getPresetById("classroom-group-3-4");
+    const seed = 12345;
+    const formation = {
+      scenarioId: "classroomPair" as const,
+      formationDeadlineTick: preset.formationDeadlineTick,
+      classroomGroupSize: preset.formationClassroomGroupSize,
+    };
+    const presentation = resolveClassroomPresentation(preset.formationClassroomGroupSize!);
+    const rng = new SeededRandom(seed);
+    let state = createInitialState(
+      seed,
+      preset.params,
+      { interventionId: "none" },
+      { enabled: true },
+      { enabled: true },
+      { enabled: true },
+      { enabled: true },
+      formation,
+    );
+    while (!state.finished && state.tick < 500) {
+      state = stepSimulation(
+        state,
+        preset.params,
+        rng,
+        { interventionId: "none" },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        formation,
+      );
+    }
+
+    const html = [
+      renderToStaticMarkup(
+        createElement(EventLog, { state, presentation, seed, presetId: preset.id }),
+      ),
+      renderToStaticMarkup(
+        createElement(ObserverJoinerInspector, { state, params: preset.params, seed, presetId: preset.id }),
+      ),
+      renderToStaticMarkup(createElement(SimulationSummaryPanel, { state, params: preset.params })),
+      renderToStaticMarkup(
+        createElement(SimulationCanvas, {
+          agents: state.agents,
+          groupCandidates: state.groupCandidates,
+          width: state.width,
+          height: state.height,
+          formationScenarioId: state.formationScenarioId,
+          formationClassroomGroupSize: state.formationClassroomGroupSize,
+        }),
+      ),
+    ].join("\n");
+
+    expect(state.finished).toBe(true);
+    // 学校向けFormationPolicy(#154)が正しく3〜4人可変定員へ配線されていることの確認
+    expect(state.groupCandidates.every((c) => c.memberIds.length <= 4)).toBe(true);
+    expect(html).toContain("班");
+    expect(html).not.toContain("2人固定");
+    expectNoClassroomForbiddenTerms(html);
+  });
+
   it("keeps the existing after-party vocabulary on the after-party route", () => {
     const html = renderToStaticMarkup(
       createElement(Router, { initialPathname: "/simulate/after-party" }),
@@ -207,5 +271,73 @@ describe("scenario presentation: structured state log resolution", () => {
     expectNoClassroomForbiddenTerms(classroomText);
     expect(resolveScenarioLogMessage(entry, AFTER_PARTY_PRESENTATION)).toBe(entry.message);
     expect(entry.message).toContain("もう一軒");
+  });
+
+  it("renders group-flavored (班) vocabulary for a group event once resolveClassroomPresentation switches the unit word", () => {
+    const entry: LogEntry = {
+      tick: 8,
+      message: "",
+      tags: ["groupConfirmed"],
+      eventType: "joinFailedCapacity",
+      metadata: { agentId: "a", agentLabel: "A", groupId: "group-3-a" },
+    };
+    const groupPresentation = resolveClassroomPresentation({ minGroupSize: 3, maxGroupSize: 4 });
+
+    const text = resolveScenarioLogMessage(entry, groupPresentation);
+    expect(text).toContain("班候補 group-3-a");
+    expect(text).toContain("既に定員に達していたため組めなかった");
+    expect(text).not.toContain("2人決まっていた");
+  });
+});
+
+describe("scenario presentation: dynamic classroom group-size resolution (Issue #155)", () => {
+  it("returns the exact static CLASSROOM_PRESENTATION for the default 2-person pair (backward compatible)", () => {
+    expect(resolveClassroomPresentation({ minGroupSize: 2, maxGroupSize: 2 })).toBe(CLASSROOM_PRESENTATION);
+    expect(getScenarioPresentation("classroomPair")).toBe(CLASSROOM_PRESENTATION);
+    expect(getScenarioPresentation("classroomPair", { minGroupSize: 2, maxGroupSize: 2 })).toBe(
+      CLASSROOM_PRESENTATION,
+    );
+  });
+
+  it("switches to 班 vocabulary and a fixed capacity label for a fixed 3-person group", () => {
+    const presentation = resolveClassroomPresentation({ minGroupSize: 3, maxGroupSize: 3 });
+
+    expect(presentation.groupUnit).toMatchObject({
+      unitWord: "班",
+      isVariableCapacity: false,
+      capacityLabel: "3人固定",
+    });
+    expect(presentation.parameters.groupConfirmSize.fixedValueLabel).toBe("3人固定");
+    expect(presentation.parameters.lateJoinEase.visible).toBe(false);
+    expect(presentation.canvas.confirmedCandidate).toBe("成立した班");
+    expect(presentation.summary.confirmedCount).toBe("成立班数");
+    expect(presentation.monteCarlo.confirmedUnit).toBe("班");
+    expect(presentation.agentStateLabels.joined).toBe("班成立済み");
+  });
+
+  it("switches to 班 vocabulary and a range capacity label for a variable 3-4 person group, and reveals lateJoinEase", () => {
+    const presentation = resolveClassroomPresentation({ minGroupSize: 3, maxGroupSize: 4 });
+
+    expect(presentation.groupUnit).toMatchObject({
+      unitWord: "班",
+      isVariableCapacity: true,
+      capacityLabel: "3〜4人",
+    });
+    expect(presentation.parameters.groupConfirmSize.fixedValueLabel).toBe("3〜4人");
+    // 3〜4人班では、成立済みだが空きのある班への参加しやすさとして意味を持つため表示する
+    expect(presentation.parameters.lateJoinEase.visible).toBe(true);
+    expect(presentation.parameters.lateJoinEase.editable).toBe(true);
+    expect(presentation.monteCarlo.showLateJoinMetric).toBe(true);
+  });
+
+  it("leaves the static CLASSROOM_PRESENTATION and AFTER_PARTY_PRESENTATION untouched", () => {
+    expect(CLASSROOM_PRESENTATION.groupUnit).toEqual({
+      minGroupSize: 2,
+      maxGroupSize: 2,
+      unitWord: "ペア",
+      isVariableCapacity: false,
+      capacityLabel: "2人固定",
+    });
+    expect(AFTER_PARTY_PRESENTATION.groupUnit).toBeUndefined();
   });
 });
