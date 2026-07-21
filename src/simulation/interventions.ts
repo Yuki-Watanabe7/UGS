@@ -25,7 +25,11 @@ export type InterventionScenarioId =
   | "light-observer-invitation"
   | "short-ambiguity-window"
   | "predecided-venue"
-  | "anonymous-low-pressure-intent";
+  | "anonymous-low-pressure-intent"
+  /** Issue #157: 学校向け(教師介入)の低圧介入。近くの未決定者同士へ声かけを促す */
+  | "nearby-peer-prompt"
+  /** Issue #157: 学校向け(教師介入)の低圧介入。空きのある班を「参加可能」と表示する */
+  | "open-group-signal";
 
 /**
  * Issue #156 (Phase 4): 介入の対象者層。「none」はどちらのシナリオでも常に選択可能なベースライン。
@@ -280,6 +284,54 @@ export const INTERVENTION_SCENARIOS: InterventionScenario[] = [
       audience: "afterParty",
       hooks: [],
       configKeys: ["observerInfluenceAvoidance"],
+      implemented: true,
+    },
+  },
+  {
+    id: "nearby-peer-prompt",
+    name: "近くの人への声かけ促進",
+    description:
+      "先生が「近くで、まだ決まっていない人同士で声をかけてみて」と、組み合わせは指定せずに低圧に促す。",
+    category: "targetedSupport",
+    expectedEffect:
+      "自分から声をかけにくい生徒同士でも、近接する相手への接近・組み合わせ作成のきっかけが生まれやすくなる。ただし対象を強制的に組ませるわけではない。",
+    engineLogicNotes:
+      "src/simulation/schoolInterventions/nearbyPeerPrompt.tsが実装。#156の学校向け介入実行契約の" +
+      "onBeforeApproachDecisionフックで、未決定(再探索中を含む、state === \"undecided\")のagentのうち、" +
+      "直近で介入済みでない(runtimeState.temporaryEffectExpiryByAgentIdがtick以下)者の中から、" +
+      "探索半径内かつ距離が最小のペアを1組だけ決定的に選ぶ(stableSortByIdで安定化した走査順、" +
+      "同距離ならid順。rngは一切使わない)。選ばれた2人へ、接近確率・輪へのattractivenessへの" +
+      "一時的な加算補正(InterventionEffect、一定tickで失効)を与え、influenceAvoidanceの壁を" +
+      "完全に消さず緩和したのと同様の後押しを近似する。対象2人を直接同じGroupCandidateへ" +
+      "所属させることはしない。schoolInterventionTriggeredイベントとして発火を記録する。",
+    applicability: {
+      scenarios: ["classroomPair"],
+      audience: "school",
+      hooks: ["beforeApproachDecision"],
+      configKeys: [],
+      implemented: true,
+    },
+  },
+  {
+    id: "open-group-signal",
+    name: "空きのある班の参加可能表示",
+    description: "空きのある形成中・成立済みの班が「まだ入れます」とわかるようにする。",
+    category: "publicCoordination",
+    expectedEffect:
+      "未決定の生徒が空きのある班へ気づきやすくなり、逆に空き枠のない班へ誤って近づくことも防げる。",
+    engineLogicNotes:
+      "src/simulation/schoolInterventions/openGroupSignal.tsが実装。onAfterStateTransitionフックで、" +
+      "このtick時点でforming(空きあり)、または可変定員でconfirmedだがまだ" +
+      "memberIds.length < maxGroupSizeの候補を毎tick洗い出し、新たに空きが出た/なくなったことを" +
+      "schoolInterventionTriggeredイベントとして記録する(runtimeState.intervenedGroupIdsを" +
+      "「現在表示中の候補」の集合として使う)。dissolving/dissolved/expired、および空き枠のない候補は" +
+      "対象にしない。表示中の候補それぞれへ、未決定な全agentからのattractivenessへの一時的な" +
+      "加算補正(InterventionEffect、targetGroupId指定、1tickごとに再発行して継続表示を近似)を与える。",
+    applicability: {
+      scenarios: ["classroomPair"],
+      audience: "school",
+      hooks: ["afterStateTransition"],
+      configKeys: [],
       implemented: true,
     },
   },

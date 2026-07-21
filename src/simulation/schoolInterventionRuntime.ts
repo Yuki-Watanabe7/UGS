@@ -2,6 +2,11 @@ import type { Agent, GroupCandidate, LogTag, SimParams, SimulationEventMetadata,
 import type { FormationPolicy } from "./formationPolicy";
 import type { InterventionScenarioId, SchoolInterventionHook } from "./interventions";
 import { SeededRandom } from "./random";
+// Issue #157: 個別の学校向け介入実装。`stableSortById`等の下記ヘルパー(すべて関数宣言でhoistされる)を
+// これらが逆に参照する循環import(nearbyPeerPrompt.ts/openGroupSignal.ts -> このファイル)になるが、
+// 参照はいずれもhandler関数の呼び出し時点(モジュール評価完了後)に限られるため安全(TDZの影響を受けない)。
+import { nearbyPeerPromptIntervention } from "./schoolInterventions/nearbyPeerPrompt";
+import { openGroupSignalIntervention } from "./schoolInterventions/openGroupSignal";
 
 /**
  * Issue #156 (Phase 4): 学校向け介入(教師介入)の実行契約。
@@ -269,12 +274,18 @@ export function advanceInterventionEffects(
   return effects.filter((effect) => tick < effect.expiresAtTick);
 }
 
-/** レジストリに登録済みの学校向け介入。Issue #156では個別介入の実装自体は対象外のため常に空 */
-const SCHOOL_INTERVENTION_POLICIES: Partial<Record<InterventionScenarioId, SchoolIntervention>> = {};
+/**
+ * レジストリに登録済みの学校向け介入。Issue #156では土台のみ(常に空)だったが、
+ * Issue #157で最初の2件(`nearby-peer-prompt`/`open-group-signal`)を登録した。
+ */
+const SCHOOL_INTERVENTION_POLICIES: Partial<Record<InterventionScenarioId, SchoolIntervention>> = {
+  "nearby-peer-prompt": nearbyPeerPromptIntervention,
+  "open-group-signal": openGroupSignalIntervention,
+};
 
 /**
- * `id`に対応する`SchoolIntervention`を解決する。現時点では実装済みの学校向け介入が存在しないため
- * 常に`undefined`を返す(=`runSchoolInterventionHook`が常にno-opになる)。後続Issueが個別介入を
+ * `id`に対応する`SchoolIntervention`を解決する。`SCHOOL_INTERVENTION_POLICIES`に未登録のIDは
+ * 常に`undefined`を返す(=`runSchoolInterventionHook`が常にno-opになる)。後続Issueも同様に個別介入を
  * `SCHOOL_INTERVENTION_POLICIES`へ登録することでこの土台上に実装を追加できる。
  */
 export function resolveSchoolIntervention(id: InterventionScenarioId): SchoolIntervention | undefined {

@@ -273,6 +273,12 @@ export type SimulationEventMetadata = {
   effectExpiresAtTick?: number;
   /** Issue #156: `schoolInterventionTriggered`用。結果分類(提示/受諾/拒否/割当/割当不能等) */
   outcome?: SchoolInterventionOutcome;
+  /**
+   * Issue #157: `schoolInterventionTriggered`(`nearby-peer-prompt`)用。声かけを促した相手側
+   * (`agentId`側と組になるもう一方)のagentID/表示名
+   */
+  secondAgentId?: string;
+  secondAgentLabel?: string;
 };
 
 export type LogEntry = {

@@ -314,6 +314,8 @@ function buildInspection(
           state.interventionId,
           state.tick,
           state.activeSpeechEffects ?? [],
+          0,
+          state.activeInterventionEffects ?? [],
         )
       : undefined,
     // Phase 3効果を除いた基準値(Issue #98)。activeEffectsを渡さないため、attractiveness()内部の

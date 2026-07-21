@@ -24,6 +24,8 @@ const LIKELY_METRICS: Record<InterventionScenarioId, string> = {
   "short-ambiguity-window": "グループ不成立率 / observerJoiner離脱率",
   "predecided-venue": "後乗り成功率 / 平均グループ成立tick",
   "anonymous-low-pressure-intent": "observerJoiner参加率 / 平均グループ成立tick",
+  "nearby-peer-prompt": "平均ペア/班成立tick / 未割当率",
+  "open-group-signal": "平均ペア/班成立tick / 未割当率",
 };
 
 export function InterventionSelector({

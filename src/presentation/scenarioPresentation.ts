@@ -2,7 +2,7 @@ import type { ExpressionReason } from "../simulation/expression";
 import { DEFAULT_CLASSROOM_PAIR_GROUP_SIZE } from "../simulation/formationPolicy";
 import type { FormationScenarioId, GroupSizeRule } from "../simulation/formationPolicy";
 import type { InterventionScenarioId } from "../simulation/interventions";
-import { resolveAvailableInterventionIds } from "../simulation/interventions";
+import { getInterventionById, resolveAvailableInterventionIds } from "../simulation/interventions";
 import type { DivergenceScene } from "../simulation/socialExpression";
 import type { SpeechEffectDimension } from "../simulation/speechEffects";
 import type { SpeechReason } from "../simulation/speech";
@@ -58,6 +58,13 @@ export type ScenarioPresentation = {
   groupUnit?: GroupUnitPresentation;
   availableInterventionIds: readonly InterventionScenarioId[];
   showInterventionControls: boolean;
+  /**
+   * Issue #157: 介入選択UI(`InterventionSelector`)自体は学校シナリオでも表示するが、
+   * 「介入なし」とのMonte Carlo比較パネル(`InterventionComparisonPanel`)の完成はこのIssueの対象外
+   * のため、こちらは別フラグで独立に制御する(既定は`showInterventionControls`と同じだが、
+   * 学校シナリオだけ意図的に`false`のまま据え置く)。
+   */
+  showInterventionComparison: boolean;
   speechTemplates: Record<SpeechReason, string>;
   expressionTemplates: Record<ExpressionReason, ExpressionTemplateVariants>;
   divergenceTemplates?: Partial<Record<DivergenceScene, DivergenceArchetypePresentation>>;
@@ -387,6 +394,7 @@ export const AFTER_PARTY_PRESENTATION: ScenarioPresentation = {
   // から導出する。二次会向けに実装済みの6介入 + "none"が定義順のまま返る(既存挙動と同じ配列)。
   availableInterventionIds: resolveAvailableInterventionIds("afterParty"),
   showInterventionControls: true,
+  showInterventionComparison: true,
   speechTemplates: AFTER_PARTY_SPEECH,
   expressionTemplates: AFTER_PARTY_EXPRESSIONS,
   agentStateLabels: {
@@ -463,10 +471,12 @@ export const CLASSROOM_PRESENTATION: ScenarioPresentation = {
     isVariableCapacity: false,
     capacityLabel: "2人固定",
   },
-  // Issue #156: 学校向けに実装済みの介入は現時点で存在しないため、常に"none"のみ
+  // Issue #157: 学校向けに実装済みの介入(`nearby-peer-prompt`/`open-group-signal`)を含む
   // (`resolveAvailableInterventionIds`が`applicability.implemented`で自動的にフィルタする)。
   availableInterventionIds: resolveAvailableInterventionIds("classroomPair"),
-  showInterventionControls: false,
+  showInterventionControls: true,
+  // Issue #157: 介入比較Monte Carlo UIの完成はこのIssueの対象外のため、既存どおり非表示のまま据え置く
+  showInterventionComparison: false,
   speechTemplates: CLASSROOM_SPEECH,
   expressionTemplates: CLASSROOM_EXPRESSIONS,
   divergenceTemplates: CLASSROOM_DIVERGENCE,
@@ -701,8 +711,17 @@ function buildClassroomLogMessage(entry: LogEntry): string {
   switch (entry.eventType) {
     case "simulationStarted":
       return "先生が「自由にペアを作ってください」と指示した。まだ誰も相手を決めていない。";
-    case "interventionApplied":
+    case "interventionApplied": {
+      // Issue #157: 学校向け(audience: "school")の介入は実際に適用されるため、その旨を表示する。
+      // 二次会向け(audience: "afterParty")の介入IDが紛れ込んだ場合(通常はUI側で"none"へ
+      // 正規化されるが、直接呼び出し等の経路のための保険)は、従来どおり利用不可として表示する。
+      const interventionId = entry.metadata?.interventionId;
+      const scenario = interventionId ? getInterventionById(interventionId) : undefined;
+      if (scenario && scenario.applicability.audience === "school") {
+        return `${time} 教師が介入「${scenario.name}」を開始した`;
+      }
       return `${time} 学校シナリオでは利用できない介入設定を解除した`;
+    }
     case "publicMeetingPointEstablished":
     case "lateJoinPermissionAnnounced":
     case "anonymousIntentSignalAnnounced":
