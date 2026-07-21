@@ -9,7 +9,7 @@ import type {
   SimParams,
   SimulationState,
 } from "./types";
-import { getFormationPolicyById, resolveNominalGroupCapacity } from "./formationPolicy";
+import { computeStructuralUnassignedFloor, getFormationPolicyById, resolveNominalGroupCapacity } from "./formationPolicy";
 
 function average(values: number[]): number {
   if (values.length === 0) return 0;
@@ -115,12 +115,17 @@ export function buildPairFormationRunSummary(state: SimulationState, params: Sim
   const sameCliquePairRate = confirmedGroups.length === 0 ? undefined : homogeneousCount / confirmedGroups.length;
   const crossCliquePairRate = sameCliquePairRate === undefined ? undefined : 1 - sameCliquePairRate;
 
-  const formationPolicy = getFormationPolicyById(state.formationScenarioId ?? "afterParty", state.formationDeadlineTick);
+  const formationPolicy = getFormationPolicyById(
+    state.formationScenarioId ?? "afterParty",
+    state.formationDeadlineTick,
+    state.formationClassroomGroupSize,
+  );
   const capacity = resolveNominalGroupCapacity(formationPolicy, params);
-  const structuralUnassignedFloor =
-    Number.isFinite(capacity.maxGroupSize) && capacity.minGroupSize === capacity.maxGroupSize
-      ? state.agents.length % capacity.minGroupSize
-      : undefined;
+  // Issue #154: 固定定員(min===max)・可変定員のどちらでも同じAPIで正しい構造的未割当人数を返す
+  // (`computeStructuralUnassignedFloor`。固定定員では従来の`populationSize % minGroupSize`と同値)
+  const structuralUnassignedFloor = Number.isFinite(capacity.maxGroupSize)
+    ? computeStructuralUnassignedFloor(state.agents.length, capacity)
+    : undefined;
 
   const unassignedCount = state.agents.filter((agent) => agent.state === "unassigned").length;
   const excessUnassignedCount =

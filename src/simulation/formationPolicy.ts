@@ -29,8 +29,60 @@ import { clamp, distance } from "./model";
  * 定員2固定(min=max=2)・退出不可(canLeaveは常にfalse)・全員割当またはformationDeadlineTick到達で
  * 終了、という点でafterPartyと大きく異なるが、既存のinitiative/influenceAvoidance/conformity/
  * clique/stressの各エージェントフィールドとengine.tsの核形成→接近→合流のtickループ自体は再利用する。
+ *
+ * Issue #154 (Phase 4): `classroomPair`の2人固定ロジックを、任意の`GroupSizeRule`(固定/可変定員)を
+ * 受け取る学校向けpolicy factory(`createClassroomGroupPolicy`)へ一般化した。内部IDは引き続き
+ * `classroomPair`のまま(新しいscenarioIdは追加しない)で、`FormationRuntimeOptions.classroomGroupSize`
+ * 省略時は`DEFAULT_CLASSROOM_PAIR_GROUP_SIZE`(2人固定)へ後方互換のfall backをする。こうすることで、
+ * engine.ts側の`formationPolicy.id === "classroomPair"`分岐(メッセージ文言・deadline処理)を
+ * 一切増やさずに固定3人/4人班・3〜4人可変定員班まで同じ形成ルール境界で表現できる
+ * (受入条件: engineへ学校の班人数別条件分岐が散在していない)。
  */
 export type FormationScenarioId = "afterParty" | "classroomPair";
+
+/** Issue #154: 候補の成立最小人数・収容最大人数のペア。`minGroupSize === maxGroupSize`なら固定定員 */
+export type GroupSizeRule = {
+  minGroupSize: number;
+  maxGroupSize: number;
+};
+
+/** Issue #154: `rule`が固定定員(min === max)かどうか */
+export function isFixedGroupSizeRule(rule: GroupSizeRule): boolean {
+  return rule.minGroupSize === rule.maxGroupSize;
+}
+
+/** Issue #154: `createClassroomGroupPolicy`へ渡す、学校向け形成設定のまとまり */
+export type ClassroomGroupFormationOptions = {
+  groupSize: GroupSizeRule;
+  formationDeadlineTick: number;
+};
+
+/** `classroomGroupSize`省略時に使う既定値(既存`classroomPair`と同じ2人固定) */
+export const DEFAULT_CLASSROOM_PAIR_GROUP_SIZE: GroupSizeRule = { minGroupSize: 2, maxGroupSize: 2 };
+
+/**
+ * Issue #154: 学校向け形成設定を初期化時に検証する。不正値を黙って実行しない(受入条件)。
+ * - `minGroupSize`は2以上の整数
+ * - `maxGroupSize`は`minGroupSize`以上の有限な整数(学校シナリオは実質無制限の定員を持たない)
+ * - `formationDeadlineTick`は正の整数
+ */
+function validateClassroomGroupFormationOptions(options: ClassroomGroupFormationOptions): void {
+  const { groupSize, formationDeadlineTick } = options;
+  if (!Number.isInteger(groupSize.minGroupSize) || groupSize.minGroupSize < 2) {
+    throw new Error(`classroomGroupSize.minGroupSize must be an integer >= 2 (got ${groupSize.minGroupSize})`);
+  }
+  if (!Number.isFinite(groupSize.maxGroupSize) || !Number.isInteger(groupSize.maxGroupSize)) {
+    throw new Error(`classroomGroupSize.maxGroupSize must be a finite integer (got ${groupSize.maxGroupSize})`);
+  }
+  if (groupSize.maxGroupSize < groupSize.minGroupSize) {
+    throw new Error(
+      `classroomGroupSize.maxGroupSize (${groupSize.maxGroupSize}) must be >= minGroupSize (${groupSize.minGroupSize})`,
+    );
+  }
+  if (!Number.isInteger(formationDeadlineTick) || formationDeadlineTick <= 0) {
+    throw new Error(`formationDeadlineTick must be a positive integer (got ${formationDeadlineTick})`);
+  }
+}
 
 /** `createInitialState`/`stepSimulation`に形成ポリシーを指定する際の実行時オプション */
 export type FormationRuntimeOptions = {
@@ -40,6 +92,11 @@ export type FormationRuntimeOptions = {
    * `classroomPair`以外では無視される。省略時は`DEFAULT_CLASSROOM_PAIR_DEADLINE_TICK`。
    */
   formationDeadlineTick?: number;
+  /**
+   * Issue #154: `classroomPair`固有の、成立最小人数・収容最大人数の上書き。`classroomPair`以外では
+   * 無視される。省略時は`DEFAULT_CLASSROOM_PAIR_GROUP_SIZE`(2人固定、既存プリセットとの後方互換)。
+   */
+  classroomGroupSize?: GroupSizeRule;
 };
 
 /** 責務1(候補作成)の入力コンテキスト */
@@ -321,7 +378,17 @@ function classroomPairFinishReason(
   return undefined;
 }
 
-function createClassroomPairPolicy(formationDeadlineTick: number): FormationPolicy {
+/**
+ * Issue #154: `classroomPair`の一般化。固定定員(min===max、ペア・3人班・4人班等)・可変定員
+ * (min<max、例: 3〜4人班)のいずれも`options.groupSize`で表現する学校向けpolicy factory。
+ * 内部IDは常に`"classroomPair"`を返す(新しいscenarioIdは追加しない)ため、engine.ts側の
+ * `formationPolicy.id === "classroomPair"`分岐(メッセージ文言・deadline処理)や、既存の
+ * `state.formationScenarioId`の保存値・URL等はこの一般化の影響を受けない。
+ */
+function createClassroomGroupPolicy(options: ClassroomGroupFormationOptions): FormationPolicy {
+  validateClassroomGroupFormationOptions(options);
+  const { groupSize, formationDeadlineTick } = options;
+
   return {
     id: "classroomPair",
     candidateMergeRadius: CLASSROOM_CANDIDATE_MERGE_RADIUS,
@@ -331,12 +398,12 @@ function createClassroomPairPolicy(formationDeadlineTick: number): FormationPoli
 
     evaluateCandidateInitiation(agent) {
       // observerJoiner相当(自らペアを作らず誘いを待ちやすい人)は、afterPartyと同様に
-      // 自分からは核(ペア探し)を作らない
+      // 自分からは核(班探し)を作らない
       if (agent.isObserverJoiner) {
         return { eligible: false, probability: 0, hasInitiative: false };
       }
 
-      // 先生が「自由にペアを作ってください」と全員に指示しているため、afterPartyと異なり
+      // 先生が「自由に班を作ってください」と全員に指示しているため、afterPartyと異なり
       // 主導性の高い人だけに限定しない(numLeaders: 0のプリセットでも誰も動けない、という
       // afterParty的な事態を避ける)。initiative/willingnessは頻度の重み付けとしてのみ再利用する
       const hasInitiative = agent.initiative >= 0.5;
@@ -350,13 +417,14 @@ function createClassroomPairPolicy(formationDeadlineTick: number): FormationPoli
     },
 
     shouldConfirmCandidate(nearbyCount) {
-      // 定員2固定。groupConfirmSize(params)は参照しない
-      return nearbyCount >= 2;
+      // 成立最小人数以上集まれば成立(可変定員では、maxGroupSizeに達するまで引き続き参加を受け付ける)。
+      // groupConfirmSize(params)は参照しない
+      return nearbyCount >= groupSize.minGroupSize;
     },
 
     evaluateUnconfirmedCandidateLifecycle(candidate, ctx) {
-      // shouldConfirmCandidateが先に評価されるため、ここに到達する時点でmemberIds.length < 2
-      if (candidate.memberIds.length < 2 && candidate.age >= ctx.weakResponseAge) {
+      // shouldConfirmCandidateが先に評価されるため、ここに到達する時点でmemberIds.length < minGroupSize
+      if (candidate.memberIds.length < groupSize.minGroupSize && candidate.age >= ctx.weakResponseAge) {
         return "dissolve";
       }
       if (candidate.age >= ctx.maxAge) {
@@ -388,10 +456,10 @@ function createClassroomPairPolicy(formationDeadlineTick: number): FormationPoli
     },
 
     resolveGroupCapacity(candidate) {
-      // 定員2固定(候補固有のオーバーライドがあればそちらを優先する既存の一般ルールは維持)
+      // 候補固有のオーバーライドがあればそちらを優先する既存の一般ルールは維持
       return {
-        minGroupSize: candidate.minGroupSize ?? 2,
-        maxGroupSize: candidate.maxGroupSize ?? 2,
+        minGroupSize: candidate.minGroupSize ?? groupSize.minGroupSize,
+        maxGroupSize: candidate.maxGroupSize ?? groupSize.maxGroupSize,
       };
     },
 
@@ -408,25 +476,37 @@ function createClassroomPairPolicy(formationDeadlineTick: number): FormationPoli
   };
 }
 
+/** `classroomGroupSize`省略時は`DEFAULT_CLASSROOM_PAIR_GROUP_SIZE`(既存2人固定)にfall backする */
+function createClassroomPairPolicy(
+  formationDeadlineTick: number,
+  groupSize: GroupSizeRule = DEFAULT_CLASSROOM_PAIR_GROUP_SIZE,
+): FormationPolicy {
+  return createClassroomGroupPolicy({ groupSize, formationDeadlineTick });
+}
+
 const FORMATION_POLICIES: Partial<Record<FormationScenarioId, FormationPolicy>> = {
   afterParty: afterPartyPolicy,
 };
 
 /**
- * `formationDeadlineTick`は`classroomPair`のみで参照される(他シナリオでは無視される)。
- * `classroomPair`は`formationDeadlineTick`ごとに異なる`FormationPolicy`が必要なため、
+ * `formationDeadlineTick`/`classroomGroupSize`は`classroomPair`のみで参照される(他シナリオでは
+ * 無視される)。`classroomPair`はこれらの組み合わせごとに異なる`FormationPolicy`が必要なため、
  * afterPartyのような固定シングルトンではなく毎回`createClassroomPairPolicy`で組み立てる。
  */
-export function getFormationPolicyById(id: FormationScenarioId, formationDeadlineTick?: number): FormationPolicy {
+export function getFormationPolicyById(
+  id: FormationScenarioId,
+  formationDeadlineTick?: number,
+  classroomGroupSize?: GroupSizeRule,
+): FormationPolicy {
   if (id === "classroomPair") {
-    return createClassroomPairPolicy(formationDeadlineTick ?? DEFAULT_CLASSROOM_PAIR_DEADLINE_TICK);
+    return createClassroomPairPolicy(formationDeadlineTick ?? DEFAULT_CLASSROOM_PAIR_DEADLINE_TICK, classroomGroupSize);
   }
   return FORMATION_POLICIES[id] ?? afterPartyPolicy;
 }
 
 /** `options`(未指定なら後方互換として`afterParty`)に対応する`FormationPolicy`を解決する */
 export function resolveFormationPolicy(options?: FormationRuntimeOptions): FormationPolicy {
-  return getFormationPolicyById(options?.scenarioId ?? "afterParty", options?.formationDeadlineTick);
+  return getFormationPolicyById(options?.scenarioId ?? "afterParty", options?.formationDeadlineTick, options?.classroomGroupSize);
 }
 
 /**
@@ -446,4 +526,43 @@ export function resolveNominalGroupCapacity(policy: FormationPolicy, params: Sim
     age: 0,
   };
   return policy.resolveGroupCapacity(nominalCandidate, params);
+}
+
+/**
+ * Issue #154: `capacity`(`minGroupSize..maxGroupSize`)の範囲内で人口`populationSize`を過不足なく
+ * 班へ分割できるかを決定的に判定し、できない場合に理論上どうしても割当不可能な最小人数
+ * (構造的未割当人数)を返す純粋関数。固定定員(min===max、`populationSize % minGroupSize`と同値)・
+ * 可変定員のどちらにも同じAPIで対応する(受入条件: `resolveNominalGroupCapacity`と
+ * `pairFormation.ts`の`structuralUnassignedFloor`が可変定員でも正しい値を返せる)。
+ *
+ * 例: 10人を3〜4人班(3+3+4)に分ける場合は構造的未割当0。5人を3〜4人班に分ける場合、
+ * 3人班1つ(残り2人は班を作れない)が最善のため構造的未割当は1。
+ *
+ * `capacity.maxGroupSize`が有限であることを前提とする(呼び出し側は`Number.isFinite`で
+ * 実質無制限の定員を先に除外すること。afterPartyのように無制限なら構造的未割当という概念自体が
+ * 不要なため、この関数の対象外)。
+ */
+export function computeStructuralUnassignedFloor(populationSize: number, capacity: GroupCapacity): number {
+  if (populationSize <= 0) return 0;
+
+  const { minGroupSize, maxGroupSize } = capacity;
+  // reachable[n] = ちょうどn人を、min..maxの班だけで(0個以上)過不足なく分割できるか
+  const reachable = new Array<boolean>(populationSize + 1).fill(false);
+  reachable[0] = true;
+  for (let n = minGroupSize; n <= populationSize; n++) {
+    for (let size = minGroupSize; size <= Math.min(maxGroupSize, n); size++) {
+      if (reachable[n - size]) {
+        reachable[n] = true;
+        break;
+      }
+    }
+  }
+
+  for (let assignable = populationSize; assignable >= 0; assignable--) {
+    if (reachable[assignable]) {
+      return populationSize - assignable;
+    }
+  }
+  // populationSize >= 1でreachable[0]は常にtrueのため、ここには到達しない
+  return populationSize;
 }
