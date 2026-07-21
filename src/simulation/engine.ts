@@ -198,6 +198,7 @@ export function createInitialState(
     interventionId: scenario.id,
     formationScenarioId: formationPolicy.id,
     formationDeadlineTick: formation?.formationDeadlineTick,
+    formationClassroomGroupSize: formation?.classroomGroupSize,
     speechLog: [],
     speechReceptionLog: [],
     speechInterpretationLog: [],
@@ -521,7 +522,11 @@ export function stepSimulation(
   const resolvedFormation: FormationRuntimeOptions | undefined =
     formation ??
     (state.formationScenarioId
-      ? { scenarioId: state.formationScenarioId, formationDeadlineTick: state.formationDeadlineTick }
+      ? {
+          scenarioId: state.formationScenarioId,
+          formationDeadlineTick: state.formationDeadlineTick,
+          classroomGroupSize: state.formationClassroomGroupSize,
+        }
       : undefined);
   const formationPolicy = resolveFormationPolicy(resolvedFormation);
   // Phase 3効果も同様に、未指定時は直前のstateの設定を引き継ぐ(呼び出し側の渡し忘れで
@@ -1117,6 +1122,7 @@ export function stepSimulation(
     interventionId,
     formationScenarioId: formationPolicy.id,
     formationDeadlineTick: resolvedFormation?.formationDeadlineTick,
+    formationClassroomGroupSize: resolvedFormation?.classroomGroupSize,
     speechLog: [],
   };
 

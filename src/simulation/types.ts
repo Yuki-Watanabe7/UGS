@@ -1,5 +1,5 @@
 import type { InterventionRuntimeOptions, InterventionScenarioId } from "./interventions";
-import type { FormationRuntimeOptions, FormationScenarioId } from "./formationPolicy";
+import type { FormationRuntimeOptions, FormationScenarioId, GroupSizeRule } from "./formationPolicy";
 import type { SpeechEvent } from "./speech";
 import type {
   AggregatedActiveEffect,
@@ -315,6 +315,13 @@ export type SimulationState = {
    * `DEFAULT_CLASSROOM_PAIR_DEADLINE_TICK`(`formationPolicy.ts`)が使われる。
    */
   formationDeadlineTick?: number;
+  /**
+   * Issue #154: `formationScenarioId`が`classroomPair`の場合に使われる、成立最小人数・収容最大人数の
+   * 上書き。`formationScenarioId`/`formationDeadlineTick`と同じfall backパターン(呼び出し側が
+   * 引き継ぎ忘れても直前の設定を維持する)で扱う。`classroomPair`以外では無視され、未指定時は
+   * `DEFAULT_CLASSROOM_PAIR_GROUP_SIZE`(`formationPolicy.ts`、2人固定)が使われる。
+   */
+  formationClassroomGroupSize?: GroupSizeRule;
   /**
    * エージェントが実際に行った発言(`SpeechEvent`、`speech.ts`参照)の時系列記録。Phase 2で追加。
    * `log`(検証可能な出来事の記録)とは別軸で、「誰が何を発言したか」だけを構造化して保持する。
