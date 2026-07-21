@@ -260,6 +260,54 @@ describe("SimulationCanvas classroom pair progress", () => {
     expect(html).toContain("解消済み");
   });
 
+  it("evacuates a confirmed full pair and its members into a numbered resolved-area slot", () => {
+    const agents = [
+      makeAgent({ id: "a", label: "生徒A", x: 295, y: 220, state: "joined", joinedGroupId: "full-pair" }),
+      makeAgent({ id: "b", label: "生徒B", x: 305, y: 220, state: "joined", joinedGroupId: "full-pair" }),
+    ];
+    const candidates = [
+      candidate({ id: "full-pair", x: 300, y: 220, status: "confirmed", memberIds: ["a", "b"] }),
+    ];
+    const before = JSON.stringify({ agents, candidates });
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        ...baseProps,
+        agents,
+        groupCandidates: candidates,
+        thoughts: [{ agentId: "a", text: "決まってよかった" }],
+        speeches: [{ agentId: "b", text: "💬よろしくね" }],
+      }),
+    );
+
+    expect(html).toContain("成立済みのペア");
+    expect(html).toContain("相手を探している生徒");
+    expect(html).toContain('data-evacuated="true"');
+    expect(html).toContain('data-visual-slot="1"');
+    expect(html).toContain('data-visual-candidate="full-pair"');
+    expect(html).toContain("成立済み #1");
+    expect(html).toContain("#1 full-pair");
+    expect(html).toContain("決まってよかった");
+    expect(html).toContain("よろしくね");
+    expect(JSON.stringify({ agents, candidates })).toBe(before);
+  });
+
+  it("leaves a forming candidate and approaching link at simulation coordinates", () => {
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        ...baseProps,
+        agents: [
+          makeAgent({ id: "founder", state: "forming" }),
+          makeAgent({ id: "joiner", state: "approaching", x: 500, y: 300, joinedGroupId: "forming-pair" }),
+        ],
+        groupCandidates: [candidate({ id: "forming-pair", x: 300, y: 220 })],
+      }),
+    );
+
+    expect(html).not.toContain('data-evacuated="true"');
+    expect(html).toContain('cx="300" cy="220" r="54"');
+    expect(html).toContain('x1="500" y1="300" x2="300" y2="220"');
+  });
+
   it("visually labels searching-again and unassigned agents", () => {
     const html = renderToStaticMarkup(
       createElement(SimulationCanvas, {
