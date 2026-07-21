@@ -1,5 +1,6 @@
-import type { InterventionRuntimeOptions, InterventionScenarioId } from "./interventions";
+import type { InterventionAudience, InterventionRuntimeOptions, InterventionScenarioId } from "./interventions";
 import type { FormationRuntimeOptions, FormationScenarioId, GroupSizeRule } from "./formationPolicy";
+import type { InterventionEffect, InterventionRuntimeState } from "./schoolInterventionRuntime";
 import type { SpeechEvent } from "./speech";
 import type {
   AggregatedActiveEffect,
@@ -209,7 +210,17 @@ export type SimulationEventType =
    * 全agent共通で発生するため、agent別の接近回数はこのeventTypeで集計する
    * (`observerApproached`はobserverJoiner限定で、非observerJoinerには発生しない)。
    */
-  | "agentApproached";
+  | "agentApproached"
+  /**
+   * Issue #156: 学校向け介入(教師介入)が発火した/効果を適用した/対象を割り当てた等の共通イベント。
+   * 個別介入(推薦・強制割当等)の具体ロジックはこのIssueの対象外だが、後続Issueが実装する介入は
+   * 全てこのeventTypeと`SimulationEventMetadata`の共通フィールドを使って構造化ログを残す想定
+   * (受入条件: 表示用messageの解析に依存せず後続の集計がmetadataから算出できる)。
+   */
+  | "schoolInterventionTriggered";
+
+/** Issue #156: `schoolInterventionTriggered`の`metadata.outcome`。表示文言の解析に依存しない結果分類 */
+export type SchoolInterventionOutcome = "presented" | "accepted" | "declined" | "assigned" | "unassignable";
 
 /** `eventType`ごとに必要な範囲で付与される集計用の補助情報。全フィールド任意 */
 export type SimulationEventMetadata = {
@@ -247,6 +258,21 @@ export type SimulationEventMetadata = {
   lastFailedCandidateId?: string;
   /** Issue #134: `agentUnassigned`時点のstressスナップショット */
   stress?: number;
+  /** Issue #156: `schoolInterventionTriggered`用。適用された介入シナリオのID */
+  schoolInterventionId?: InterventionScenarioId;
+  /** Issue #156: `schoolInterventionTriggered`用。介入の対象者層(常に"school") */
+  interventionCategory?: InterventionAudience;
+  /** Issue #156: `schoolInterventionTriggered`用。声かけ/推薦等の発生元となったagentID(教師由来なら未設定) */
+  sourceAgentId?: string;
+  /** Issue #156: `schoolInterventionTriggered`用。発生元が教師(agentを介さない介入)かどうか */
+  isTeacherSource?: boolean;
+  /** Issue #156: `schoolInterventionTriggered`用。発火理由(人間可読の短いタグ、個別介入が定義する) */
+  triggerReason?: string;
+  /** Issue #156: `schoolInterventionTriggered`用。一時効果の開始/終了tick */
+  effectStartedAtTick?: number;
+  effectExpiresAtTick?: number;
+  /** Issue #156: `schoolInterventionTriggered`用。結果分類(提示/受諾/拒否/割当/割当不能等) */
+  outcome?: SchoolInterventionOutcome;
 };
 
 export type LogEntry = {
@@ -296,6 +322,13 @@ export type SimulationState = {
   width: number;
   height: number;
   finished: boolean;
+  /**
+   * Issue #156: このstateを生成したrunのseed(`createInitialState`の`seed`引数)。学校向け介入の
+   * 実行コンテキスト(`SchoolInterventionContext.runSeed`)・介入専用rngの導出元として使う。
+   * `interventionId`と同じfall backパターン(`stepSimulation`は引数でseedを受け取らないため、
+   * 常に直前のstateから引き継ぐ)。未指定(既存stateの読み込み等)は`0`として扱う。
+   */
+  seed?: number;
   /**
    * このstateの生成(`createInitialState`)/更新(`stepSimulation`)に使われた介入シナリオID。
    * 介入なしの場合は"none"。UI表示・集計向けの最小限の保持であり、既存の状態遷移ロジックには影響しない。
@@ -406,6 +439,19 @@ export type SimulationState = {
    * `engine.ts`が毎tick、観測完了・時間窓失効したものを取り除き・このtickの発言分を追記して置き換える。
    */
   tieCommitments?: TieObservationCommitment[];
+  /**
+   * Issue #156: 学校向け介入(教師介入)の複数tickにまたがる進行状態。`interventionId`と同じ
+   * fall backパターン(呼び出し側が引き継ぎ忘れても直前の設定を維持する)で扱う。未指定
+   * (`createInitialState`直後、または既存stateの読み込み)は`createInitialInterventionRuntimeState`
+   * が返す空状態。個別介入の実装が存在しない間は常にこの空状態のまま変化しない。
+   */
+  interventionRuntimeState?: InterventionRuntimeState;
+  /**
+   * Issue #156: 現在有効な`InterventionEffect`(学校向け介入由来の一時的な補正)の一覧。
+   * `activeSpeechEffects`と同じ設計(時系列の蓄積ログではなく「今このtickで作用している効果」の
+   * スナップショット)。個別介入の実装が存在しない間は常に空配列。
+   */
+  activeInterventionEffects?: InterventionEffect[];
 };
 
 /**

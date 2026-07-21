@@ -9,9 +9,23 @@ import type {
   SimulationEventType,
   SimulationState,
 } from "./types";
-import type { InterventionRuntimeOptions, InterventionScenarioId } from "./interventions";
+import type { InterventionRuntimeOptions, InterventionScenarioId, SchoolInterventionHook } from "./interventions";
 import type { FormationPolicy, FormationRuntimeOptions, GroupCapacity } from "./formationPolicy";
-import { resolveFormationPolicy } from "./formationPolicy";
+import { DEFAULT_CLASSROOM_PAIR_DEADLINE_TICK, resolveFormationPolicy } from "./formationPolicy";
+import type {
+  InterventionAction,
+  InterventionEffect,
+  InterventionRuntimeState,
+  SchoolIntervention,
+  SchoolInterventionContext,
+} from "./schoolInterventionRuntime";
+import {
+  advanceInterventionEffects,
+  createInitialInterventionRuntimeState,
+  createRunId,
+  resolveSchoolIntervention,
+  runSchoolInterventionHook,
+} from "./schoolInterventionRuntime";
 import type { SpeechEvent } from "./speech";
 import { createSpeechEvent, deriveSpeechEvents } from "./speech";
 import type { SpeechActiveEffect, SpeechEffectsConfig } from "./speechEffects";
@@ -187,6 +201,36 @@ export function createInitialState(
     );
   }
 
+  // Issue #156: 学校向け介入の"initialState"フック。登録済み介入が存在しない間は常にno-op。
+  const initialDeadlineTick =
+    formationPolicy.id === "classroomPair"
+      ? (formation?.formationDeadlineTick ?? DEFAULT_CLASSROOM_PAIR_DEADLINE_TICK)
+      : undefined;
+  const initialInterventionEffects: InterventionEffect[] = [];
+  const interventionRuntimeState = fireSchoolInterventionHook(
+    resolveSchoolIntervention(scenario.id),
+    buildSchoolInterventionContext(
+      "initialState",
+      0,
+      agents,
+      groupCandidates,
+      formationPolicy,
+      effectiveParams,
+      initialDeadlineTick,
+      [],
+      log,
+      seed,
+      createRunId(formationPolicy.id, scenario.id, seed),
+      createInitialInterventionRuntimeState(),
+    ),
+    agents,
+    groupCandidates,
+    formationPolicy,
+    effectiveParams,
+    log,
+    initialInterventionEffects,
+  );
+
   return {
     tick: 0,
     agents,
@@ -195,10 +239,13 @@ export function createInitialState(
     width: WORLD_WIDTH,
     height: WORLD_HEIGHT,
     finished: false,
+    seed,
     interventionId: scenario.id,
     formationScenarioId: formationPolicy.id,
     formationDeadlineTick: formation?.formationDeadlineTick,
     formationClassroomGroupSize: formation?.classroomGroupSize,
+    interventionRuntimeState,
+    activeInterventionEffects: initialInterventionEffects,
     speechLog: [],
     speechReceptionLog: [],
     speechInterpretationLog: [],
@@ -261,6 +308,100 @@ function capacityMetadataFields(
 ): { maxGroupSize?: number; remainingCapacity?: number } {
   if (!Number.isFinite(capacity.maxGroupSize)) return {};
   return { maxGroupSize: capacity.maxGroupSize, remainingCapacity: capacity.maxGroupSize - memberCount };
+}
+
+// --- Issue #156: 学校向け介入(教師介入)の実行契約の結線 ----------------------------------------
+// 個別介入の実装自体はこのIssueの対象外であり、`resolveSchoolIntervention`は常に`undefined`を
+// 返す(=以下のフック呼び出しは常にno-op)。詳細な設計はschoolInterventionRuntime.ts参照。
+
+/**
+ * `SchoolInterventionContext`を組み立てる。`agents`/`groupCandidates`はこの時点のスナップショットを
+ * そのまま渡す(読み取り専用として扱う契約は呼び出し側=介入実装の責務。この関数自体はコピーしない)。
+ */
+function buildSchoolInterventionContext(
+  hook: SchoolInterventionHook,
+  tick: number,
+  agents: Agent[],
+  candidates: GroupCandidate[],
+  formationPolicy: FormationPolicy,
+  params: SimParams,
+  deadlineTick: number | undefined,
+  priorLog: LogEntry[],
+  tickLog: LogEntry[],
+  runSeed: number,
+  runId: string,
+  runtimeState: InterventionRuntimeState,
+): SchoolInterventionContext {
+  return {
+    hook,
+    tick,
+    agents,
+    groupCandidates: candidates,
+    formationPolicy,
+    params,
+    deadlineTick,
+    recentEvents: [...priorLog, ...tickLog].map((entry) => ({ eventType: entry.eventType, metadata: entry.metadata })),
+    runSeed,
+    runId,
+    runtimeState,
+  };
+}
+
+/**
+ * `actions`(割当操作等)を汎用的に適用する。engineは`InterventionAction.kind`だけを見て処理し、
+ * どの介入がこのactionを生成したかは一切参照しない(受入条件: engineが介入IDごとの詳細を知らずに
+ * 結果を適用できる)。
+ */
+function applyInterventionActions(
+  agents: Agent[],
+  candidates: GroupCandidate[],
+  actions: InterventionAction[],
+  formationPolicy: FormationPolicy,
+  params: SimParams,
+): void {
+  for (const action of actions) {
+    const agent = agents.find((a) => a.id === action.agentId);
+    if (!agent) continue;
+
+    if (action.kind === "assignToGroup") {
+      const candidate = candidates.find((c) => c.id === action.groupId);
+      if (!candidate) continue;
+      const capacity = formationPolicy.resolveGroupCapacity(candidate, params);
+      if (addMemberToCandidate(candidate, agent.id, capacity) === "full") continue;
+      agent.state = "joined";
+      agent.joinedGroupId = candidate.id;
+    } else if (action.kind === "markUnassigned") {
+      agent.state = "unassigned";
+      agent.joinedGroupId = undefined;
+    }
+  }
+}
+
+/**
+ * `hook`を発火し、その結果(`events`/`actions`/`effects`)を`log`/`agents`/`candidates`/
+ * `collectedEffects`へ反映したうえで、更新後の`InterventionRuntimeState`を返す。
+ * `schoolIntervention`が`undefined`(=登録済み介入なし。現状は常にこれ)の間は
+ * `runSchoolInterventionHook`が空の結果を返すため、この呼び出し全体が実質no-opになる。
+ */
+function fireSchoolInterventionHook(
+  schoolIntervention: SchoolIntervention | undefined,
+  ctx: SchoolInterventionContext,
+  agents: Agent[],
+  candidates: GroupCandidate[],
+  formationPolicy: FormationPolicy,
+  params: SimParams,
+  log: LogEntry[],
+  collectedEffects: InterventionEffect[],
+): InterventionRuntimeState {
+  const result = runSchoolInterventionHook(schoolIntervention, ctx);
+
+  applyInterventionActions(agents, candidates, result.actions, formationPolicy, params);
+  for (const event of result.events) {
+    pushLog(log, ctx.tick, event.message, event.tags ?? ["intervention"], event.eventType, event.metadata);
+  }
+  collectedEffects.push(...result.effects);
+
+  return result.runtimeState;
 }
 
 /**
@@ -566,6 +707,47 @@ export function stepSimulation(
     ? advanceActiveSpeechEffects(state.activeSpeechEffects ?? [], tick)
     : [];
 
+  // Issue #156: 学校向け介入(教師介入)の実行契約の結線。登録済み介入が存在しない間は
+  // `resolveSchoolIntervention`が常に`undefined`を返すため、以下の各hook呼び出しは実質no-op
+  // (受入条件: 本体の行動乱数系列・状態・イベントを変えない)。
+  const runSeed = state.seed ?? 0;
+  const interventionRunId = createRunId(formationPolicy.id, interventionId, runSeed);
+  const schoolIntervention = resolveSchoolIntervention(interventionId);
+  const deadlineTick =
+    formationPolicy.id === "classroomPair"
+      ? (resolvedFormation?.formationDeadlineTick ?? DEFAULT_CLASSROOM_PAIR_DEADLINE_TICK)
+      : undefined;
+  let interventionRuntimeState = state.interventionRuntimeState ?? createInitialInterventionRuntimeState();
+  const activeInterventionEffects = advanceInterventionEffects(state.activeInterventionEffects ?? [], tick);
+  const newInterventionEffects: InterventionEffect[] = [];
+  const fireIntervention = (hook: SchoolInterventionHook): void => {
+    interventionRuntimeState = fireSchoolInterventionHook(
+      schoolIntervention,
+      buildSchoolInterventionContext(
+        hook,
+        tick,
+        agents,
+        candidates,
+        formationPolicy,
+        effectiveParams,
+        deadlineTick,
+        state.log,
+        log,
+        runSeed,
+        interventionRunId,
+        interventionRuntimeState,
+      ),
+      agents,
+      candidates,
+      formationPolicy,
+      effectiveParams,
+      log,
+      newInterventionEffects,
+    );
+  };
+
+  fireIntervention("beforeTick");
+
   // 1. 核形成: undecidedな人が forming になるかどうか
   // 核を作れるのは主導性が十分高い人、または既存の仲良しグループが
   // 近くに揃っている人だけ(主導者0人・既存関係性も弱い場なら誰も場を作らない)
@@ -667,6 +849,8 @@ export function stepSimulation(
       );
     }
   }
+
+  fireIntervention("beforeApproachDecision");
 
   // 2. 接近: undecidedな人が近くの forming / confirmed group を観察して動く
   for (const agent of agents) {
@@ -1050,6 +1234,8 @@ export function stepSimulation(
     }
   }
 
+  fireIntervention("afterStateTransition");
+
   // 解散/期限切れ候補は、フェードアウト表現用の猶予tickを過ぎたら配列から取り除く
   candidates = candidates.filter((c) => {
     if (c.status === "dissolved" || c.status === "expired") {
@@ -1057,6 +1243,12 @@ export function stepSimulation(
     }
     return true;
   });
+
+  // Issue #156: 締切概念を持つシナリオ(classroomPair系)でのみ、締切判定の直前に
+  // "beforeDeadline"フックを発火する(「直前」とみなす残りtick数の判断は個々の介入実装に委ねる)。
+  if (deadlineTick !== undefined) {
+    fireIntervention("beforeDeadline");
+  }
 
   // Issue #134: boolだけでなく終了理由も同じpolicy境界から受け取り、終了イベントへ構造化して残す。
   // `allAssigned`はdeadlineと同一tickに成立した場合も優先される(classroomPairPolicy側の判定順)。
@@ -1068,6 +1260,10 @@ export function stepSimulation(
     // スナップショットしてから、未参加agentを専用の終端状態へ確定する。joinedGroupIdは探索先を
     // 表す一時値なので、イベントのgroupIdへ退避したうえでagent本体からは除去する。
     if (formationPolicy.id === "classroomPair" && finishReason === "deadlineReached") {
+      // Issue #156: "atDeadline"フック。締切時強制割当のような介入は、ここで返す`assignToGroup`
+      // actionが下の未割当確定ループより先に適用されることで、実際に割り当てる余地を持てる。
+      fireIntervention("atDeadline");
+
       for (const agent of agents) {
         if (agent.state === "joined") continue;
 
@@ -1119,10 +1315,13 @@ export function stepSimulation(
     width: state.width,
     height: state.height,
     finished,
+    seed: runSeed,
     interventionId,
     formationScenarioId: formationPolicy.id,
     formationDeadlineTick: resolvedFormation?.formationDeadlineTick,
     formationClassroomGroupSize: resolvedFormation?.classroomGroupSize,
+    interventionRuntimeState,
+    activeInterventionEffects: [...activeInterventionEffects, ...newInterventionEffects],
     speechLog: [],
   };
 

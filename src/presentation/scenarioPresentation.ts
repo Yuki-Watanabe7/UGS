@@ -2,6 +2,7 @@ import type { ExpressionReason } from "../simulation/expression";
 import { DEFAULT_CLASSROOM_PAIR_GROUP_SIZE } from "../simulation/formationPolicy";
 import type { FormationScenarioId, GroupSizeRule } from "../simulation/formationPolicy";
 import type { InterventionScenarioId } from "../simulation/interventions";
+import { resolveAvailableInterventionIds } from "../simulation/interventions";
 import type { DivergenceScene } from "../simulation/socialExpression";
 import type { SpeechEffectDimension } from "../simulation/speechEffects";
 import type { SpeechReason } from "../simulation/speech";
@@ -382,15 +383,9 @@ const CLASSROOM_DIVERGENCE: Partial<Record<DivergenceScene, DivergenceArchetypeP
 export const AFTER_PARTY_PRESENTATION: ScenarioPresentation = {
   id: "afterParty",
   parameters: AFTER_PARTY_PARAMETERS,
-  availableInterventionIds: [
-    "none",
-    "explicit-meeting-point",
-    "late-join-ok",
-    "light-observer-invitation",
-    "short-ambiguity-window",
-    "predecided-venue",
-    "anonymous-low-pressure-intent",
-  ],
+  // Issue #156: `interventions.ts`側の適用可能範囲メタデータ(`InterventionScenario.applicability`)
+  // から導出する。二次会向けに実装済みの6介入 + "none"が定義順のまま返る(既存挙動と同じ配列)。
+  availableInterventionIds: resolveAvailableInterventionIds("afterParty"),
   showInterventionControls: true,
   speechTemplates: AFTER_PARTY_SPEECH,
   expressionTemplates: AFTER_PARTY_EXPRESSIONS,
@@ -468,7 +463,9 @@ export const CLASSROOM_PRESENTATION: ScenarioPresentation = {
     isVariableCapacity: false,
     capacityLabel: "2人固定",
   },
-  availableInterventionIds: ["none"],
+  // Issue #156: 学校向けに実装済みの介入は現時点で存在しないため、常に"none"のみ
+  // (`resolveAvailableInterventionIds`が`applicability.implemented`で自動的にフィルタする)。
+  availableInterventionIds: resolveAvailableInterventionIds("classroomPair"),
   showInterventionControls: false,
   speechTemplates: CLASSROOM_SPEECH,
   expressionTemplates: CLASSROOM_EXPRESSIONS,

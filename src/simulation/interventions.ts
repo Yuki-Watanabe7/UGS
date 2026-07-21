@@ -1,6 +1,7 @@
 import type { Agent, SimParams } from "./types";
 import { clamp, distance } from "./model";
 import type { SeededRandom } from "./random";
+import type { FormationScenarioId } from "./formationPolicy";
 
 /**
  * 介入シナリオのカテゴリ。
@@ -27,6 +28,60 @@ export type InterventionScenarioId =
   | "anonymous-low-pressure-intent";
 
 /**
+ * Issue #156 (Phase 4): 介入の対象者層。「none」はどちらのシナリオでも常に選択可能なベースライン。
+ * 二次会向け6介入は全て"afterParty"、学校向け介入(未実装)は"school"を持つ想定。
+ */
+export type InterventionAudience = "none" | "afterParty" | "school";
+
+/**
+ * Issue #156: 学校向け介入(教師介入)が実行され得るタイミング。二次会向け介入はengine.ts内の
+ * 既存の`interventionId`分岐で完結しており、このフック契約を経由しない(`hooks: []`)。
+ * - initialState: `createInitialState`で初期状態を組み立てた直後
+ * - beforeTick: `stepSimulation`でこのtickの通常の意思決定(核形成)を行う前
+ * - beforeApproachDecision: undecidedな人が接近判定を行う直前
+ * - afterStateTransition: このtickの通常の状態遷移(核形成〜stress/退出判定〜候補ライフサイクル)が
+ *   すべて完了した後
+ * - beforeDeadline: `formationPolicy`に締切(`deadlineTick`)が存在する各tickで、締切判定そのものの直前
+ *   (「直前」とみなす残りtick数の判断は個々の介入実装に委ねる)
+ * - atDeadline: 締切到達(`finishReason === "deadlineReached"`)が確定したtick
+ */
+export type SchoolInterventionHook =
+  | "initialState"
+  | "beforeTick"
+  | "beforeApproachDecision"
+  | "afterStateTransition"
+  | "beforeDeadline"
+  | "atDeadline";
+
+/** `SchoolInterventionHook`の固定実行順序(Issue #156受入条件: 各実行フックの順序が固定される) */
+export const SCHOOL_INTERVENTION_HOOK_ORDER: readonly SchoolInterventionHook[] = [
+  "initialState",
+  "beforeTick",
+  "beforeApproachDecision",
+  "afterStateTransition",
+  "beforeDeadline",
+  "atDeadline",
+];
+
+/**
+ * Issue #156: 介入1件の適用可能範囲・presentation許可の判定に必要なメタ情報。
+ * `scenarios`/`implemented`の組み合わせで`resolveAvailableInterventionIds`が
+ * presentation側の`availableInterventionIds`を導出する(受入条件: 適用可能シナリオとpresentation
+ * 許可リストが常に整合する)。
+ */
+export type InterventionApplicability = {
+  /** この介入を選択可能な`FormationScenarioId`一覧 */
+  scenarios: readonly FormationScenarioId[];
+  audience: InterventionAudience;
+  /** この介入が実際に使用する学校向け実行フック(afterParty向け介入は常に空配列) */
+  hooks: readonly SchoolInterventionHook[];
+  /** この介入が参照する設定キー(`SimParams`のキー、または`schoolInterventionRuntime.ts`側の設定名) */
+  configKeys: readonly string[];
+  /** engine側の実装が既に存在し実行可能か。falseならpresentationへは出さない */
+  implemented: boolean;
+};
+
+/**
  * `SimParams`の一部フィールドに対する単純な加算補正。
  * 既存プリセットの`params`に重ねて適用することを想定した差分値であり、絶対値の上書きではない。
  */
@@ -46,6 +101,8 @@ export type InterventionScenario = {
    * Phase Cの対応範囲外(型・カタログの整備のみ)のため、ここでは説明のみを持たせ実装はしない。
    */
   engineLogicNotes?: string;
+  /** Issue #156: 適用可能シナリオ・対象者層・使用フック・presentation許可の判定に使うメタ情報 */
+  applicability: InterventionApplicability;
 };
 
 /** `runSimulationToEnd`/`runMonteCarlo`等に介入シナリオを渡す際の実行時オプション */
@@ -69,6 +126,13 @@ export const NONE_INTERVENTION: InterventionScenario = {
   description: "場の設計に対する介入を何も行わない。通常のプリセットのみで進行する。",
   category: "none",
   expectedEffect: "既存プリセットの挙動をそのまま観察するための基準点(ベースライン)。",
+  applicability: {
+    scenarios: ["afterParty", "classroomPair"],
+    audience: "none",
+    hooks: [],
+    configKeys: [],
+    implemented: true,
+  },
 };
 
 export const INTERVENTION_SCENARIOS: InterventionScenario[] = [
@@ -88,6 +152,13 @@ export const INTERVENTION_SCENARIOS: InterventionScenario[] = [
       "engine.tsのcreateInitialStateで、founder不在の低圧なGroupCandidate(isPublicMeetingPoint)を" +
       "初期状態に1つ配置する。通常のforming候補と同じ経路で合流・成立できるが、反応の薄さによる" +
       "早期解散の対象からは除外され、attractivenessでも影響回避の壁を下げて評価される。",
+    applicability: {
+      scenarios: ["afterParty"],
+      audience: "afterParty",
+      hooks: [],
+      configKeys: ["ambiguityDuration", "lateJoinEase"],
+      implemented: true,
+    },
   },
   {
     id: "late-join-ok",
@@ -105,6 +176,13 @@ export const INTERVENTION_SCENARIOS: InterventionScenario[] = [
       "ある程度clique優勢な成立済みグループでもobserverJoinerの「行き場がない」ことに起因する" +
       "追加ストレスが発生しにくくする。介入なしとの差分はcreateInitialStateの" +
       "lateJoinPermissionAnnouncedログでも確認できる。",
+    applicability: {
+      scenarios: ["afterParty"],
+      audience: "afterParty",
+      hooks: [],
+      configKeys: ["lateJoinEase"],
+      implemented: true,
+    },
   },
   {
     id: "light-observer-invitation",
@@ -127,6 +205,13 @@ export const INTERVENTION_SCENARIOS: InterventionScenario[] = [
       "(完全に消さず残す)・「行き場がない」ことに起因する追加ストレスの軽減、という一時的な" +
       "後押しが働く。強制的にapproaching状態へ移行させることはせず、あくまで確率を動かすだけに" +
       "留めることで、声かけがobserverJoinerの参加を保証しないようにしている。",
+    applicability: {
+      scenarios: ["afterParty"],
+      audience: "afterParty",
+      hooks: [],
+      configKeys: ["observerInfluenceAvoidance", "observerLeaveEase"],
+      implemented: true,
+    },
   },
   {
     id: "short-ambiguity-window",
@@ -142,6 +227,13 @@ export const INTERVENTION_SCENARIOS: InterventionScenario[] = [
       "CANDIDATE_MAX_AGE)を短縮し、行き詰まった輪の解散/期限切れ判断を早める。あわせて" +
       "observerJoinerの「行き場がない」ことに起因する追加ストレスの蓄積率も下げ、" +
       "単純にambiguityDurationを下げた場合に起きる「短いほどストレスが増える」逆効果を避ける。",
+    applicability: {
+      scenarios: ["afterParty"],
+      audience: "afterParty",
+      hooks: [],
+      configKeys: ["ambiguityDuration"],
+      implemented: true,
+    },
   },
   {
     id: "predecided-venue",
@@ -157,6 +249,13 @@ export const INTERVENTION_SCENARIOS: InterventionScenario[] = [
       "engine.tsのattractivenessで、成立済みグループへのスコアに直接ボーナスを加え、成立後の接近確率を上げる。" +
       "あわせてobserverJoinerの「行き場がない」ことに起因する追加ストレスの蓄積率も下げ、" +
       "行き先の不確実性だけを先に取り除く効果を表現する。",
+    applicability: {
+      scenarios: ["afterParty"],
+      audience: "afterParty",
+      hooks: [],
+      configKeys: ["lateJoinEase"],
+      implemented: true,
+    },
   },
   {
     id: "anonymous-low-pressure-intent",
@@ -176,11 +275,31 @@ export const INTERVENTION_SCENARIOS: InterventionScenario[] = [
       "「参加したい人が一定数いる」匿名シグナルが主導者/既存グループの核形成を後押しする様子を" +
       "控えめな倍率で近似する(強い主導者を追加したような挙動にはしない)、" +
       "(3) observerJoinerの「行き場がない」ことに起因する追加ストレスにANONYMOUS_INTENT_STRESS_MULTIPLIERをかけて下げる。",
+    applicability: {
+      scenarios: ["afterParty"],
+      audience: "afterParty",
+      hooks: [],
+      configKeys: ["observerInfluenceAvoidance"],
+      implemented: true,
+    },
   },
 ];
 
 export function getInterventionById(id: InterventionScenarioId): InterventionScenario {
   return INTERVENTION_SCENARIOS.find((scenario) => scenario.id === id) ?? NONE_INTERVENTION;
+}
+
+/**
+ * Issue #156: `scenarioId`(選択中の`FormationScenarioId`)へ適用可能、かつ実装済みの介入IDを
+ * `INTERVENTION_SCENARIOS`の定義順のまま返す。`presentation/scenarioPresentation.ts`の
+ * `ScenarioPresentation.availableInterventionIds`はこれをそのまま使うことで、適用可能シナリオと
+ * presentation許可リストが常に整合する(受入条件)。二次会画面には学校向け介入(`audience: "school"`)
+ * を、学校画面には二次会向け介入(`audience: "afterParty"`)をそれぞれ表示しない。
+ */
+export function resolveAvailableInterventionIds(scenarioId: FormationScenarioId): InterventionScenarioId[] {
+  return INTERVENTION_SCENARIOS.filter(
+    (scenario) => scenario.applicability.implemented && scenario.applicability.scenarios.includes(scenarioId),
+  ).map((scenario) => scenario.id);
 }
 
 /** `intervention`(未指定なら介入なし)に対応する`InterventionScenario`を解決する */
