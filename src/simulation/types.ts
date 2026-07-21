@@ -1002,6 +1002,13 @@ export type PairFormationRunSummary = {
     tick: number;
     groupId: string;
   };
+  /**
+   * Issue #155 (Phase 4): 成立した(confirmedな)グループ/ペアを、最終的な人数(`memberIds.length`)別に
+   * 集計した分布。キーは班人数(2, 3, 4, ...)、値はその人数で成立したグループ数。3〜4人班のような
+   * 可変定員シナリオで「3人で成立した班」と「4人まで埋まった班」の内訳を確認できるようにする。
+   * 固定定員シナリオでは常に単一キーのみを持つ。成立が1件もなければ空オブジェクト。
+   */
+  groupSizeDistribution: Record<number, number>;
   /** agent配列順のagent別指標 */
   agentMetrics: PairFormationAgentMetric[];
   /** population全体の平均(`agentMetrics`全件から算出) */

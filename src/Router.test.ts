@@ -30,7 +30,8 @@ describe("Router", () => {
 
     expect(html).toContain("学校のペア・班作りシミュレーション");
     expect(html).toContain("教室で自由にペアを作る場");
-    expect(html).toContain("自由にペアを作るよう促した教室");
+    expect(html).toContain("教室で自由に3〜4人班を作る場");
+    expect(html).toContain("自由にペア・班を作るよう促した教室");
     expect(html).not.toContain("自然に二次会が成立する場");
   });
 });

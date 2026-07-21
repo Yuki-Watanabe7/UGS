@@ -19,6 +19,9 @@ describe("scenario category configuration", () => {
     ]);
     expect(getPresetsForScenario(classroom).map((preset) => preset.id)).toEqual([
       "classroom-pair",
+      "classroom-group-3",
+      "classroom-group-4",
+      "classroom-group-3-4",
     ]);
   });
 

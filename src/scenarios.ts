@@ -2,6 +2,7 @@ import { PRESETS, type ScenarioPreset } from "./simulation/presets";
 import {
   AFTER_PARTY_PRESENTATION,
   CLASSROOM_PRESENTATION,
+  getScenarioPresentation,
   type ScenarioPresentation,
 } from "./presentation/scenarioPresentation";
 
@@ -49,12 +50,19 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
     pageTitle: "学校のペア・班作りシミュレーション",
     homeTitle: "学校のペア・班作り",
     homeDescription:
-      "教室で自由に相手を探すとき、ペアが並行して成立し、再探索や未割当がどう生じるかを観察します。",
-    observationTargets: "ペア成立、再探索、待機、未割当",
-    availableScenarios: "自由にペアを作る教室シナリオ",
+      "教室で自由に相手を探すとき、ペアや班が並行して成立し、再探索や未割当がどう生じるかを観察します。",
+    observationTargets: "ペア・班の成立、再探索、待機、未割当",
+    availableScenarios: "ペア(2人固定)、3人班、4人班、3〜4人班の4種類",
     introText:
-      "先生が自由にペアを作るよう促した教室で、2人組が並行して形成される過程を可視化します。誘う側と待つ側、満員になったペアからの再探索、締切時の未割当を観察できます。",
-    presetIds: ["classroom-pair"],
+      "先生が自由にペア・班を作るよう促した教室で、複数の組が並行して形成される過程を可視化します。" +
+      "誘う側と待つ側、満員になった組からの再探索、締切時の未割当に加え、3〜4人班のような可変定員では" +
+      "「成立済みだがまだ空きがある班」と「満員の班」の違いも観察できます。",
+    presetIds: [
+      "classroom-pair",
+      "classroom-group-3",
+      "classroom-group-4",
+      "classroom-group-3-4",
+    ],
     initialPresetId: "classroom-pair",
     presentation: CLASSROOM_PRESENTATION,
   },
@@ -85,4 +93,18 @@ export function getPresetForScenario(scenario: ScenarioConfig, presetId: string)
     ? presetId
     : scenario.initialPresetId;
   return requirePreset(allowedPresetId);
+}
+
+/**
+ * Issue #155 (Phase 4): 選択中のプリセットに紐づく班人数設定(`preset.formationClassroomGroupSize`)
+ * から、そのプリセット向けの表示語彙(ペア/班)を解決する。`scenario.presentation`は
+ * シナリオカテゴリ単位の静的な既定値(二次会シナリオではこれをそのまま使う)であり、
+ * 学校シナリオではプリセットごとに動的解決した結果を優先する。
+ */
+export function resolvePresentationForPreset(
+  scenario: ScenarioConfig,
+  preset: ScenarioPreset,
+): ScenarioPresentation {
+  if (scenario.id !== "classroom") return scenario.presentation;
+  return getScenarioPresentation(preset.formationScenarioId ?? "afterParty", preset.formationClassroomGroupSize);
 }

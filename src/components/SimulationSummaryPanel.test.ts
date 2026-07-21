@@ -128,6 +128,51 @@ describe("SimulationSummaryPanel", () => {
     expect(html).not.toContain("成立グループ数");
   });
 
+  it("shows 班 vocabulary, group-size distribution, and structural-unassigned breakdown for a variable-capacity (3-4) group preset (Issue #155)", () => {
+    const agents = [
+      makeAgent({ id: "a", state: "joined", joinedGroupId: "group-1" }),
+      makeAgent({ id: "b", state: "joined", joinedGroupId: "group-1" }),
+      makeAgent({ id: "c", state: "joined", joinedGroupId: "group-1" }),
+      makeAgent({ id: "d", state: "joined", joinedGroupId: "group-2" }),
+      makeAgent({ id: "e", state: "joined", joinedGroupId: "group-2" }),
+      makeAgent({ id: "f", state: "joined", joinedGroupId: "group-2" }),
+      makeAgent({ id: "g", state: "joined", joinedGroupId: "group-2" }),
+      makeAgent({ id: "h", state: "unassigned" }),
+    ];
+    const log: LogEntry[] = [
+      { tick: 5, message: "", tags: [], eventType: "groupConfirmed", metadata: { groupId: "group-1", memberCount: 3 } },
+      { tick: 12, message: "", tags: [], eventType: "groupConfirmed", metadata: { groupId: "group-2", memberCount: 4 } },
+    ];
+    const state = makeState({
+      formationScenarioId: "classroomPair",
+      formationClassroomGroupSize: { minGroupSize: 3, maxGroupSize: 4 },
+      groupCandidates: [
+        { id: "group-1", x: 0, y: 0, memberIds: ["a", "b", "c"], status: "confirmed", age: 3 },
+        { id: "group-2", x: 0, y: 0, memberIds: ["d", "e", "f", "g"], status: "confirmed", age: 3 },
+      ],
+      agents,
+      log,
+      tick: 20,
+      finished: true,
+    });
+
+    const html = renderToStaticMarkup(createElement(SimulationSummaryPanel, { state }));
+
+    expect(html).toContain("班形成サマリー");
+    expect(html).toContain("成立班数");
+    expect(html).toContain("班人数の内訳");
+    expect(html).toContain("班サイズ分布");
+    expect(html).toContain("3人班");
+    expect(html).toContain("4人班");
+    expect(html).toContain("割当人数");
+    expect(html).toContain("未割当人数");
+    // populationSize=8, min=3/max=4 -> reachable (3+4=8, floor 0), so all 1 unassigned is "excess"
+    expect(html).toContain("構造的未割当人数(定員上どうしても割り切れない人数)");
+    expect(html).toContain("構造的未割当を超える未割当人数");
+    expect(html).not.toContain("ペア形成サマリー");
+    expect(html).not.toContain("2人固定");
+  });
+
   it("keeps the after-party group wording", () => {
     const html = renderToStaticMarkup(
       createElement(SimulationSummaryPanel, { state: makeState({ formationScenarioId: "afterParty" }) }),

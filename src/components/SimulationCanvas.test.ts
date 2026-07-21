@@ -223,7 +223,7 @@ describe("SimulationCanvas classroom pair progress", () => {
 
     expect(html).toContain('data-candidate-state="waiting"');
     expect(html).toContain("相手待ち");
-    expect(html).toContain("1/2・空き1");
+    expect(html).toContain("現在1人 / 最小2人 / 最大2人・空き1");
   });
 
   it("shows an approaching agent, the target mapping line, and the approacher name", () => {
@@ -259,7 +259,7 @@ describe("SimulationCanvas classroom pair progress", () => {
 
     expect(html).toContain('data-candidate-state="full"');
     expect(html).toContain("ペア確定・満員");
-    expect(html).toContain("2/2・空き0");
+    expect(html).toContain("現在2人 / 最小2人 / 最大2人・空き0");
     expect(html).toContain('data-candidate-state="resolved"');
     expect(html).toContain("解消済み");
   });
@@ -384,9 +384,101 @@ describe("SimulationCanvas classroom pair progress", () => {
     );
 
     expect(html).toContain("形成中の輪 (1)");
-    expect(html).not.toContain("canvas-pair-status");
+    expect(html).not.toContain("canvas-group-status");
     expect(html).not.toContain("相手待ち");
     expect(html).not.toContain('data-agent-state="searching-again"');
     expect(html).not.toContain("再探索");
+  });
+});
+
+/**
+ * Issue #155 (Phase 4): 3〜4人班のような可変定員(min<max)では、成立最小人数に達しても収容最大人数
+ * までは合流を受け付け続けるため、「成立済み・空きあり」と「満員」を区別できる必要がある。
+ * また、`engine.ts`は実運用で`GroupCandidate.maxGroupSize`自体を書き込まない(常にundefined)ため、
+ * `formationClassroomGroupSize`propを渡さないと常に2人固定へフォールバックしてしまう
+ * (このファイルの他のテストはpropを省略しても2人固定と一致するため、そのバグを検出できない)。
+ */
+describe("SimulationCanvas variable-capacity classroom groups (Issue #155)", () => {
+  const baseProps = {
+    formationScenarioId: "classroomPair" as const,
+    formationClassroomGroupSize: { minGroupSize: 3, maxGroupSize: 4 },
+    width: 800,
+    height: 520,
+  };
+  // engine.tsの実挙動どおり、maxGroupSize/minGroupSizeは候補に書き込まれていない前提
+  const variableCandidate = (overrides: Partial<GroupCandidate> = {}): GroupCandidate => ({
+    id: "group-candidate-a",
+    x: 300,
+    y: 220,
+    memberIds: ["a", "b", "c"],
+    status: "confirmed",
+    age: 1,
+    ...overrides,
+  });
+
+  it("shows a 3-member confirmed group as confirmed-vacancy (not full) using班 vocabulary", () => {
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        ...baseProps,
+        agents: [],
+        groupCandidates: [variableCandidate()],
+      }),
+    );
+
+    expect(html).toContain('data-candidate-state="confirmed-vacancy"');
+    expect(html).toContain("班成立・空きあり");
+    expect(html).toContain("現在3人 / 最小3人 / 最大4人・空き1");
+    expect(html).not.toContain('data-candidate-state="full"');
+  });
+
+  it("shows a 4-member confirmed group as full", () => {
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        ...baseProps,
+        agents: [],
+        groupCandidates: [variableCandidate({ memberIds: ["a", "b", "c", "d"] })],
+      }),
+    );
+
+    expect(html).toContain('data-candidate-state="full"');
+    expect(html).toContain("班確定・満員");
+    expect(html).toContain("現在4人 / 最小3人 / 最大4人・空き0");
+  });
+
+  it("does not evacuate a confirmed-vacancy (3-member) group into the resolved slot grid", () => {
+    const agents = [
+      makeAgent({ id: "a", state: "joined", joinedGroupId: "group-candidate-a" }),
+      makeAgent({ id: "b", state: "joined", joinedGroupId: "group-candidate-a" }),
+      makeAgent({ id: "c", state: "joined", joinedGroupId: "group-candidate-a" }),
+    ];
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        ...baseProps,
+        agents,
+        groupCandidates: [variableCandidate()],
+      }),
+    );
+
+    // 空きのある班はまだ合流を受け付けるため、メインの形成領域に留まり続ける
+    // (退避してしまうと4人目が合流できるように見えなくなる)
+    expect(html).not.toContain('data-evacuated="true"');
+  });
+
+  it("evacuates only once the group reaches the true maximum (4), not the 2-person fallback", () => {
+    const agents = [
+      makeAgent({ id: "a", state: "joined", joinedGroupId: "group-candidate-a" }),
+      makeAgent({ id: "b", state: "joined", joinedGroupId: "group-candidate-a" }),
+      makeAgent({ id: "c", state: "joined", joinedGroupId: "group-candidate-a" }),
+      makeAgent({ id: "d", state: "joined", joinedGroupId: "group-candidate-a" }),
+    ];
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        ...baseProps,
+        agents,
+        groupCandidates: [variableCandidate({ memberIds: ["a", "b", "c", "d"] })],
+      }),
+    );
+
+    expect(html).toContain('data-evacuated="true"');
   });
 });

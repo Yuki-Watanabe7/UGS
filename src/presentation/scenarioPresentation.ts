@@ -1,5 +1,6 @@
 import type { ExpressionReason } from "../simulation/expression";
-import type { FormationScenarioId } from "../simulation/formationPolicy";
+import { DEFAULT_CLASSROOM_PAIR_GROUP_SIZE } from "../simulation/formationPolicy";
+import type { FormationScenarioId, GroupSizeRule } from "../simulation/formationPolicy";
 import type { InterventionScenarioId } from "../simulation/interventions";
 import type { DivergenceScene } from "../simulation/socialExpression";
 import type { SpeechEffectDimension } from "../simulation/speechEffects";
@@ -32,9 +33,28 @@ export type DivergenceArchetypePresentation = {
   cliqueMember?: readonly DivergencePresentationPair[];
 };
 
+/**
+ * Issue #155 (Phase 4): 学校シナリオで選択中の成立最小人数・収容最大人数(`GroupSizeRule`)から
+ * 導出した、表示語彙用の「形成表示コンテキスト」。コンポーネント側で`presetId`分岐を散在させず、
+ * ここへ集約した`unitWord`(ペア/班)・`capacityLabel`・`isVariableCapacity`だけを参照させる。
+ * `afterParty`シナリオでは常にundefined。
+ */
+export type GroupUnitPresentation = {
+  minGroupSize: number;
+  maxGroupSize: number;
+  /** 固定2人定員なら"ペア"、それ以外(固定3人以上/可変定員)は"班" */
+  unitWord: string;
+  /** `minGroupSize !== maxGroupSize` */
+  isVariableCapacity: boolean;
+  /** 例: "2人固定" / "3人固定" / "3〜4人" */
+  capacityLabel: string;
+};
+
 export type ScenarioPresentation = {
   id: FormationScenarioId;
   parameters: Record<keyof SimParams, ParameterPresentation>;
+  /** Issue #155: 学校シナリオでのみ設定される、選択中の班人数設定の表示コンテキスト */
+  groupUnit?: GroupUnitPresentation;
   availableInterventionIds: readonly InterventionScenarioId[];
   showInterventionControls: boolean;
   speechTemplates: Record<SpeechReason, string>;
@@ -441,6 +461,13 @@ export const AFTER_PARTY_PRESENTATION: ScenarioPresentation = {
 export const CLASSROOM_PRESENTATION: ScenarioPresentation = {
   id: "classroomPair",
   parameters: CLASSROOM_PARAMETERS,
+  groupUnit: {
+    minGroupSize: DEFAULT_CLASSROOM_PAIR_GROUP_SIZE.minGroupSize,
+    maxGroupSize: DEFAULT_CLASSROOM_PAIR_GROUP_SIZE.maxGroupSize,
+    unitWord: "ペア",
+    isVariableCapacity: false,
+    capacityLabel: "2人固定",
+  },
   availableInterventionIds: ["none"],
   showInterventionControls: false,
   speechTemplates: CLASSROOM_SPEECH,
@@ -511,8 +538,135 @@ export const CLASSROOM_PRESENTATION: ScenarioPresentation = {
   },
 };
 
-export function getScenarioPresentation(id: FormationScenarioId | undefined): ScenarioPresentation {
-  return id === "classroomPair" ? CLASSROOM_PRESENTATION : AFTER_PARTY_PRESENTATION;
+function isSameGroupSize(a: GroupSizeRule, b: GroupSizeRule): boolean {
+  return a.minGroupSize === b.minGroupSize && a.maxGroupSize === b.maxGroupSize;
+}
+
+function unitWordFor(groupSize: GroupSizeRule): string {
+  return isSameGroupSize(groupSize, DEFAULT_CLASSROOM_PAIR_GROUP_SIZE) ? "ペア" : "班";
+}
+
+function capacityLabelFor(groupSize: GroupSizeRule): string {
+  return groupSize.minGroupSize === groupSize.maxGroupSize
+    ? `${groupSize.minGroupSize}人固定`
+    : `${groupSize.minGroupSize}〜${groupSize.maxGroupSize}人`;
+}
+
+/**
+ * `text`中の"ペア"を`unitWord`へ置き換える。`unitWord`が"ペア"のまま(既定の2人固定)なら
+ * 恒等変換(既存の`CLASSROOM_PRESENTATION`由来の文言を一切変えない)。
+ */
+function withUnitWord(text: string, unitWord: string): string {
+  return unitWord === "ペア" ? text : text.replaceAll("ペア", unitWord);
+}
+
+/**
+ * Issue #155 (Phase 4): 選択中の学校向け班人数設定(`GroupSizeRule`、#154で一般化済み)から、
+ * ペア(固定2人)/班(固定3人以上・可変定員)の表示語彙を動的に解決する。`CLASSROOM_PRESENTATION`
+ * (既存の固定ペア文言、多数のテストがこの正確な文言を検証している)は一切変更せず、
+ * 既定の2人固定が渡された場合はその同一オブジェクトをそのまま返す(受入条件: ペアプリセットの
+ * 既存表示が維持される)。`speechTemplates.ts`/`expressionTemplates.ts`/`divergenceTemplates.ts`は
+ * 既存どおり`FormationScenarioId`のみで解決される既存の境界を維持し、ここでは変更しない
+ * (発言・心の声の文面自体は班人数に依存させない)。
+ */
+export function resolveClassroomPresentation(groupSize: GroupSizeRule): ScenarioPresentation {
+  if (isSameGroupSize(groupSize, DEFAULT_CLASSROOM_PAIR_GROUP_SIZE)) {
+    return CLASSROOM_PRESENTATION;
+  }
+
+  const unitWord = unitWordFor(groupSize);
+  const capacityLabel = capacityLabelFor(groupSize);
+  const isVariableCapacity = groupSize.minGroupSize !== groupSize.maxGroupSize;
+  const base = CLASSROOM_PRESENTATION;
+
+  return {
+    ...base,
+    groupUnit: {
+      minGroupSize: groupSize.minGroupSize,
+      maxGroupSize: groupSize.maxGroupSize,
+      unitWord,
+      isVariableCapacity,
+      capacityLabel,
+    },
+    parameters: {
+      ...base.parameters,
+      groupConfirmSize: {
+        label: `${unitWord}の人数`,
+        description: isVariableCapacity
+          ? `このシナリオでは班を${groupSize.minGroupSize}人以上${groupSize.maxGroupSize}人までの可変定員で作ります。内部値は保持したまま編集を無効にしています。`
+          : `このシナリオでは${unitWord}を${capacityLabel}で作ります。内部値は保持したまま編集を無効にしています。`,
+        visible: true,
+        editable: false,
+        fixedValueLabel: capacityLabel,
+      },
+      lateJoinEase: isVariableCapacity
+        ? {
+            label: "成立済み・空きありの班への参加しやすさ",
+            description: "最小人数で成立済みだが、まだ上限まで空きがある班へ後から加わる心理的な容易さです。",
+            visible: true,
+            editable: true,
+          }
+        : {
+            label: "成立済みペアへの参加しやすさ",
+            description: `${capacityLabel}で満員になる${unitWord}形成では意味を持たないため表示しません。`,
+            visible: false,
+            editable: false,
+          },
+    },
+    agentStateLabels: {
+      ...base.agentStateLabels,
+      forming: withUnitWord(base.agentStateLabels.forming, unitWord),
+      joined: withUnitWord(base.agentStateLabels.joined, unitWord),
+    },
+    canvas: {
+      ariaLabel: `教室の${unitWord}形成シミュレーション領域`,
+      confirmedCandidate: `成立した${unitWord}`,
+      formingCandidate: `形成中の${unitWord}候補`,
+      dissolvedCandidate: `解消した${unitWord}候補`,
+      expiredCandidate: `締切になった${unitWord}候補`,
+    },
+    legend: {
+      items: base.legend.items.map((item) => ({ ...item, label: withUnitWord(item.label, unitWord) })),
+      note: withUnitWord(base.legend.note, unitWord),
+    },
+    summary: {
+      joinedCount: withUnitWord(base.summary.joinedCount, unitWord),
+      leftCount: base.summary.leftCount,
+      unassignedCount: base.summary.unassignedCount,
+      observerSection: base.summary.observerSection,
+      firstNucleusTick: base.summary.firstNucleusTick,
+      firstConfirmedTick: withUnitWord(base.summary.firstConfirmedTick, unitWord),
+      confirmedCount: withUnitWord(base.summary.confirmedCount, unitWord),
+      failure: withUnitWord(base.summary.failure, unitWord),
+    },
+    monteCarlo: {
+      observerJoinRate: withUnitWord(base.monteCarlo.observerJoinRate, unitWord),
+      observerLeaveRate: base.monteCarlo.observerLeaveRate,
+      groupFailureRate: withUnitWord(base.monteCarlo.groupFailureRate, unitWord),
+      averageFirstConfirmedTick: withUnitWord(base.monteCarlo.averageFirstConfirmedTick, unitWord),
+      lateJoinSuccessRate: withUnitWord(base.monteCarlo.lateJoinSuccessRate, unitWord),
+      averageJoinedCount: withUnitWord(base.monteCarlo.averageJoinedCount, unitWord),
+      averageLeftCount: base.monteCarlo.averageLeftCount,
+      confirmedUnit: unitWord,
+      showLeaveMetrics: base.monteCarlo.showLeaveMetrics,
+      showLateJoinMetric: isVariableCapacity,
+    },
+    eventLog: {
+      nucleusFilter: base.eventLog.nucleusFilter,
+      confirmedFilter: withUnitWord(base.eventLog.confirmedFilter, unitWord),
+      joinFailureFilter: base.eventLog.joinFailureFilter,
+      leaveFilter: base.eventLog.leaveFilter,
+      showLeaveFilter: base.eventLog.showLeaveFilter,
+    },
+  };
+}
+
+export function getScenarioPresentation(
+  id: FormationScenarioId | undefined,
+  classroomGroupSize?: GroupSizeRule,
+): ScenarioPresentation {
+  if (id !== "classroomPair") return AFTER_PARTY_PRESENTATION;
+  return resolveClassroomPresentation(classroomGroupSize ?? DEFAULT_CLASSROOM_PAIR_GROUP_SIZE);
 }
 
 export function normalizeInterventionForPresentation(
@@ -533,6 +687,14 @@ function classroomAgentLabel(entry: LogEntry): string {
 export function resolveScenarioLogMessage(entry: LogEntry, presentation: ScenarioPresentation): string {
   if (presentation.id !== "classroomPair") return entry.message;
 
+  const unitWord = presentation.groupUnit?.unitWord ?? "ペア";
+  const message = buildClassroomLogMessage(entry);
+  // Issue #155: 下の switch は既存のペア(2人固定)文言をそのまま組み立てる。既定の"ペア"のままなら
+  // 恒等変換(既存のCLASSROOM_PRESENTATION向けテストの正確な文言を一切変えない)。
+  return unitWord === "ペア" ? message : message.replaceAll("ペア", unitWord);
+}
+
+function buildClassroomLogMessage(entry: LogEntry): string {
   const time = formatTick(entry.tick);
   const agent = classroomAgentLabel(entry);
   const groupId = entry.metadata?.groupId;
@@ -576,7 +738,7 @@ export function resolveScenarioLogMessage(entry: LogEntry, presentation: Scenari
     case "approachTargetInvalidated":
       return `${time} ${agent}が向かっていた${pair}を選べなくなり、接近を中断した`;
     case "joinFailedCapacity":
-      return `${time} ${agent}が${pair}へ到着したが、既に2人決まっていたため組めなかった`;
+      return `${time} ${agent}が${pair}へ到着したが、既に定員に達していたため組めなかった`;
     case "searchRestarted":
       return `${time} ${agent}が別の相手を探し直した`;
     default:
