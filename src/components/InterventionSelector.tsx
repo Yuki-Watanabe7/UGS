@@ -26,6 +26,8 @@ const LIKELY_METRICS: Record<InterventionScenarioId, string> = {
   "anonymous-low-pressure-intent": "observerJoiner参加率 / 平均グループ成立tick",
   "nearby-peer-prompt": "平均ペア/班成立tick / 未割当率",
   "open-group-signal": "平均ペア/班成立tick / 未割当率",
+  "anonymous-help-signal": "未割当率 / 平均ペア/班成立tick",
+  "teacher-recommendation": "未割当率 / 平均ペア/班成立tick",
 };
 
 export function InterventionSelector({

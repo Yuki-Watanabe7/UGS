@@ -29,7 +29,11 @@ export type InterventionScenarioId =
   /** Issue #157: 学校向け(教師介入)の低圧介入。近くの未決定者同士へ声かけを促す */
   | "nearby-peer-prompt"
   /** Issue #157: 学校向け(教師介入)の低圧介入。空きのある班を「参加可能」と表示する */
-  | "open-group-signal";
+  | "open-group-signal"
+  /** Issue #158: 学校向け(教師介入)。長時間未決定の生徒が匿名で教師へ支援を要請できるようにする */
+  | "anonymous-help-signal"
+  /** Issue #158: 学校向け(教師介入)。教師が空きのある班または未決定者との組み合わせを推薦する */
+  | "teacher-recommendation";
 
 /**
  * Issue #156 (Phase 4): 介入の対象者層。「none」はどちらのシナリオでも常に選択可能なベースライン。
@@ -331,6 +335,65 @@ export const INTERVENTION_SCENARIOS: InterventionScenario[] = [
       scenarios: ["classroomPair"],
       audience: "school",
       hooks: ["afterStateTransition"],
+      configKeys: [],
+      implemented: true,
+    },
+  },
+  {
+    id: "anonymous-help-signal",
+    name: "匿名の支援要請通知",
+    description:
+      "長時間決まらず困っている生徒が、公開の場で名指しされることなく、匿名で教師へ支援を要請できるようにする。",
+    category: "targetedSupport",
+    expectedEffect:
+      "困っていることを公然と表明する心理的コストなしに、教師がその状況を認知できるようになる。通知そのものは参加結果を変えない(教師が動くとは限らない)ため、情報提供だけでは結果が変わらない可能性も比較できる。",
+    engineLogicNotes:
+      "src/simulation/schoolInterventions/anonymousHelpSignal.tsが実装。onBeforeTickフックで、" +
+      "未決定(state === \"undecided\")が一定tick以上続き、stress・searchRestartCount・" +
+      "capacityFailureCountのいずれかがしきい値を超えたagentを毎tick洗い出し、" +
+      "anonymousHelpRequestedイベントとして記録する(未通知、またはcooldownを超えている場合のみ)。" +
+      "公開ログの表示文言(message)は個人を特定しない一般的な文言に固定し、対象agentは" +
+      "metadata.agentIdという構造化フィールドにのみ保持する(教師向けInspector/介入詳細だけが" +
+      "参照できる、というpresentation側の情報境界をmessageとmetadataの分離で表現する)。" +
+      "joined/left/unassigned確定後は対象から外れる。effectsは一切生成しない(通知のみでは" +
+      "agentを移動・所属させない)。",
+    applicability: {
+      scenarios: ["classroomPair"],
+      audience: "school",
+      hooks: ["beforeTick"],
+      configKeys: [],
+      implemented: true,
+    },
+  },
+  {
+    id: "teacher-recommendation",
+    name: "教師による候補推薦",
+    description:
+      "教師が、空きのある班または他の未決定者との組み合わせを、対象の生徒へ推薦する。受け入れるかどうかは本人の判断に委ねる。",
+    category: "targetedSupport",
+    expectedEffect:
+      "推薦は所属を直接決めず、本人のwillingness・影響回避度・推薦先との距離や関係性・現在のstress等に応じて" +
+      "受諾/拒否が起きる。締切時の強制割当より本人の選択を残しつつ、対象を絞った支援になる。",
+    engineLogicNotes:
+      "src/simulation/schoolInterventions/teacherRecommendation.tsが実装。onBeforeApproachDecision" +
+      "フックで、匿名通知済み、または一定時間未決定のagentのうち、既に有効な推薦効果を持たない者を" +
+      "対象に、空きのあるforming/可変定員confirmed候補と、他の未決定agentとの新規組み合わせ候補を" +
+      "候補選択の入力(残り容量・距離・既存clique関係・安定ID順)から純粋関数(selectRecommendationTarget)で" +
+      "決定的に1件選ぶ(容量違反を起こす候補は事前に除外、rngは使わない)。候補が無ければ" +
+      "teacherRecommendationUnavailableを記録して終了する。候補が見つかった場合はまず" +
+      "teacherRecommendationIssuedを記録し、続けて本体rngとは独立な介入専用rng" +
+      "(createInterventionRandom)で受諾確率(willingness・影響回避度・距離・既存clique・stress由来)を" +
+      "判定する。受諾時のみteacherRecommendationAcceptedを記録し、推薦先へのapproachProbability/" +
+      "attractivenessへの一時的な加算補正(既存候補ならtargetGroupId指定、新規組み合わせ推薦は" +
+      "nearby-peer-promptと同じく対象2人への非targeted補正)を与える(直接joinedへは変更しない)。" +
+      "拒否時はteacherRecommendationDeclinedのみを記録しcooldownを設定する。onAfterStateTransition" +
+      "フックで、受諾済みの推薦先(班)がその後満員化/解散/期限切れになった場合は" +
+      "teacherRecommendationTargetInvalidatedを記録して追跡を終了する(接近中だった場合の実際の" +
+      "参加失敗・再探索は既存のapproachTargetInvalidated/searchRestarted経路がそのまま処理する)。",
+    applicability: {
+      scenarios: ["classroomPair"],
+      audience: "school",
+      hooks: ["beforeApproachDecision", "afterStateTransition"],
       configKeys: [],
       implemented: true,
     },

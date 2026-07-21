@@ -125,11 +125,13 @@ describe("resolveAvailableInterventionIds (Issue #156)", () => {
     ]);
   });
 
-  it("returns 'none' plus the Issue #157 school interventions for the classroomPair scenario", () => {
+  it("returns 'none' plus the Issue #157/#158 school interventions for the classroomPair scenario", () => {
     expect(resolveAvailableInterventionIds("classroomPair")).toEqual([
       "none",
       "nearby-peer-prompt",
       "open-group-signal",
+      "anonymous-help-signal",
+      "teacher-recommendation",
     ]);
   });
 
