@@ -330,6 +330,9 @@ describe("SimulationCanvas classroom pair progress", () => {
     expect(simulationCanvas).toContain("forming-pair");
     expect(simulationCanvas).toContain("approach-link");
     expect(simulationCanvas).not.toContain("full-pair");
+    expect(html.indexOf('class="simulation-field classroom"')).toBeLessThan(
+      html.indexOf('class="resolved-groups-box"'),
+    );
   });
 
   it("leaves a forming candidate and approaching link at simulation coordinates", () => {
