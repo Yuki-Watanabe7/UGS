@@ -158,10 +158,28 @@ Reset・seed変更・プリセット変更・シナリオ遷移はいずれも`c
    特に「介入なしのrun」と「発火条件を満たさなかったrun」で本体`rng`消費列が一致することの
    回帰テストは必須(受入条件)。
 
+## 実装済みの学校向け介入(Issue #157)
+
+Issue #157で、この契約上に最初の2件の低圧介入を実装した(`SCHOOL_INTERVENTION_POLICIES`へ登録済み)。
+いずれも教師が組み合わせを決定せず、確率・attractivenessへの一時補正だけを通じて自律形成を支援する。
+
+- **`nearby-peer-prompt`**(`src/simulation/schoolInterventions/nearbyPeerPrompt.ts`): 近くの未決定者
+  (再探索中を含む)同士へ声かけを促す。`onBeforeApproachDecision`フックのみを使い、距離最小・id順の
+  完全に決定的な選択(rng不使用)で1組ずつ対象を選び、接近確率・attractivenessへ一時的な加算補正を
+  与える。対象2人を直接同じ`GroupCandidate`へ所属させることはしない。
+- **`open-group-signal`**(`src/simulation/schoolInterventions/openGroupSignal.ts`): 空きのある
+  forming/可変定員confirmed候補を毎tick洗い出し、`onAfterStateTransition`フックで表示開始/終了を
+  記録しつつ、未決定者からその候補へのattractivenessを一時的に底上げする(targetGroupId指定)。
+  表示自体は`SimulationCanvas`の候補ステータス欄(既存、全候補について常時表示)を再利用し、
+  この介入固有のCanvas UIは追加していない。
+
+両介入とも`ctx.formationPolicy.id !== "classroomPair"`なら明示的にno-opにする(afterPartyへ
+誤って選択されても既存挙動を変えないための防御)。
+
 ## 意図的にこの契約の外側に置いているもの
 
-- 個別の学校向け介入ロジック自体(近接促進の具体式、推薦候補選択式、締切時強制割当アルゴリズム)。
-  Issue #156の対象外であり、後続Issueが`SCHOOL_INTERVENTION_POLICIES`へ実装を追加する。
+- 上記2件以外の個別の学校向け介入ロジック(推薦候補選択式、締切時強制割当アルゴリズム等)。
+  Issue #157でも対象外であり、後続Issueが`SCHOOL_INTERVENTION_POLICIES`へ実装を追加する。
 - 介入比較UI・Monte Carlo指標。Issue #156の対象外。
 - 二次会向け6介入(`interventions.ts`の`interventionId`分岐)の挙動・意味の変更。この契約は
   二次会向け介入を一切参照しない(`applicability.hooks`が常に`[]`であることからも分かるとおり)。

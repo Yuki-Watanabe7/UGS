@@ -68,12 +68,23 @@ describe("InterventionScenario.applicability (Issue #156)", () => {
     expect(none.applicability.audience).toBe("none");
   });
 
-  it("marks every non-'none' scenario today as afterParty-only", () => {
+  it("marks every non-'none', non-school scenario as afterParty-only", () => {
     for (const scenario of INTERVENTION_SCENARIOS) {
       if (scenario.id === "none") continue;
+      if (scenario.applicability.audience === "school") continue;
       expect(scenario.applicability.scenarios).toEqual(["afterParty"]);
       expect(scenario.applicability.audience).toBe("afterParty");
       expect(scenario.applicability.implemented).toBe(true);
+    }
+  });
+
+  it("marks the Issue #157 school interventions as classroomPair-only", () => {
+    for (const id of ["nearby-peer-prompt", "open-group-signal"] as const) {
+      const scenario = getInterventionById(id);
+      expect(scenario.applicability.scenarios).toEqual(["classroomPair"]);
+      expect(scenario.applicability.audience).toBe("school");
+      expect(scenario.applicability.implemented).toBe(true);
+      expect(scenario.applicability.hooks.length).toBeGreaterThan(0);
     }
   });
 
@@ -114,8 +125,12 @@ describe("resolveAvailableInterventionIds (Issue #156)", () => {
     ]);
   });
 
-  it("returns only 'none' for the classroomPair scenario (no school interventions implemented yet)", () => {
-    expect(resolveAvailableInterventionIds("classroomPair")).toEqual(["none"]);
+  it("returns 'none' plus the Issue #157 school interventions for the classroomPair scenario", () => {
+    expect(resolveAvailableInterventionIds("classroomPair")).toEqual([
+      "none",
+      "nearby-peer-prompt",
+      "open-group-signal",
+    ]);
   });
 
   it("never returns an afterParty-only intervention for classroomPair", () => {

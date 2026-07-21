@@ -7,9 +7,10 @@ import type { SimParams, SimulationState } from "./types";
 
 /**
  * Issue #156: `schoolInterventionRuntime.ts`のフックがengine.tsへ結線されたことの統合テスト。
- * 学校向け介入は現時点で1つも登録されていない(`resolveSchoolIntervention`が常にundefined)ため、
- * 以下は「配線があってもno-opであること」と「配線が状態へ正しく反映されること」の2点を確認する。
- * 個別介入が実装されてから、実際にhookが発火する経路の検証を追加する。
+ * ここでは介入を一切指定しない(=`interventionId: "none"`、`resolveSchoolIntervention`が常に
+ * undefinedを返す)経路について、「配線があってもno-opであること」と「配線が状態へ正しく反映される
+ * こと」の2点を確認する。Issue #157で実装された個別介入(`nearby-peer-prompt`/`open-group-signal`)
+ * が実際にhookを発火させる経路のテストは`schoolInterventions.test.ts`にある。
  */
 
 function runClassroomTicks(seed: number, params: SimParams, ticks: number): SimulationState[] {

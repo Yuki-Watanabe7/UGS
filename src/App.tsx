@@ -319,7 +319,7 @@ function SimulationApp({ scenario }: Props) {
             formation={formation}
             presentation={presentation}
           />
-          {presentation.showInterventionControls && (
+          {presentation.showInterventionComparison && (
             <InterventionComparisonPanel
               presetId={presetId}
               params={params}

@@ -25,6 +25,7 @@ import {
   createRunId,
   resolveSchoolIntervention,
   runSchoolInterventionHook,
+  sumInterventionEffectValue,
 } from "./schoolInterventionRuntime";
 import type { SpeechEvent } from "./speech";
 import { createSpeechEvent, deriveSpeechEvents } from "./speech";
@@ -470,6 +471,7 @@ export function attractiveness(
   tick?: number,
   activeEffects: SpeechActiveEffect[] = [],
   tieCorrection = 0,
+  activeInterventionEffects: InterventionEffect[] = [],
 ): number {
   const dominant = dominantClique(candidate, agents);
   const isDominantMember = dominant !== undefined && agent.cliqueId === dominant.cliqueId;
@@ -493,6 +495,16 @@ export function attractiveness(
     tick ?? 0,
     candidate.id,
   );
+  // Issue #157: 学校向け介入(教師介入)由来の一時的なattractiveness補正。介入未登録/無効時は
+  // 常に空配列で+0(既存挙動に影響しない)。`open-group-signal`はこれを使ってtargetGroupId指定で
+  // 「空きあり」表示中の候補だけを底上げする。
+  const interventionAttractivenessBonus = sumInterventionEffectValue(
+    activeInterventionEffects,
+    agent.id,
+    "attractiveness",
+    tick ?? 0,
+    candidate.id,
+  );
 
   if (candidate.status === "confirmed") {
     const base = agent.willingness * (0.5 + 0.5 * agent.conformity);
@@ -510,7 +522,8 @@ export function attractiveness(
         lateJoinOkBonus +
         cliqueTieBonus -
         outsiderPenalty +
-        speechAttractivenessBonus,
+        speechAttractivenessBonus +
+        interventionAttractivenessBonus,
       0,
       1.5,
     );
@@ -526,7 +539,11 @@ export function attractiveness(
     ? 1 - agent.influenceAvoidance * MEETING_POINT_INFLUENCE_AVOIDANCE_RESIDUAL
     : 1 - agent.influenceAvoidance * (lightInvitationBoosted ? LIGHT_INVITATION_INFLUENCE_AVOIDANCE_RESIDUAL : 1);
   const base = agent.willingness * agent.conformity * influenceAvoidanceFactor;
-  return clamp(base + cliqueTieBonus * 0.5 - outsiderPenalty * 0.5 + speechAttractivenessBonus, 0, 1.5);
+  return clamp(
+    base + cliqueTieBonus * 0.5 - outsiderPenalty * 0.5 + speechAttractivenessBonus + interventionAttractivenessBonus,
+    0,
+    1.5,
+  );
 }
 
 const APPROACH_FAILURE_REASON_TEXT: Record<ApproachFailureReason, string> = {
@@ -886,6 +903,7 @@ export function stepSimulation(
       tick,
       activeEffects,
       tieCorrection,
+      activeInterventionEffects,
     );
     // `anonymous-low-pressure-intent`: 参加意向を直接発言しなくてよいため、未確定の輪(forming)
     // へ近づくこと自体の抵抗が少し下がる。成立済みグループへの接近は対象外(late-join-ok側の役割)
@@ -901,9 +919,18 @@ export function stepSimulation(
         : 1;
     // Issue #96: "invite"由来のSpeechActiveEffect(周囲の未定な人への後押し)を加算する
     const speechApproachBonus = sumActiveEffectValue(activeEffects, agent.id, "approachProbability", tick);
+    // Issue #157: 学校向け介入由来の一時的なapproachProbability補正。介入未登録/無効時は
+    // 常に空配列で+0(既存挙動に影響しない)。`nearby-peer-prompt`が声かけ対象へこれを与える。
+    const interventionApproachBonus = sumInterventionEffectValue(
+      activeInterventionEffects,
+      agent.id,
+      "approachProbability",
+      tick,
+    );
     const approachProbability = clamp(
       score * formationPolicy.approachRateMultiplier * anonymousIntentApproachMultiplier * lightInvitationApproachMultiplier +
-        speechApproachBonus,
+        speechApproachBonus +
+        interventionApproachBonus,
       0,
       0.9,
     );
@@ -1088,13 +1115,22 @@ export function stepSimulation(
     // Issue #96: "greet"由来のSpeechActiveEffect(周囲の合流を見て感じる安心感)を蓄積率へ加算する
     // (負の値になり、増分を打ち消す方向に働く。最終的なstressそのものは下の`clamp(...,0,1)`が保証する)
     increment += sumActiveEffectValue(activeEffects, agent.id, "stress", tick);
+    // Issue #157: 学校向け介入由来の一時的なstress蓄積率補正(負値で軽減方向にも使える)。
+    // 介入未登録/無効時は常に空配列で+0(既存挙動に影響しない)
+    increment += sumInterventionEffectValue(activeInterventionEffects, agent.id, "stressRate", tick);
 
     agent.stress = clamp(agent.stress + increment, 0, 1);
     agent.maxStress = Math.max(agent.maxStress ?? agent.stress, agent.stress);
 
     // Issue #96: "decline"由来のSpeechActiveEffect(周囲の離脱を見て感じる踏ん切りの伝染)を
     // 実効しきい値へ加算する。`agent.leaveThreshold`本体(personality値)は変更しない
-    const effectiveLeaveThreshold = agent.leaveThreshold + sumActiveEffectValue(activeEffects, agent.id, "leaveThreshold", tick);
+    // Issue #157: 学校向け介入由来の一時的なleaveThreshold補正も同じ加算方式で反映する
+    // (classroomPair系のcanLeaveは常にfalseのため実質未使用だが、他ポリシーでも安全に消費できるよう
+    // 汎用的に配線しておく。介入未登録/無効時は常に空配列で+0)
+    const effectiveLeaveThreshold =
+      agent.leaveThreshold +
+      sumActiveEffectValue(activeEffects, agent.id, "leaveThreshold", tick) +
+      sumInterventionEffectValue(activeInterventionEffects, agent.id, "leaveThreshold", tick);
 
     if (formationPolicy.canLeave(agent, agent.stress, effectiveLeaveThreshold)) {
       agent.state = "leaving";
