@@ -8,6 +8,8 @@ import {
   LIGHT_INVITATION_BOOST_WINDOW,
   LIGHT_INVITATION_MIN_TICK,
   LIGHT_INVITATION_STRESS_RATIO,
+  resolveAvailableInterventionIds,
+  SCHOOL_INTERVENTION_HOOK_ORDER,
   selectInvitationAgent,
   shouldTriggerLightObserverInvitation,
 } from "./interventions";
@@ -46,6 +48,83 @@ describe("INTERVENTION_SCENARIOS", () => {
         "anonymous-low-pressure-intent",
       ]),
     );
+  });
+});
+
+describe("InterventionScenario.applicability (Issue #156)", () => {
+  it("gives every scenario applicability metadata", () => {
+    for (const scenario of INTERVENTION_SCENARIOS) {
+      expect(scenario.applicability.scenarios.length).toBeGreaterThan(0);
+      expect(scenario.applicability.audience).toBeDefined();
+      expect(Array.isArray(scenario.applicability.hooks)).toBe(true);
+      expect(Array.isArray(scenario.applicability.configKeys)).toBe(true);
+      expect(typeof scenario.applicability.implemented).toBe("boolean");
+    }
+  });
+
+  it("marks 'none' as applicable to every FormationScenarioId", () => {
+    const none = getInterventionById("none");
+    expect(none.applicability.scenarios).toEqual(expect.arrayContaining(["afterParty", "classroomPair"]));
+    expect(none.applicability.audience).toBe("none");
+  });
+
+  it("marks every non-'none' scenario today as afterParty-only", () => {
+    for (const scenario of INTERVENTION_SCENARIOS) {
+      if (scenario.id === "none") continue;
+      expect(scenario.applicability.scenarios).toEqual(["afterParty"]);
+      expect(scenario.applicability.audience).toBe("afterParty");
+      expect(scenario.applicability.implemented).toBe(true);
+    }
+  });
+
+  it("gives afterParty-audience scenarios no school intervention hooks", () => {
+    for (const scenario of INTERVENTION_SCENARIOS) {
+      if (scenario.applicability.audience === "afterParty") {
+        expect(scenario.applicability.hooks).toEqual([]);
+      }
+    }
+  });
+});
+
+describe("SCHOOL_INTERVENTION_HOOK_ORDER", () => {
+  it("has no duplicates and covers all 6 hooks named in the roadmap issue", () => {
+    expect(new Set(SCHOOL_INTERVENTION_HOOK_ORDER).size).toBe(SCHOOL_INTERVENTION_HOOK_ORDER.length);
+    expect(SCHOOL_INTERVENTION_HOOK_ORDER).toEqual([
+      "initialState",
+      "beforeTick",
+      "beforeApproachDecision",
+      "afterStateTransition",
+      "beforeDeadline",
+      "atDeadline",
+    ]);
+  });
+});
+
+describe("resolveAvailableInterventionIds (Issue #156)", () => {
+  it("returns every implemented afterParty intervention (plus 'none') for the afterParty scenario", () => {
+    const ids = resolveAvailableInterventionIds("afterParty");
+    expect(ids).toEqual([
+      "none",
+      "explicit-meeting-point",
+      "late-join-ok",
+      "light-observer-invitation",
+      "short-ambiguity-window",
+      "predecided-venue",
+      "anonymous-low-pressure-intent",
+    ]);
+  });
+
+  it("returns only 'none' for the classroomPair scenario (no school interventions implemented yet)", () => {
+    expect(resolveAvailableInterventionIds("classroomPair")).toEqual(["none"]);
+  });
+
+  it("never returns an afterParty-only intervention for classroomPair", () => {
+    const ids = resolveAvailableInterventionIds("classroomPair");
+    for (const scenario of INTERVENTION_SCENARIOS) {
+      if (scenario.applicability.audience === "afterParty") {
+        expect(ids).not.toContain(scenario.id);
+      }
+    }
   });
 });
 
