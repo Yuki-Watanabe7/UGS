@@ -514,54 +514,6 @@ export function SimulationCanvas({
   return (
     <div className="panel canvas-panel">
       <div className="canvas-visual-stack">
-        {isClassroomPair && visualLayout.resolvedRegion && (
-          <section className="resolved-groups-box" aria-label="成立済みのペア表示領域">
-            <svg
-              className="resolved-groups-canvas"
-              viewBox={`0 0 ${width} ${visualLayout.resolvedRegion.height}`}
-              width="100%"
-              height={visualLayout.resolvedRegion.height}
-              role="img"
-              aria-label="成立済みのペア"
-            >
-              <rect
-                x={visualLayout.resolvedRegion.x}
-                y={visualLayout.resolvedRegion.y}
-                width={visualLayout.resolvedRegion.width}
-                height={visualLayout.resolvedRegion.height}
-                className="resolved-groups-region-bg"
-              />
-              <text x={12} y={17} className="resolved-groups-region-title">
-                成立済みのペア
-              </text>
-              {visualLayout.resolvedRegion.overflowCount > 0 && (
-                <text x={width - 12} y={17} textAnchor="end" className="resolved-groups-overflow">
-                  +{visualLayout.resolvedRegion.overflowCount}組は下の一覧で確認
-                </text>
-              )}
-              {resolvedCandidates.map((candidate) => (
-                <CandidateGlyph
-                  key={candidate.id}
-                  candidate={candidate}
-                  visual={visualLayout.candidates.get(candidate.id)!}
-                  agents={agents}
-                  isClassroomPair={isClassroomPair}
-                  presentation={presentation}
-                />
-              ))}
-              {resolvedAgents.map((agent) => (
-                <AgentGlyph
-                  key={agent.id}
-                  agent={agent}
-                  isClassroomPair={isClassroomPair}
-                  candidateId={visualLayout.agents.get(agent.id)?.candidateId}
-                />
-              ))}
-              <BubbleLayer canvas={resolvedBubbles} />
-            </svg>
-          </section>
-        )}
-
         <section className={isClassroomPair ? "simulation-field classroom" : "simulation-field"}>
           {isClassroomPair && <h3 className="simulation-field-title">相手を探している生徒</h3>}
           <svg
@@ -616,6 +568,54 @@ export function SimulationCanvas({
             <BubbleLayer canvas={simulationBubbles} />
           </svg>
         </section>
+
+        {isClassroomPair && visualLayout.resolvedRegion && (
+          <section className="resolved-groups-box" aria-label="成立済みのペア表示領域">
+            <svg
+              className="resolved-groups-canvas"
+              viewBox={`0 0 ${width} ${visualLayout.resolvedRegion.height}`}
+              width="100%"
+              height={visualLayout.resolvedRegion.height}
+              role="img"
+              aria-label="成立済みのペア"
+            >
+              <rect
+                x={visualLayout.resolvedRegion.x}
+                y={visualLayout.resolvedRegion.y}
+                width={visualLayout.resolvedRegion.width}
+                height={visualLayout.resolvedRegion.height}
+                className="resolved-groups-region-bg"
+              />
+              <text x={12} y={17} className="resolved-groups-region-title">
+                成立済みのペア
+              </text>
+              {visualLayout.resolvedRegion.overflowCount > 0 && (
+                <text x={width - 12} y={17} textAnchor="end" className="resolved-groups-overflow">
+                  +{visualLayout.resolvedRegion.overflowCount}組は下の一覧で確認
+                </text>
+              )}
+              {resolvedCandidates.map((candidate) => (
+                <CandidateGlyph
+                  key={candidate.id}
+                  candidate={candidate}
+                  visual={visualLayout.candidates.get(candidate.id)!}
+                  agents={agents}
+                  isClassroomPair={isClassroomPair}
+                  presentation={presentation}
+                />
+              ))}
+              {resolvedAgents.map((agent) => (
+                <AgentGlyph
+                  key={agent.id}
+                  agent={agent}
+                  isClassroomPair={isClassroomPair}
+                  candidateId={visualLayout.agents.get(agent.id)?.candidateId}
+                />
+              ))}
+              <BubbleLayer canvas={resolvedBubbles} />
+            </svg>
+          </section>
+        )}
       </div>
 
       {isClassroomPair && (
