@@ -10,13 +10,18 @@ import type { FormationScenarioId } from "./formationPolicy";
  * - targetedSupport: 特定の個人(observerJoiner等)への直接的な働きかけ
  * - timeDesign: 曖昧な時間そのものの長さ・構造の設計
  * - none: 介入なし(通常プリセットそのままの挙動)
+ * - comparisonBaseline: Issue #159。教師の救済介入ではなく、自由形成そのものを行わない比較基準
+ *   (`random-assignment-baseline`)専用の分類。他カテゴリと明確に区別し、UI側で
+ *   「介入」ではなく「比較基準」として視覚的に扱えるようにする(受入条件: ランダム割当を
+ *   介入一覧と視覚的に区別する)。
  */
 export type InterventionCategory =
   | "none"
   | "publicCoordination"
   | "socialPermission"
   | "targetedSupport"
-  | "timeDesign";
+  | "timeDesign"
+  | "comparisonBaseline";
 
 export type InterventionScenarioId =
   | "none"
@@ -33,7 +38,11 @@ export type InterventionScenarioId =
   /** Issue #158: 学校向け(教師介入)。長時間未決定の生徒が匿名で教師へ支援を要請できるようにする */
   | "anonymous-help-signal"
   /** Issue #158: 学校向け(教師介入)。教師が空きのある班または未決定者との組み合わせを推薦する */
-  | "teacher-recommendation";
+  | "teacher-recommendation"
+  /** Issue #159: 学校向け(教師介入)。締切時点で未割当のまま残る生徒を容量制約内で教師が強制割当する */
+  | "teacher-deadline-assignment"
+  /** Issue #159: 学校向け(比較基準)。教師の救済介入ではなく、自由形成を行わずseed付きでランダムに割り当てる */
+  | "random-assignment-baseline";
 
 /**
  * Issue #156 (Phase 4): 介入の対象者層。「none」はどちらのシナリオでも常に選択可能なベースライン。
@@ -394,6 +403,56 @@ export const INTERVENTION_SCENARIOS: InterventionScenario[] = [
       scenarios: ["classroomPair"],
       audience: "school",
       hooks: ["beforeApproachDecision", "afterStateTransition"],
+      configKeys: [],
+      implemented: true,
+    },
+  },
+  {
+    id: "teacher-deadline-assignment",
+    name: "締切時の教師強制割当",
+    description:
+      "締切時点で未割当のまま残った生徒を、教師が容量制約(定員)の範囲内で可能な限り割り当てる。既存の成立済み班は可能な限り維持し、必要な場合のみ再配分する。",
+    category: "targetedSupport",
+    expectedEffect:
+      "未割当人数を最小化できる一方、本人の選択を上書きし、既に成立した班を再編する可能性がある。強制割当・再配分・割当不能はすべて構造化イベントとして監査できる。",
+    engineLogicNotes:
+      "src/simulation/schoolInterventions/teacherDeadlineAssignment.tsが実装。onAtDeadlineフックで" +
+      "run中に1回だけ実行する(runtimeState.forcedAssignmentApplied)。成立済み(status: \"confirmed\")の" +
+      "班のみ「既存班」として維持対象にし、空きのある可変定員班へ距離・優先度(stress比率・再探索/" +
+      "失敗回数・安定ID順、rng不使用)で決定的に追加する。残った未割当者はgroupPartition.tsの" +
+      "決定的な分割で新規班を構成し(固定定員の余りを暗黙に別サイズへ変更しない)、それでも" +
+      "最小人数に届かない残りは既存班の余剰枠(minGroupSizeを超える人数)から1人ずつ再配分して" +
+      "埋める。十分な余剰枠がない場合は既存班には触れず、teacherAssignmentUnableとして" +
+      "割当不能を記録する(構造的未割当を隠さない)。",
+    applicability: {
+      scenarios: ["classroomPair"],
+      audience: "school",
+      hooks: ["atDeadline"],
+      configKeys: [],
+      implemented: true,
+    },
+  },
+  {
+    id: "random-assignment-baseline",
+    name: "seed付きランダム割当(比較基準)",
+    description:
+      "教師の救済介入ではなく、自由形成そのものを行わない比較基準。tick 0で全員をseed付きで決定的にシャッフルし、容量ルールに従って班へ分割する。",
+    category: "comparisonBaseline",
+    expectedEffect:
+      "接近・参加失敗・再探索・stress蓄積といった自由形成のダイナミクスを一切経ないため、他の介入と同じ過程指標では比較できない。あくまで「探索過程を省いた場合」の割当結果・未割当人数だけを見るための基準点。",
+    engineLogicNotes:
+      "src/simulation/schoolInterventions/randomAssignmentBaseline.tsが実装。onInitialStateフックで、" +
+      "本体SeededRandomとは独立したcreateInterventionRandom由来のrngのみを使い(本体PRNG系列を" +
+      "消費しない)全agentのIDをFisher-Yatesで決定的にシャッフルしたうえで、groupPartition.tsの" +
+      "決定的な分割(教師強制割当と同じロジック)で班(createGroup、常にconfirmed)へ分ける。" +
+      "固定定員の余りを暗黙に別サイズへ変更しないのは教師強制割当と同じだが、教師強制割当と異なり" +
+      "既存班の再配分は行わない(受入条件: ランダム割当だけが容量制約を緩和しない)。班にできなかった" +
+      "残りはmarkUnassignedで即座に終端状態へ確定し、以後の通常tickループ(核形成・接近・失敗・" +
+      "再探索・stress蓄積)がこの人たちに一切作用しないようにする。",
+    applicability: {
+      scenarios: ["classroomPair"],
+      audience: "school",
+      hooks: ["initialState"],
       configKeys: [],
       implemented: true,
     },

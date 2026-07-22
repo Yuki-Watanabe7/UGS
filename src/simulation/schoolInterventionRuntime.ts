@@ -9,6 +9,8 @@ import { nearbyPeerPromptIntervention } from "./schoolInterventions/nearbyPeerPr
 import { openGroupSignalIntervention } from "./schoolInterventions/openGroupSignal";
 import { anonymousHelpSignalIntervention } from "./schoolInterventions/anonymousHelpSignal";
 import { teacherRecommendationIntervention } from "./schoolInterventions/teacherRecommendation";
+import { teacherDeadlineAssignmentIntervention } from "./schoolInterventions/teacherDeadlineAssignment";
+import { randomAssignmentBaselineIntervention } from "./schoolInterventions/randomAssignmentBaseline";
 
 /**
  * Issue #156 (Phase 4): 学校向け介入(教師介入)の実行契約。
@@ -78,10 +80,32 @@ export type InterventionEffect = {
 /**
  * 状態を直接書き換える必要がある結果(締切時強制割当等)。engineはこれをintervention IDごとの
  * 詳細を知らずに適用できる、汎用的な操作の集合として扱う。
+ *
+ * Issue #159で`createGroup`/`removeFromGroup`を追加した(`teacher-deadline-assignment`/
+ * `random-assignment-baseline`が最初の利用者)。1回の`SchoolInterventionHookOutput.actions`内では
+ * 配列の順序どおりに適用される(engine.ts `applyInterventionActions`)ため、既存班からの
+ * `removeFromGroup`を先に積み、その後に空いた枠へ`assignToGroup`/`createGroup`で割り当てる、
+ * という順序依存の組み立てができる。
  */
 export type InterventionAction =
   | { kind: "assignToGroup"; agentId: string; groupId: string }
-  | { kind: "markUnassigned"; agentId: string };
+  | { kind: "markUnassigned"; agentId: string }
+  /** 既存候補(`groupId`)の`memberIds`から`agentId`を取り除く(再編・解体用)。`agent.state`はこれ自体では変えない */
+  | { kind: "removeFromGroup"; agentId: string; groupId: string }
+  /**
+   * 新規`GroupCandidate`(常に`status: "confirmed"`)を作成し、`memberIds`全員を`joined`へ遷移させる。
+   * 呼び出し側(介入実装)が事前に`minGroupSize <= memberIds.length <= maxGroupSize`を保証すること
+   * (受入条件: min未満・max超過のconfirmed班を作らない。engine側でも防御的に検証する)。
+   */
+  | {
+      kind: "createGroup";
+      groupId: string;
+      memberIds: string[];
+      x: number;
+      y: number;
+      minGroupSize: number;
+      maxGroupSize: number;
+    };
 
 /** 構造化ログとして記録する結果。`metadata`は`SimulationEventMetadata`(Issue #156で拡張済み)をそのまま使う */
 export type InterventionEvent = {
@@ -298,6 +322,8 @@ const SCHOOL_INTERVENTION_POLICIES: Partial<Record<InterventionScenarioId, Schoo
   "open-group-signal": openGroupSignalIntervention,
   "anonymous-help-signal": anonymousHelpSignalIntervention,
   "teacher-recommendation": teacherRecommendationIntervention,
+  "teacher-deadline-assignment": teacherDeadlineAssignmentIntervention,
+  "random-assignment-baseline": randomAssignmentBaselineIntervention,
 };
 
 /**

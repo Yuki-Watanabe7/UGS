@@ -1,6 +1,7 @@
 import type {
   Agent,
   AgentState,
+  AssignmentBreakdown,
   LogEntry,
   ObserverJoinerRunSummary,
   Phase4RunSummary,
@@ -64,6 +65,54 @@ function buildObserverJoinerRunSummary(
 }
 
 /**
+ * Issue #159: `state.log`の構造化イベントのみから、割当経路別の内訳(`AssignmentBreakdown`)を導出する。
+ * 該当する介入(`teacher-recommendation`/`teacher-deadline-assignment`/`random-assignment-baseline`)が
+ * 一度も発火していない場合は全カウントが0になる(既存挙動・二次会シナリオへの影響なし)。
+ */
+function buildAssignmentBreakdown(state: SimulationState, joinedCount: number): AssignmentBreakdown {
+  const log = state.log;
+
+  const recommendationAssistedCount = new Set(
+    log
+      .filter(
+        (entry) =>
+          entry.eventType === "schoolInterventionTriggered" &&
+          entry.metadata?.schoolInterventionId === "teacher-recommendation" &&
+          entry.metadata?.outcome === "assigned",
+      )
+      .map((entry) => entry.metadata?.agentId),
+  ).size;
+
+  const teacherForcedCount = new Set(
+    log.filter((entry) => entry.eventType === "teacherAssignedAgent").map((entry) => entry.metadata?.agentId),
+  ).size;
+  const rebalancedEntries = log.filter((entry) => entry.eventType === "teacherRebalancedGroup");
+  const rebalancedStudentCount = new Set(rebalancedEntries.map((entry) => entry.metadata?.agentId)).size;
+  const rebalancedGroupCount = new Set(rebalancedEntries.map((entry) => entry.metadata?.previousGroupId)).size;
+
+  const teacherUnableCount = new Set(
+    log.filter((entry) => entry.eventType === "teacherAssignmentUnable").map((entry) => entry.metadata?.agentId),
+  ).size;
+  const randomCompletedEntry = log.find((entry) => entry.eventType === "randomAssignmentCompleted");
+  const randomAssignedCount = randomCompletedEntry?.metadata?.assignedByStrategyCount ?? 0;
+  const randomStructuralUnassignedCount = randomCompletedEntry?.metadata?.structuralUnassignedCount ?? 0;
+
+  const naturalCount = Math.max(
+    0,
+    joinedCount - recommendationAssistedCount - teacherForcedCount - rebalancedStudentCount - randomAssignedCount,
+  );
+
+  return {
+    naturalCount,
+    recommendationAssistedCount,
+    teacherForcedCount,
+    rebalancedStudentCount,
+    rebalancedGroupCount,
+    structuralUnassignedCount: teacherUnableCount + randomStructuralUnassignedCount,
+  };
+}
+
+/**
  * SimulationStateから終了(または途中経過の暫定)サマリーを導出する。
  * `state.log`の構造化イベント(`eventType`/`metadata`)と`state.agents`のみを読み取り、
  * 表示用の`message`文言は一切参照しない。SimulationStateはmutationしない。
@@ -111,6 +160,7 @@ export function buildSimulationSummary(state: SimulationState): SimulationSummar
 
   return {
     finished: state.finished,
+    assignmentBreakdown: buildAssignmentBreakdown(state, stateCounts.joined),
     finishedTick,
     finishReason: finishedEntry?.metadata?.finishReason,
     joinedCount: stateCounts.joined,

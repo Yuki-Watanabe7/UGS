@@ -219,6 +219,39 @@ export function SimulationSummaryPanel({ state, params = DEFAULT_PARAMS }: Props
         </div>
       </section>
 
+      {isClassroomPair && (
+        <section className="simulation-summary-section">
+          <h3>介入割当の内訳</h3>
+          <div className="simulation-summary-row">
+            <span>自然形成で割り当てられた人数</span>
+            <span>{summary.assignmentBreakdown.naturalCount}</span>
+          </div>
+          <div className="simulation-summary-row">
+            <span>推薦等を経て割り当てられた人数</span>
+            <span>{summary.assignmentBreakdown.recommendationAssistedCount}</span>
+          </div>
+          <div className="simulation-summary-row">
+            <span>教師が強制割当した人数</span>
+            <span>{summary.assignmentBreakdown.teacherForcedCount}</span>
+          </div>
+          <div className="simulation-summary-row">
+            <span>再編された班数・生徒数</span>
+            <span>
+              {summary.assignmentBreakdown.rebalancedGroupCount}班 /{" "}
+              {summary.assignmentBreakdown.rebalancedStudentCount}人
+            </span>
+          </div>
+          <div className="simulation-summary-row">
+            <span>最終未割当人数</span>
+            <span>{summary.unassignedCount}</span>
+          </div>
+          <div className="simulation-summary-row">
+            <span>構造的に割当不能だった人数</span>
+            <span>{summary.assignmentBreakdown.structuralUnassignedCount}</span>
+          </div>
+        </section>
+      )}
+
       {isClassroomPair && pairFormation && (
         <section className="simulation-summary-section">
           <h3>{unitWord}人数の内訳</h3>

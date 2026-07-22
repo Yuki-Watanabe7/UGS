@@ -236,7 +236,23 @@ export type SimulationEventType =
    * 無効化された。無効化後の参加失敗・再探索は既存の`approachTargetInvalidated`/`searchRestarted`
    * 経路へそのまま接続する(このeventTypeは推薦固有の追跡目的のみ)。
    */
-  | "teacherRecommendationTargetInvalidated";
+  | "teacherRecommendationTargetInvalidated"
+  /** Issue #159: `teacher-deadline-assignment`。締切時の教師強制割当を開始した(run中に1回のみ) */
+  | "teacherAssignmentStarted"
+  /** Issue #159: `teacher-deadline-assignment`。1人のagentを既存班の空き/新規班/再編先へ強制割当した */
+  | "teacherAssignedAgent"
+  /** Issue #159: `teacher-deadline-assignment`。既存班のmemberIdsを再配分(誰かを移動)して構成を変更した */
+  | "teacherRebalancedGroup"
+  /** Issue #159: `teacher-deadline-assignment`。強制割当処理が完了した(全体の集計をmetadataへ持つ) */
+  | "teacherAssignmentCompleted"
+  /** Issue #159: `teacher-deadline-assignment`。容量制約上どうしても割当不可能だった(構造的余り) */
+  | "teacherAssignmentUnable"
+  /** Issue #159: `random-assignment-baseline`。seed付きランダム割当(自由形成を行わない比較基準)を開始した */
+  | "randomAssignmentStarted"
+  /** Issue #159: `random-assignment-baseline`。ランダム割当により1つの班(confirmed)を作成した */
+  | "randomGroupCreated"
+  /** Issue #159: `random-assignment-baseline`。ランダム割当処理が完了した(全体の集計をmetadataへ持つ) */
+  | "randomAssignmentCompleted";
 
 /**
  * Issue #156: `schoolInterventionTriggered`の`metadata.outcome`。表示文言の解析に依存しない結果分類。
@@ -321,6 +337,33 @@ export type SimulationEventMetadata = {
    * 推薦(`teacherRecommendationAccepted`)が発行されたtickから、実際にその班へ参加するまでの経過tick
    */
   ticksSinceRecommendation?: number;
+  /**
+   * Issue #159: `teacherAssigned*`/`randomAssignment*`/`randomGroupCreated`用。どちらの割当戦略による
+   * 結果かを明示する(「教師の救済介入」と「自由形成を行わない比較基準」を混同しないための構造化フィールド)。
+   */
+  assignmentStrategy?: "teacherForced" | "randomBaseline";
+  /** Issue #159: `teacherAssignedAgent`用。既存班の空きへの追加/新規班構成のいずれで割り当てられたか */
+  assignmentKind?: "existingVacancy" | "newGroup";
+  /** Issue #159: `teacherRebalancedGroup`用。再配分により移動する前に所属していた班ID */
+  previousGroupId?: string;
+  /** Issue #159: 容量情報が関係するイベントでのみ設定される、その候補の成立最小人数 */
+  minGroupSize?: number;
+  /**
+   * Issue #159: `teacherAssignmentStarted`/`randomAssignmentStarted`用。処理開始時点で
+   * 割当対象だった人数(教師強制割当は締切時点の未割当プール、ランダム割当は全人口)
+   */
+  assignmentPoolSize?: number;
+  /** Issue #159: `teacherAssignmentCompleted`/`randomAssignmentCompleted`用。強制/ランダムで割り当てられた人数 */
+  assignedByStrategyCount?: number;
+  /** Issue #159: `teacherAssignmentCompleted`用。既存班の再配分により構成が変更された班数 */
+  rebalancedGroupCount?: number;
+  /** Issue #159: `teacherAssignmentCompleted`用。再配分により班を移された生徒数 */
+  rebalancedStudentCount?: number;
+  /**
+   * Issue #159: `teacherAssignmentCompleted`/`randomAssignmentCompleted`/`teacherAssignmentUnable`用。
+   * 容量制約上どうしても割当不可能だった構造的な余り人数
+   */
+  structuralUnassignedCount?: number;
 };
 
 export type LogEntry = {
@@ -724,6 +767,27 @@ export type UnassignedAgentSummary = {
 };
 
 /**
+ * Issue #159: `teacher-deadline-assignment`/`random-assignment-baseline`が関与した場合の、
+ * 割当経路別の内訳。`state.log`の構造化イベント(`teacherAssigned*`/`schoolInterventionTriggered`)
+ * のみから導出し、いずれの介入も未選択(自然形成のみ)の場合は全カウントが0になる
+ * (受入条件: 既存班の再編と強制割当人数を監査できる、割当不能を隠さず記録・表示する)。
+ */
+export type AssignmentBreakdown = {
+  /** 教師介入(推薦・強制割当)を経ずに自然形成で割り当てられた人数 */
+  naturalCount: number;
+  /** `teacher-recommendation`の受諾を経て割り当てられた人数 */
+  recommendationAssistedCount: number;
+  /** `teacher-deadline-assignment`により強制割当された人数(再配分による移動は含まない) */
+  teacherForcedCount: number;
+  /** 再配分により班を移された生徒数 */
+  rebalancedStudentCount: number;
+  /** 再配分により構成が変更された班数 */
+  rebalancedGroupCount: number;
+  /** 容量制約上どうしても割当不可能だった構造的な余り人数 */
+  structuralUnassignedCount: number;
+};
+
+/**
  * シミュレーションの終了(または途中経過)サマリー。表示文言の文字列解析に依存せず、
  * `state.log`の構造化イベントと`state.agents`から導出する。`SimulationState`をmutationしない。
  * `finished: false`の状態でも呼び出し可能で、その時点までの暫定値を返す
@@ -731,6 +795,11 @@ export type UnassignedAgentSummary = {
  */
 export type SimulationSummary = {
   finished: boolean;
+  /**
+   * Issue #159: 教師介入(推薦・強制割当)による割当経路別の内訳。`classroomPair`以外、または
+   * 該当する介入が一度も発火していない場合でも常に定義され、全カウントが0になる。
+   */
+  assignmentBreakdown: AssignmentBreakdown;
   /** 終了tick。finished: falseの場合はundefined */
   finishedTick?: number;
   /** 構造化`simulationFinished`イベントから取得した終了理由。実行中・旧stateではundefined */
