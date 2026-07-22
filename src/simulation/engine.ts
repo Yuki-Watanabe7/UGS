@@ -353,6 +353,23 @@ function buildSchoolInterventionContext(
  * どの介入がこのactionを生成したかは一切参照しない(受入条件: engineが介入IDごとの詳細を知らずに
  * 結果を適用できる)。
  */
+/**
+ * 割当系action(`assignToGroup`/`createGroup`)が実際に成立させたjoinについて、接近中の残存速度・
+ * 直前の参加失敗クールダウンを一括で片付ける(受入条件: approaching中のagentを割り当てる場合、
+ * 古いtargetやcooldownをクリアする)。位置も候補の座標へ揃え(#149の成立済み表示上、
+ * 割り当てられた本人がその班の位置に居るように見せるため)、以後の移動計算に残存速度を残さない。
+ */
+function settleIntoGroup(agent: Agent, candidate: GroupCandidate): void {
+  agent.state = "joined";
+  agent.joinedGroupId = candidate.id;
+  agent.x = candidate.x;
+  agent.y = candidate.y;
+  agent.vx = 0;
+  agent.vy = 0;
+  agent.lastFailedCandidateId = undefined;
+  agent.lastFailedCandidateAtTick = undefined;
+}
+
 function applyInterventionActions(
   agents: Agent[],
   candidates: GroupCandidate[],
@@ -361,6 +378,30 @@ function applyInterventionActions(
   params: SimParams,
 ): void {
   for (const action of actions) {
+    if (action.kind === "createGroup") {
+      // Issue #159: 呼び出し側(介入実装)がmin/maxを満たす構成のみをここへ渡す契約だが、
+      // 防御的にも検証する(受入条件: min未満・max超過のconfirmed班を作らない)。
+      if (action.memberIds.length < action.minGroupSize || action.memberIds.length > action.maxGroupSize) continue;
+      const memberAgents = action.memberIds
+        .map((id) => agents.find((a) => a.id === id))
+        .filter((a): a is Agent => a !== undefined);
+      if (memberAgents.length !== action.memberIds.length) continue;
+
+      const candidate: GroupCandidate = {
+        id: action.groupId,
+        x: action.x,
+        y: action.y,
+        memberIds: [...action.memberIds],
+        status: "confirmed",
+        age: 0,
+        minGroupSize: action.minGroupSize,
+        maxGroupSize: action.maxGroupSize,
+      };
+      candidates.push(candidate);
+      for (const memberAgent of memberAgents) settleIntoGroup(memberAgent, candidate);
+      continue;
+    }
+
     const agent = agents.find((a) => a.id === action.agentId);
     if (!agent) continue;
 
@@ -369,8 +410,11 @@ function applyInterventionActions(
       if (!candidate) continue;
       const capacity = formationPolicy.resolveGroupCapacity(candidate, params);
       if (addMemberToCandidate(candidate, agent.id, capacity) === "full") continue;
-      agent.state = "joined";
-      agent.joinedGroupId = candidate.id;
+      settleIntoGroup(agent, candidate);
+    } else if (action.kind === "removeFromGroup") {
+      const candidate = candidates.find((c) => c.id === action.groupId);
+      if (!candidate) continue;
+      candidate.memberIds = candidate.memberIds.filter((id) => id !== agent.id);
     } else if (action.kind === "markUnassigned") {
       agent.state = "unassigned";
       agent.joinedGroupId = undefined;
