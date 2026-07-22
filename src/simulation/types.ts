@@ -1234,3 +1234,156 @@ export type PairFormationMonteCarloResult = {
   pairFormationRuns: PairFormationRunSummary[];
   pairFormationSummary: PairFormationMonteCarloSummary;
 };
+
+/**
+ * Issue #160 (Phase 4): 学校向け教師介入(推薦・強制割当・再配分・ランダム割当)の構造化イベント
+ * (`schoolInterventionTriggered`/`teacherRecommendation*`/`teacherAssigned*`/`teacherRebalancedGroup`/
+ * `randomAssignment*`/`anonymousHelpRequested`)から`groupFormation.ts`が集計する、run単位の副作用指標。
+ * 介入なし・二次会シナリオのrunでは全フィールドが0/falseになる。`PairFormationRunSummary`の
+ * 未割当・stress・参加失敗等の既存指標に対して独立した追加の軸(「未割当が減ったか」だけでなく
+ * 「何と引き換えだったか」を見るための指標群)。
+ */
+export type InterventionEffectMetrics = {
+  /** `schoolInterventionTriggered`イベントの総数(介入が実際に効果/結果へ結び付いた回数) */
+  interventionTriggerCount: number;
+  /** `anonymousHelpRequested`イベントの総数 */
+  anonymousHelpRequestedCount: number;
+  /** `teacherRecommendationIssued`イベントの総数(推薦提示回数) */
+  recommendationPresentedCount: number;
+  /** `teacherRecommendationAccepted`イベントの総数 */
+  recommendationAcceptedCount: number;
+  /** `teacherRecommendationDeclined`イベントの総数 */
+  recommendationDeclinedCount: number;
+  /** `teacherRecommendationUnavailable`イベントの総数(推薦可能な候補が存在しなかった回数) */
+  recommendationUnavailableCount: number;
+  /** `teacherAssignmentCompleted`の`assignedByStrategyCount`(締切時の教師強制割当で割り当てられた人数) */
+  teacherForcedAssignedCount: number;
+  /** `teacherAssignmentCompleted`の`rebalancedGroupCount`(再配分により構成が変わった既存班数) */
+  reassignedGroupCount: number;
+  /** `teacherAssignmentCompleted`の`rebalancedStudentCount`(再配分により班を移された生徒数) */
+  reassignedStudentCount: number;
+  /** `teacherAssignmentCompleted`/`teacherAssignmentUnable`由来の、教師強制割当でもなお割当不能だった人数 */
+  teacherUnassignableCount: number;
+  /** `randomAssignmentCompleted`の`assignedByStrategyCount`(ランダム割当で割り当てられた人数) */
+  randomAssignedCount: number;
+  /** `randomAssignmentCompleted`の`structuralUnassignedCount`(ランダム割当でも割当不能だった構造的な人数) */
+  randomUnassignableCount: number;
+  /**
+   * このrunで`random-assignment-baseline`が適用されたか(`randomAssignmentStarted`イベントの有無)。
+   * trueの場合、接近・参加失敗・再探索・stressといった自由形成の過程指標は構造的に発生しない
+   * (「0」ではなく「対象外」として扱うべきことを示すフラグ)。
+   */
+  isRandomAssignmentBaseline: boolean;
+  /**
+   * 割当済み("joined")人数のうち、教師強制割当/ランダム割当による人数(`teacherForcedAssignedCount +
+   * randomAssignedCount`)。agent単位の追跡ではなく、完了イベントの集計値どうしの差分による近似値
+   */
+  interventionAssignedCount: number;
+  /** `assignedCount - interventionAssignedCount`(自然形成のみで割当に至った人数の近似値) */
+  naturalAssignedCount: number;
+};
+
+/**
+ * Issue #160 (Phase 4): `PairFormationRunSummary`(#136、ペア専用の名前が残る)の一般化版。班形成
+ * (3人以上・可変定員)でも意味が通る名前(`confirmedGroupCount`等)を標準語彙として追加し、既存の
+ * ペア専用フィールド(`confirmedPairCount`等)は同値の後方互換aliasとしてそのまま残す(#160本文
+ * 「1. ペア専用集計名の一般化」: 既存APIを直ちに破壊しない段階的移行)。`InterventionEffectMetrics`を
+ * 合成し、介入の副作用指標も同一runサマリーへ含める。
+ */
+export type GroupFormationRunSummary = PairFormationRunSummary &
+  InterventionEffectMetrics & {
+    /** `confirmedPairCount`の一般化名(同値) */
+    confirmedGroupCount: number;
+    /** `firstPairConfirmedTick`の一般化名(同値) */
+    firstGroupConfirmedTick?: number;
+    /** `lastPairConfirmedTick`の一般化名(同値) */
+    lastGroupConfirmedTick?: number;
+    /** `sameCliquePairRate`の一般化名(同値)。班サイズが2以外でも意味が通る名前 */
+    sameCliqueGroupRate?: number;
+    /** `crossCliquePairRate`の一般化名(同値) */
+    crossCliqueGroupRate?: number;
+    /** 形成設定のスナップショット(#160本文「単発runの追加指標」: min/max/deadline/population) */
+    formationConfig: {
+      minGroupSize: number;
+      maxGroupSize: number;
+      deadlineTick?: number;
+      populationSize: number;
+    };
+  };
+
+/** 複数run分の`InterventionEffectMetrics`平均値。全てのrunが`isRandomAssignmentBaseline`ならその旨を`randomAssignmentBaselineRunRate`で示す */
+export type InterventionEffectMonteCarloAverages = {
+  averageInterventionTriggerCount: number;
+  averageAnonymousHelpRequestedCount: number;
+  averageRecommendationPresentedCount: number;
+  averageRecommendationAcceptedCount: number;
+  /** `accepted / (accepted + declined)`。提示が1件もなければundefined */
+  recommendationAcceptanceRate?: number;
+  averageTeacherForcedAssignedCount: number;
+  /** `teacherForcedAssignedCount > 0`だったrunの割合(0〜1) */
+  forcedAssignmentRate: number;
+  averageReassignedGroupCount: number;
+  averageReassignedStudentCount: number;
+  /** `reassignedGroupCount > 0`だったrunの割合(0〜1) */
+  reassignmentRate: number;
+  averageRandomAssignedCount: number;
+  /** `isRandomAssignmentBaseline === true`だったrunの割合(0〜1)。通常は0か1のいずれかに揃う */
+  randomAssignmentBaselineRunRate: number;
+};
+
+/**
+ * Issue #160 (Phase 4): `PairFormationMonteCarloSummary`の一般化版。一般化フィールド
+ * (`confirmedGroupCount`系)に加え、中央値(#160本文「平均だけでなく、少なくとも中央値または
+ * 分位点を表示する」)と`InterventionEffectMonteCarloAverages`を追加する。
+ */
+export type GroupFormationMonteCarloSummary = PairFormationMonteCarloSummary &
+  InterventionEffectMonteCarloAverages & {
+    medianUnassignedCount: number;
+    averageMaxStress: number;
+    medianMaxStress: number;
+    /** `1 - allAssignedRate`。「介入後も未割当だった率」を明示的な名前で示す */
+    stillUnassignedAfterRunRate: number;
+  };
+
+/** `runGroupFormationMonteCarlo`の戻り値 */
+export type GroupFormationMonteCarloResult = {
+  config: MonteCarloConfig;
+  runs: MonteCarloRunResult[];
+  summary: MonteCarloSummary;
+  /** `runs`と同じ順序・同じ長さ(seedで1:1対応)の一般化グループ形成過程run結果 */
+  groupFormationRuns: GroupFormationRunSummary[];
+  groupFormationSummary: GroupFormationMonteCarloSummary;
+};
+
+/**
+ * Issue #160 (Phase 4): `compareGroupFormation`の戻り値。同一`presetId`由来`params`・`formation`・
+ * `baseSeed`・`runs`・`maxTicks`で、baseline(`interventionId: "none"`)と選択中の介入を実行した結果
+ * 一式。`compareMonteCarloIntervention`(#99)と同じpaired比較の考え方に、班形成過程の負担・介入の
+ * 副作用指標(未割当・stress・参加失敗・再探索・推薦受諾・強制割当・再配分等)のdeltaを追加する。
+ */
+export type GroupFormationComparisonResult = {
+  baseline: GroupFormationMonteCarloResult;
+  intervention: GroupFormationMonteCarloResult;
+  /** `baseline.runs`と同じ順序のseed列。`intervention.runs`のseed列と常に一致する(paired比較の前提) */
+  pairedSeeds: number[];
+  /**
+   * `intervention`側が`random-assignment-baseline`の場合はfalse。false時は
+   * `groupFormationMetrics`の接近・参加失敗・再探索・stress系フィールドを「0」ではなく
+   * 「対象外」として表示すべきことを示す(#160本文「ランダム割当は…比較表で『過程指標は直接比較
+   * 不可／0が構造的』であることを明示する」)。
+   */
+  processMetricsComparable: boolean;
+  metrics: MonteCarloComparisonResult["metrics"];
+  groupFormationMetrics: {
+    unassignedCount: MonteCarloMetricDelta;
+    excessUnassignedCount: MonteCarloMetricDelta<number | undefined>;
+    averageMaxStress: MonteCarloMetricDelta;
+    averageJoinFailureCount: MonteCarloMetricDelta;
+    averageSearchRestartCount: MonteCarloMetricDelta;
+    interventionTriggerCount: MonteCarloMetricDelta;
+    recommendationAcceptedCount: MonteCarloMetricDelta;
+    teacherForcedAssignedCount: MonteCarloMetricDelta;
+    reassignedStudentCount: MonteCarloMetricDelta;
+    randomAssignedCount: MonteCarloMetricDelta;
+  };
+};
