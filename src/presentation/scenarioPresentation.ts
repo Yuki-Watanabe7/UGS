@@ -65,6 +65,14 @@ export type ScenarioPresentation = {
    * 学校シナリオだけ意図的に`false`のまま据え置く)。
    */
   showInterventionComparison: boolean;
+  /**
+   * Issue #160 (Phase 4): 学校route専用の、班形成過程・教師介入副作用のpaired比較パネル
+   * (`GroupFormationComparisonPanel`)を表示するかどうか。`showInterventionComparison`(二次会向け
+   * `InterventionComparisonPanel`専用)とは独立したフラグにすることで、二次会画面へ学校介入・班指標が
+   * 一切表示されないことを型レベルでも保証する(受入条件: 二次会向け比較パネルへ学校介入・班指標を
+   * 表示しない)。
+   */
+  showGroupFormationComparison: boolean;
   speechTemplates: Record<SpeechReason, string>;
   expressionTemplates: Record<ExpressionReason, ExpressionTemplateVariants>;
   divergenceTemplates?: Partial<Record<DivergenceScene, DivergenceArchetypePresentation>>;
@@ -395,6 +403,7 @@ export const AFTER_PARTY_PRESENTATION: ScenarioPresentation = {
   availableInterventionIds: resolveAvailableInterventionIds("afterParty"),
   showInterventionControls: true,
   showInterventionComparison: true,
+  showGroupFormationComparison: false,
   speechTemplates: AFTER_PARTY_SPEECH,
   expressionTemplates: AFTER_PARTY_EXPRESSIONS,
   agentStateLabels: {
@@ -476,7 +485,10 @@ export const CLASSROOM_PRESENTATION: ScenarioPresentation = {
   availableInterventionIds: resolveAvailableInterventionIds("classroomPair"),
   showInterventionControls: true,
   // Issue #157: 介入比較Monte Carlo UIの完成はこのIssueの対象外のため、既存どおり非表示のまま据え置く
+  // (afterParty専用の`InterventionComparisonPanel`は学校route向けには作らない)
   showInterventionComparison: false,
+  // Issue #160: 学校向けの班形成過程・教師介入副作用比較パネル(`GroupFormationComparisonPanel`)を表示する
+  showGroupFormationComparison: true,
   speechTemplates: CLASSROOM_SPEECH,
   expressionTemplates: CLASSROOM_EXPRESSIONS,
   divergenceTemplates: CLASSROOM_DIVERGENCE,

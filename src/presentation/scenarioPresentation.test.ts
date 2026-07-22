@@ -59,7 +59,7 @@ function expectNoClassroomForbiddenTerms(text: string): void {
 }
 
 describe("scenario presentation: classroom rendering audit", () => {
-  it("does not render after-party-only vocabulary, and keeps the intervention comparison panel out of scope, on the classroom route", () => {
+  it("does not render after-party-only vocabulary, and shows the group-formation comparison panel (not the after-party one) on the classroom route", () => {
     const html = renderToStaticMarkup(
       createElement(Router, { initialPathname: "/simulate/classroom" }),
     );
@@ -69,11 +69,15 @@ describe("scenario presentation: classroom rendering audit", () => {
     expect(html).toContain("ペアの人数: 2人固定");
     expect(html).toContain("自発的に相手を探す意欲");
     // Issue #157: 学校向け低圧介入(近くの人への声かけ促進/空きのある班の参加可能表示)を選べるよう、
-    // 介入選択UI自体は表示するようになった。Monte Carlo比較パネルの完成は対象外のため引き続き非表示。
+    // 介入選択UI自体は表示するようになった。
     expect(html).toContain("介入シナリオ");
     expect(html).toContain("近くの人への声かけ促進");
     expect(html).toContain("空きのある班の参加可能表示");
-    expect(html).not.toContain("介入なしとの比較");
+    // Issue #160: 学校route専用の班形成・教師介入比較パネル(`GroupFormationComparisonPanel`)が表示される。
+    // 二次会専用の`InterventionComparisonPanel`(見出し文言が完全一致する「介入なしとの比較」のみ)は
+    // `showInterventionComparison: false`のまま据え置かれ、学校routeでは表示されない。
+    expect(html).toContain("介入なしとの比較(班形成・教師介入)");
+    expect(html).not.toMatch(/介入なしとの比較(?!\()/);
   });
 
   it("audits the dynamic classroom logs, speech inspector, canvas, and summary after a full run", () => {

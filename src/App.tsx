@@ -7,6 +7,7 @@ import { AgentLegend } from "./components/AgentLegend";
 import { InterventionSelector } from "./components/InterventionSelector";
 import { MonteCarloPanel } from "./components/MonteCarloPanel";
 import { InterventionComparisonPanel } from "./components/InterventionComparisonPanel";
+import { GroupFormationComparisonPanel } from "./components/GroupFormationComparisonPanel";
 import { SpeechEffectsComparisonPanel } from "./components/SpeechEffectsComparisonPanel";
 import { SimulationCanvas } from "./components/SimulationCanvas";
 import { ObserverJoinerInspector } from "./components/ObserverJoinerInspector";
@@ -327,6 +328,17 @@ function SimulationApp({ scenario }: Props) {
               interventionId={activeInterventionId}
               singleSimRunning={running}
               onBeforeRun={handlePauseForMonteCarlo}
+            />
+          )}
+          {presentation.showGroupFormationComparison && (
+            <GroupFormationComparisonPanel
+              presetId={presetId}
+              params={params}
+              seed={seed}
+              singleSimRunning={running}
+              onBeforeRun={handlePauseForMonteCarlo}
+              formation={formation}
+              presentation={presentation}
             />
           )}
           <SpeechEffectsComparisonPanel
