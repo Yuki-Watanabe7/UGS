@@ -46,6 +46,35 @@ describe("planGroupSizes", () => {
     expect(plan.unassignedCount).toBe(2);
   });
 
+  it("leaves a lone person unassigned for a fixed group size (population = 1)", () => {
+    const plan = planGroupSizes(1, { minGroupSize: 4, maxGroupSize: 4 });
+    expect(plan.groupSizes).toEqual([]);
+    expect(plan.unassignedCount).toBe(1);
+  });
+
+  it("leaves a lone person unassigned for a variable group size (population = 1)", () => {
+    const plan = planGroupSizes(1, { minGroupSize: 3, maxGroupSize: 4 });
+    expect(plan.groupSizes).toEqual([]);
+    expect(plan.unassignedCount).toBe(1);
+  });
+
+  it("fully partitions a large fixed-size population (>= 100) with no implicit resizing", () => {
+    const plan = planGroupSizes(101, { minGroupSize: 4, maxGroupSize: 4 });
+    expect(plan.groupSizes.every((size) => size === 4)).toBe(true);
+    expect(plan.groupSizes.length).toBe(25);
+    expect(plan.unassignedCount).toBe(1); // 101 % 4 == 1
+  });
+
+  it("fully assigns a large variable-capacity population (>= 100) with no structural remainder", () => {
+    const plan = planGroupSizes(101, { minGroupSize: 3, maxGroupSize: 4 });
+    expect(plan.groupSizes.reduce((a, b) => a + b, 0)).toBe(101);
+    expect(plan.unassignedCount).toBe(0);
+    for (const size of plan.groupSizes) {
+      expect(size).toBeGreaterThanOrEqual(3);
+      expect(size).toBeLessThanOrEqual(4);
+    }
+  });
+
   it("treats an unbounded maxGroupSize as a single group when population meets the minimum", () => {
     const plan = planGroupSizes(7, { minGroupSize: 2, maxGroupSize: Number.POSITIVE_INFINITY });
     expect(plan.groupSizes).toEqual([7]);
@@ -70,6 +99,19 @@ describe("partitionIntoGroups", () => {
 
   it("produces groups whose combined membership has no duplicates and covers only assigned ids", () => {
     const ids = Array.from({ length: 11 }, (_, i) => `agent-${i}`);
+    const { groups, unassignedIds } = partitionIntoGroups(ids, { minGroupSize: 3, maxGroupSize: 4 });
+
+    const allAssigned = groups.flat();
+    expect(new Set(allAssigned).size).toBe(allAssigned.length);
+    expect(allAssigned.length + unassignedIds.length).toBe(ids.length);
+    for (const group of groups) {
+      expect(group.length).toBeGreaterThanOrEqual(3);
+      expect(group.length).toBeLessThanOrEqual(4);
+    }
+  });
+
+  it("partitions a large population (>= 100) with no duplicates and full id coverage", () => {
+    const ids = Array.from({ length: 103 }, (_, i) => `agent-${i}`);
     const { groups, unassignedIds } = partitionIntoGroups(ids, { minGroupSize: 3, maxGroupSize: 4 });
 
     const allAssigned = groups.flat();
