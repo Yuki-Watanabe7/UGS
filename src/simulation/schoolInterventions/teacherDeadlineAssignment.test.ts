@@ -222,6 +222,101 @@ describe("teacher-deadline-assignment: assignment at deadline", () => {
     }
   });
 
+  it("does not re-fire or reassign on a second tick past the deadline (fires exactly once per run)", () => {
+    const agents = Array.from({ length: 9 }, (_, i) => makeAgent({ id: `a${i}`, state: "undecided", x: 100 + i, y: 100 }));
+    const deadlineTick = 100;
+    const afterDeadline = runToDeadline(agents, [], groupSize, DEFAULT_PARAMS, deadlineTick, 7);
+
+    expect(afterDeadline.log.filter((e) => e.eventType === "teacherAssignmentCompleted").length).toBe(1);
+    expect(afterDeadline.interventionRuntimeState?.forcedAssignmentApplied).toBe(true);
+
+    const formation: FormationRuntimeOptions = {
+      scenarioId: "classroomPair",
+      formationDeadlineTick: deadlineTick,
+      classroomGroupSize: groupSize,
+    };
+    const rng = new SeededRandom(7);
+    const second = stepSimulation(
+      afterDeadline,
+      DEFAULT_PARAMS,
+      rng,
+      { interventionId: "teacher-deadline-assignment" },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      formation,
+    );
+
+    // 2回目のstepでも新規のteacherAssignmentCompleted/teacherAssignedAgentは発火しない(受入条件: 締切時1回のみ)
+    expect(second.log.filter((e) => e.eventType === "teacherAssignmentCompleted").length).toBe(1);
+    expect(second.log.some((e) => e.eventType === "teacherAssignedAgent")).toBe(
+      afterDeadline.log.some((e) => e.eventType === "teacherAssignedAgent"),
+    );
+    expect(second.agents.map((a) => ({ id: a.id, state: a.state, joinedGroupId: a.joinedGroupId }))).toEqual(
+      afterDeadline.agents.map((a) => ({ id: a.id, state: a.state, joinedGroupId: a.joinedGroupId })),
+    );
+  });
+
+  it("ignores dissolved/expired candidates (does not target them for vacancy-filling or rebalancing)", () => {
+    const dissolved: GroupCandidate = {
+      id: "g-dissolved",
+      x: 50,
+      y: 50,
+      memberIds: ["d1", "d2"],
+      status: "dissolved",
+      age: 1,
+    };
+    const expired: GroupCandidate = {
+      id: "g-expired",
+      x: 60,
+      y: 60,
+      memberIds: ["e1"],
+      status: "expired",
+      age: 1,
+    };
+    const agents = [
+      // dissolved/expiredの元メンバーは既にengine側でundecidedへ戻されている想定(実際のtick経過を模す)
+      makeAgent({ id: "d1", state: "undecided", x: 50, y: 50 }),
+      makeAgent({ id: "d2", state: "undecided", x: 52, y: 50 }),
+      makeAgent({ id: "e1", state: "undecided", x: 60, y: 60 }),
+      makeAgent({ id: "f1", state: "undecided", x: 400, y: 400 }),
+    ];
+
+    const next = runToDeadline(agents, [dissolved, expired], groupSize);
+
+    // dissolved/expiredは「フェードアウト表示用に残る過去のmemberIds」であり、現在の所属を表さない
+    // (現在の所属は`agent.joinedGroupId`が真実の情報源のため、ここでは対象から除いて重複を検証する)
+    const activeCandidates = next.groupCandidates.filter((c) => c.status !== "dissolved" && c.status !== "expired");
+    const seen = new Set<string>();
+    for (const candidate of activeCandidates) {
+      for (const id of candidate.memberIds) {
+        expect(seen.has(id)).toBe(false);
+        seen.add(id);
+      }
+    }
+    for (const agent of next.agents) {
+      if (agent.state !== "joined") continue;
+      const candidate = next.groupCandidates.find((c) => c.id === agent.joinedGroupId);
+      expect(candidate).toBeDefined();
+      expect(candidate!.memberIds).toContain(agent.id);
+    }
+
+    // dissolved/expired候補自体はteacher-deadline-assignmentのactions/eventsから一切変更されない
+    const finalDissolved = next.groupCandidates.find((c) => c.id === "g-dissolved");
+    const finalExpired = next.groupCandidates.find((c) => c.id === "g-expired");
+    expect(finalDissolved?.memberIds).toEqual(["d1", "d2"]);
+    expect(finalExpired?.memberIds).toEqual(["e1"]);
+
+    // 元メンバーは新規班として教師割当の対象になる(構造的に4人揃うのでconfirmedの新規班へ)
+    for (const id of ["d1", "d2", "e1", "f1"]) {
+      const agent = next.agents.find((a) => a.id === id)!;
+      expect(agent.state).toBe("joined");
+      expect(agent.joinedGroupId).not.toBe("g-dissolved");
+      expect(agent.joinedGroupId).not.toBe("g-expired");
+    }
+  });
+
   it("is deterministic for a fixed seed/state (same result across repeated runs)", () => {
     const agents = Array.from({ length: 10 }, (_, i) => makeAgent({ id: `a${i}`, state: "undecided", x: 100 + i * 3, y: 100 + i }));
 
