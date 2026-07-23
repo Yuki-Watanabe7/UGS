@@ -768,6 +768,46 @@ Phase Cの介入シナリオと介入あり/なし比較を使うと、次のよ
 - baseline/interventionの2ラン間ではseed列を揃えて実行しているため、条件そのものの違い(介入の
   有無)だけを見ていることになる(乱数のブレによる差ではない)。
 
+### 所属起源・低圧介入ファネル・分位点(Issue #170)
+
+#160のpaired比較を土台に、「介入が発火した後、誰が接近し、実際に所属まで至ったか」「最終所属が
+どの経路によるものか」「平均値だけでは見えない分布」を確認できるよう、`GroupFormationComparisonPanel`
+へ次の3つを追加しています。
+
+- **所属起源(`AssignmentOrigin`、`src/simulation/assignmentOrigin.ts`)**: 最終stateだけから推測せず、
+  所属確定に関連する構造化イベントから、joinedしたagentそれぞれを次のいずれか1つに分類します。
+  - `natural`: 介入効果と関連付かない通常形成
+  - `lowPressureAssisted`: 低圧介入(近くの人への声かけ促進/空きのある班の参加可能表示)の効果期間中に
+    開始した接近から所属した
+  - `recommendationAssisted`: 教師推薦を受諾し、実際にその班へ所属した(受諾しても実際に所属しなかった
+    場合はここに含まれない)
+  - `teacherAssigned`: 締切時の教師強制割当・再配分による所属
+  - `randomAssigned`: ランダム割当(比較基準)による所属
+
+  各カテゴリの人数の合計は、常にそのrunの割当済み("joined")人数と一致します。学校向け介入は1run中に
+  同時に1つしか選択できない前提のため、複数介入が同一agentへ同時に候補となるケースは扱いません。
+
+  **`lowPressureAssisted`は相関であり因果ではありません**: 低圧介入は所属を強制せず、接近確率・
+  attractivenessへの一時的な後押しを与えるだけです。「効果期間中に開始した接近から所属した」ことを
+  示すのみで、「介入が原因で所属した」と断定するものではありません(特に`open-group-signal`は
+  未決定者全員への一時効果のため、対象agentの特定自体が「対象groupへ接近した」ことからの近似です)。
+
+- **低圧介入ファネル(`LowPressureInterventionFunnel`)**: `nearby-peer-prompt`/`open-group-signal`を
+  選択した場合のみ、発火回数・対象agent/group数・効果期間中に接近開始した数・所属まで至った数
+  (`lowPressureAssisted`と同値)・接近後に満員化等で失敗した数・発火したが接近も所属も起きなかった数を
+  ファネルとして表示します。それ以外の介入を選択した場合は「0」ではなく、指標自体が「対象外」になります。
+
+- **分位点(p50/p90)**: 平均値は一部runの極端値に引きずられやすいため、agentの最大stress・run完了tick
+  について、平均に加えて中央値(p50)・上位分位点(p90)を表示します(`src/simulation/quantiles.ts`の
+  `computeQuantileSummary`。線形補間、空配列は0、対象runが無い指標は`undefined`で「対象外」を表す)。
+
+**旧`PairFormation*` APIからの移行方針**: #136の`PairFormationRunSummary`等のペア専用名称は、#160が
+`groupFormation.ts`で一般化名(`confirmedGroupCount`等)を後方互換のまま追加した構成を維持しています。
+既存の`PairFormation*` exportは削除・変更しておらず、`GroupFormationRunSummary`/
+`GroupFormationMonteCarloSummary`が一般名の標準APIとして機能します。今回追加した`assignmentOrigins`/
+`lowPressureInterventionFunnel`/`quantiles`はすべて`GroupFormationRunSummary`/
+`GroupFormationMonteCarloSummary`側にのみ追加しており、`PairFormationRunSummary`側には影響しません。
+
 ### 「最後まで残る」ことについて
 
 この教室での班分けプリセットも、冒頭で述べた通り性格診断ツールではありません。締切時点で`unassigned`

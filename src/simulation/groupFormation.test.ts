@@ -191,4 +191,138 @@ describe("groupFormation.ts: 介入副作用指標の集計", () => {
       1 - result.groupFormationSummary.allAssignedRate,
     );
   });
+
+  it("Monte Carlo集計に分位点(p50/p90)を含み、baseline比較にも反映される", () => {
+    const config: MonteCarloConfig = {
+      baseSeed: 2100,
+      runs: 6,
+      params: { ...DEFAULT_PARAMS, populationSize: 12, numLeaders: 1, overallWillingness: 0.5 },
+      intervention: { interventionId: "teacher-recommendation" },
+      formation: classroomFormation({ minGroupSize: 2, maxGroupSize: 2 }, 60),
+    };
+
+    const result = compareGroupFormation(config);
+    for (const summary of [result.baseline.groupFormationSummary, result.intervention.groupFormationSummary]) {
+      expect(Number.isFinite(summary.quantiles.maxStress.p50)).toBe(true);
+      expect(Number.isFinite(summary.quantiles.maxStress.p90)).toBe(true);
+      expect(Number.isFinite(summary.quantiles.finishedTick.p50)).toBe(true);
+      expect(Number.isFinite(summary.quantiles.finishedTick.p90)).toBe(true);
+    }
+    expect(result.groupFormationMetrics.maxStressP50.baseline).toBe(result.baseline.groupFormationSummary.quantiles.maxStress.p50);
+    expect(result.groupFormationMetrics.finishedTickP90.intervention).toBe(
+      result.intervention.groupFormationSummary.quantiles.finishedTick.p90,
+    );
+  });
+});
+
+describe("groupFormation.ts: agentごとの所属起源(assignmentOrigins)", () => {
+  it("起源別人数の合計は常に割当済み(joined)人数と一致する", () => {
+    const config: MonteCarloConfig = {
+      baseSeed: 2300,
+      runs: 4,
+      params: { ...DEFAULT_PARAMS, populationSize: 13, numLeaders: 1, overallWillingness: 0.5 },
+      intervention: { interventionId: "teacher-deadline-assignment" },
+      formation: classroomFormation({ minGroupSize: 2, maxGroupSize: 2 }, 30),
+    };
+
+    const result = runGroupFormationMonteCarlo(config);
+    for (const run of result.groupFormationRuns) {
+      const total = Object.values(run.assignmentOrigins).reduce((sum, n) => sum + n, 0);
+      expect(total).toBe(run.assignedCount);
+    }
+  });
+
+  it("teacher-deadline-assignmentでは締切後に強制割当されたagentがteacherAssignedへ計上される", () => {
+    const config: MonteCarloConfig = {
+      baseSeed: 2400,
+      runs: 3,
+      params: { ...DEFAULT_PARAMS, populationSize: 13, numLeaders: 1, overallWillingness: 0.4 },
+      intervention: { interventionId: "teacher-deadline-assignment" },
+      formation: classroomFormation({ minGroupSize: 2, maxGroupSize: 2 }, 20),
+    };
+
+    const result = runGroupFormationMonteCarlo(config);
+    const totalTeacherAssigned = result.groupFormationRuns.reduce((sum, run) => sum + run.assignmentOrigins.teacherAssigned, 0);
+    const totalForced = result.groupFormationRuns.reduce((sum, run) => sum + run.teacherForcedAssignedCount, 0);
+    expect(totalTeacherAssigned).toBe(totalForced);
+    expect(totalTeacherAssigned).toBeGreaterThan(0);
+  });
+
+  it("random-assignment-baselineでは割当済み全員がrandomAssignedになり、他の起源と混在しない", () => {
+    const config: MonteCarloConfig = {
+      baseSeed: 2500,
+      runs: 3,
+      params: { ...DEFAULT_PARAMS, populationSize: 12, numLeaders: 1, overallWillingness: 0.5 },
+      intervention: { interventionId: "random-assignment-baseline" },
+      formation: classroomFormation({ minGroupSize: 2, maxGroupSize: 2 }),
+    };
+
+    const result = runGroupFormationMonteCarlo(config);
+    for (const run of result.groupFormationRuns) {
+      expect(run.assignmentOrigins.randomAssigned).toBe(run.assignedCount);
+      expect(run.assignmentOrigins.natural).toBe(0);
+      expect(run.assignmentOrigins.teacherAssigned).toBe(0);
+      expect(run.assignmentOrigins.recommendationAssisted).toBe(0);
+      expect(run.assignmentOrigins.lowPressureAssisted).toBe(0);
+    }
+  });
+
+  it("二次会シナリオ(afterParty)は起源集計を壊さず、全員naturalまたは0になる", () => {
+    const config: MonteCarloConfig = {
+      baseSeed: 2600,
+      runs: 3,
+      params: { ...DEFAULT_PARAMS, populationSize: 10 },
+      intervention: { interventionId: "none" },
+    };
+
+    const result = runGroupFormationMonteCarlo(config);
+    for (const run of result.groupFormationRuns) {
+      expect(run.assignmentOrigins.teacherAssigned).toBe(0);
+      expect(run.assignmentOrigins.randomAssigned).toBe(0);
+      expect(run.assignmentOrigins.recommendationAssisted).toBe(0);
+      expect(run.assignmentOrigins.lowPressureAssisted).toBe(0);
+      expect(run.assignmentOrigins.natural).toBe(run.assignedCount);
+    }
+  });
+});
+
+describe("groupFormation.ts: 低圧介入ファネル(lowPressureInterventionFunnel)", () => {
+  it("nearby-peer-prompt選択時のみファネルが定義され、他の介入では対象外(undefined)になる", () => {
+    const baseConfig = {
+      baseSeed: 2700,
+      runs: 3,
+      params: { ...DEFAULT_PARAMS, populationSize: 14, numLeaders: 1, overallWillingness: 0.4 },
+      formation: classroomFormation({ minGroupSize: 2, maxGroupSize: 2 }, 60),
+    };
+
+    const nearbyResult = runGroupFormationMonteCarlo({ ...baseConfig, intervention: { interventionId: "nearby-peer-prompt" } });
+    for (const run of nearbyResult.groupFormationRuns) {
+      expect(run.lowPressureInterventionFunnel).toBeDefined();
+      expect(run.lowPressureInterventionFunnel!.interventionScenarioId).toBe("nearby-peer-prompt");
+      expect(run.lowPressureInterventionFunnel!.assistedJoinCount).toBe(run.assignmentOrigins.lowPressureAssisted);
+    }
+    expect(nearbyResult.groupFormationSummary.lowPressureInterventionFunnelAverages).toBeDefined();
+
+    const noneResult = runGroupFormationMonteCarlo({ ...baseConfig, intervention: { interventionId: "none" } });
+    for (const run of noneResult.groupFormationRuns) {
+      expect(run.lowPressureInterventionFunnel).toBeUndefined();
+    }
+    expect(noneResult.groupFormationSummary.lowPressureInterventionFunnelAverages).toBeUndefined();
+  });
+
+  it("open-group-signal選択時もファネルが定義される", () => {
+    const config: MonteCarloConfig = {
+      baseSeed: 2800,
+      runs: 3,
+      params: { ...DEFAULT_PARAMS, populationSize: 14, numLeaders: 1, overallWillingness: 0.4 },
+      intervention: { interventionId: "open-group-signal" },
+      formation: classroomFormation({ minGroupSize: 3, maxGroupSize: 4 }, 60),
+    };
+
+    const result = runGroupFormationMonteCarlo(config);
+    for (const run of result.groupFormationRuns) {
+      expect(run.lowPressureInterventionFunnel).toBeDefined();
+      expect(run.lowPressureInterventionFunnel!.interventionScenarioId).toBe("open-group-signal");
+    }
+  });
 });

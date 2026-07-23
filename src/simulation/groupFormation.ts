@@ -1,11 +1,14 @@
 import type {
+  AssignmentOriginCounts,
   GroupFormationComparisonResult,
   GroupFormationMonteCarloResult,
   GroupFormationMonteCarloSummary,
   GroupFormationRunSummary,
   InterventionEffectMetrics,
+  LowPressureInterventionFunnel,
   MonteCarloConfig,
   MonteCarloRunResult,
+  QuantileMetrics,
   SimParams,
   SimulationEventType,
   SimulationState,
@@ -16,6 +19,8 @@ import { getFormationPolicyById, resolveNominalGroupCapacity } from "./formation
 import { buildPairFormationRunSummary, summarizePairFormationRuns } from "./pairFormation";
 import { buildSimulationSummary } from "./summary";
 import { DEFAULT_MAX_TICKS, metricDelta, optionalMetricDelta, summarizeRuns } from "./monteCarlo";
+import { buildLowPressureInterventionFunnel, deriveAssignmentOrigins, summarizeAssignmentOrigins } from "./assignmentOrigin";
+import { computeQuantileSummary } from "./quantiles";
 
 /**
  * Issue #160 (Phase 4): 学校向け教師介入・班人数比較のための一般化レイヤー。`pairFormation.ts`
@@ -106,6 +111,12 @@ export function buildGroupFormationRunSummary(state: SimulationState, params: Si
   );
   const capacity = resolveNominalGroupCapacity(formationPolicy, params);
 
+  const assignmentOrigins = summarizeAssignmentOrigins(deriveAssignmentOrigins(state));
+  const lowPressureInterventionFunnel =
+    state.interventionId === "nearby-peer-prompt" || state.interventionId === "open-group-signal"
+      ? buildLowPressureInterventionFunnel(state, state.interventionId)
+      : undefined;
+
   return {
     ...pairSummary,
     ...interventionEffects,
@@ -120,6 +131,8 @@ export function buildGroupFormationRunSummary(state: SimulationState, params: Si
       deadlineTick: state.formationDeadlineTick,
       populationSize: state.agents.length,
     },
+    assignmentOrigins,
+    lowPressureInterventionFunnel,
   };
 }
 
@@ -128,6 +141,63 @@ export function buildGroupFormationRunSummary(state: SimulationState, params: Si
  * Monte Carlo集計値を導出する。`summarizePairFormationRuns`をそのまま再利用しつつ、中央値
  * (#160本文「平均だけでなく、少なくとも中央値または分位点を表示する」)と介入副作用指標の集計を追加する。
  */
+/** run毎の`assignmentOrigins`を起源別に平均した、1runあたりの平均人数(Issue #170) */
+function averageAssignmentOriginCounts(groupFormationRuns: GroupFormationRunSummary[]): AssignmentOriginCounts {
+  const origins = ["natural", "lowPressureAssisted", "recommendationAssisted", "teacherAssigned", "randomAssigned"] as const;
+  const result = {} as AssignmentOriginCounts;
+  for (const origin of origins) {
+    result[origin] = average(groupFormationRuns.map((run) => run.assignmentOrigins[origin]));
+  }
+  return result;
+}
+
+/** `lowPressureInterventionFunnel`が定義されているrunのみを対象にした平均(Issue #170)。対象runが無ければundefined */
+function averageLowPressureInterventionFunnel(
+  groupFormationRuns: GroupFormationRunSummary[],
+): LowPressureInterventionFunnel | undefined {
+  const funnels = groupFormationRuns
+    .map((run) => run.lowPressureInterventionFunnel)
+    .filter((funnel): funnel is LowPressureInterventionFunnel => funnel !== undefined);
+  if (funnels.length === 0) return undefined;
+
+  return {
+    interventionScenarioId: funnels[0].interventionScenarioId,
+    triggeredCount: average(funnels.map((f) => f.triggeredCount)),
+    targetedAgentCount: average(funnels.map((f) => f.targetedAgentCount)),
+    targetedGroupCount: average(funnels.map((f) => f.targetedGroupCount)),
+    approachedDuringEffectCount: average(funnels.map((f) => f.approachedDuringEffectCount)),
+    assistedJoinCount: average(funnels.map((f) => f.assistedJoinCount)),
+    failedAfterApproachCount: average(funnels.map((f) => f.failedAfterApproachCount)),
+    noActionCount: average(funnels.map((f) => f.noActionCount)),
+  };
+}
+
+/**
+ * run毎に1値ずつ対応させた上でrun間の分位点(p50/p90)を導出する(Issue #170本文
+ * 「平均値だけでは一部runの極端値に引きずられやすい」への対応)。`excessUnassignedCount`は
+ * `structuralUnassignedFloor`が定義されているrunのみを対象にする。
+ */
+function computeGroupFormationQuantiles(
+  runs: MonteCarloRunResult[],
+  groupFormationRuns: GroupFormationRunSummary[],
+): QuantileMetrics {
+  const runsWithExcess = groupFormationRuns.filter((run) => run.excessUnassignedCount !== undefined);
+
+  return {
+    maxStress: computeQuantileSummary(groupFormationRuns.map((run) => run.populationAverages.averageMaxStress)),
+    finishedTick: computeQuantileSummary(runs.map((run) => run.finishedTick)),
+    joinFailureCount: computeQuantileSummary(groupFormationRuns.map((run) => run.populationAverages.averageJoinFailureCount)),
+    searchRestartCount: computeQuantileSummary(
+      groupFormationRuns.map((run) => run.populationAverages.averageSearchRestartCount),
+    ),
+    unassignedCount: computeQuantileSummary(groupFormationRuns.map((run) => run.unassignedCount)),
+    excessUnassignedCount:
+      runsWithExcess.length === 0
+        ? undefined
+        : computeQuantileSummary(runsWithExcess.map((run) => run.excessUnassignedCount!)),
+  };
+}
+
 export function summarizeGroupFormationRuns(
   runs: MonteCarloRunResult[],
   groupFormationRuns: GroupFormationRunSummary[],
@@ -159,6 +229,9 @@ export function summarizeGroupFormationRuns(
     reassignmentRate: rateOf(groupFormationRuns.map((run) => run.reassignedGroupCount > 0)),
     averageRandomAssignedCount: average(groupFormationRuns.map((run) => run.randomAssignedCount)),
     randomAssignmentBaselineRunRate: rateOf(groupFormationRuns.map((run) => run.isRandomAssignmentBaseline)),
+    assignmentOriginAverages: averageAssignmentOriginCounts(groupFormationRuns),
+    lowPressureInterventionFunnelAverages: averageLowPressureInterventionFunnel(groupFormationRuns),
+    quantiles: computeGroupFormationQuantiles(runs, groupFormationRuns),
   };
 }
 
@@ -295,6 +368,16 @@ export function compareGroupFormation(config: MonteCarloConfig): GroupFormationC
       randomAssignedCount: metricDelta(
         baseline.groupFormationSummary.averageRandomAssignedCount,
         intervention.groupFormationSummary.averageRandomAssignedCount,
+      ),
+      maxStressP50: metricDelta(baseline.groupFormationSummary.quantiles.maxStress.p50, intervention.groupFormationSummary.quantiles.maxStress.p50),
+      maxStressP90: metricDelta(baseline.groupFormationSummary.quantiles.maxStress.p90, intervention.groupFormationSummary.quantiles.maxStress.p90),
+      finishedTickP50: metricDelta(
+        baseline.groupFormationSummary.quantiles.finishedTick.p50,
+        intervention.groupFormationSummary.quantiles.finishedTick.p50,
+      ),
+      finishedTickP90: metricDelta(
+        baseline.groupFormationSummary.quantiles.finishedTick.p90,
+        intervention.groupFormationSummary.quantiles.finishedTick.p90,
       ),
     },
   };

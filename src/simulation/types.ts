@@ -1309,6 +1309,17 @@ export type GroupFormationRunSummary = PairFormationRunSummary &
       deadlineTick?: number;
       populationSize: number;
     };
+    /**
+     * Issue #170: 割当済み("joined")agentを、所属が確定した経路(`AssignmentOrigin`)別に
+     * 集計した人数。全カテゴリの合計は必ず`assignedCount`と一致する(`assignmentOrigin.ts`参照)。
+     */
+    assignmentOrigins: AssignmentOriginCounts;
+    /**
+     * Issue #170: 選択中の介入が`nearby-peer-prompt`/`open-group-signal`のいずれかの場合のみ定義される、
+     * 発火から接近・所属・失敗までの構造化ファネル。それ以外の介入・介入なしでは`undefined`
+     * (「0」ではなく「対象外」を明示するため)。
+     */
+    lowPressureInterventionFunnel?: LowPressureInterventionFunnel;
   };
 
 /** 複数run分の`InterventionEffectMetrics`平均値。全てのrunが`isRandomAssignmentBaseline`ならその旨を`randomAssignmentBaselineRunRate`で示す */
@@ -1343,6 +1354,19 @@ export type GroupFormationMonteCarloSummary = PairFormationMonteCarloSummary &
     medianMaxStress: number;
     /** `1 - allAssignedRate`。「介入後も未割当だった率」を明示的な名前で示す */
     stillUnassignedAfterRunRate: number;
+    /** Issue #170: run毎の`assignmentOrigins`を起源別に平均した、1runあたりの平均人数 */
+    assignmentOriginAverages: AssignmentOriginCounts;
+    /**
+     * Issue #170: `lowPressureInterventionFunnel`が定義されているrun(=低圧介入選択時)のみを対象にした
+     * 平均値。対象runが1件もなければ`undefined`(「0」ではなく「対象外」を明示するため)。
+     */
+    lowPressureInterventionFunnelAverages?: LowPressureInterventionFunnel;
+    /**
+     * Issue #170: 平均値だけでは見えない分布を確認するための中央値(p50)・上位分位点(p90)。
+     * 対象値は1run=1値としてrun間で分位点を取る(`quantiles.ts`の`computeQuantileSummary`)。
+     * `excessUnassignedCount`は`structuralUnassignedFloor`が定義されているrunが1件もなければ`undefined`。
+     */
+    quantiles: QuantileMetrics;
   };
 
 /** `runGroupFormationMonteCarlo`の戻り値 */
@@ -1385,5 +1409,77 @@ export type GroupFormationComparisonResult = {
     teacherForcedAssignedCount: MonteCarloMetricDelta;
     reassignedStudentCount: MonteCarloMetricDelta;
     randomAssignedCount: MonteCarloMetricDelta;
+    /** Issue #170: 平均だけでなくp50/p90でもbaseline/介入を比較できるようにする */
+    maxStressP50: MonteCarloMetricDelta;
+    maxStressP90: MonteCarloMetricDelta;
+    finishedTickP50: MonteCarloMetricDelta;
+    finishedTickP90: MonteCarloMetricDelta;
   };
+};
+
+/**
+ * Issue #170: agentの最終所属("joined")が確定した経路の分類。最終stateだけからの推測ではなく、
+ * 所属確定に関連する構造化イベント(`schoolInterventionTriggered`の`triggerReason`/`outcome`、
+ * `teacherAssignedAgent`/`teacherRebalancedGroup`、`randomAssignmentStarted`の有無)から
+ * `assignmentOrigin.ts`が導出する。低圧介入(`nearby-peer-prompt`/`open-group-signal`)は所属を
+ * 強制しないため、`lowPressureAssisted`は「介入効果期間中の接近から所属した」という相関関係であり、
+ * 因果の断定ではない(`docs/`参照)。
+ */
+export type AssignmentOrigin =
+  | "natural"
+  | "lowPressureAssisted"
+  | "recommendationAssisted"
+  | "teacherAssigned"
+  | "randomAssigned";
+
+/** `AssignmentOrigin`別の人数。合計は常に対象agent集合の人数と一致する */
+export type AssignmentOriginCounts = Record<AssignmentOrigin, number>;
+
+/**
+ * Issue #170: 低圧介入(`nearby-peer-prompt`/`open-group-signal`)専用の「発火 → 対象 → 接近 →
+ * 所属/失敗」ファネル。選択中の介入がこの2つのいずれでもない場合、呼び出し側は`undefined`を扱う
+ * (「0」ではなく「対象外」であることを明示するため)。`assignmentOrigin.ts`参照。
+ */
+export type LowPressureInterventionFunnel = {
+  interventionScenarioId: "nearby-peer-prompt" | "open-group-signal";
+  /** `schoolInterventionTriggered`(`outcome: "presented"`)の発火回数 */
+  triggeredCount: number;
+  /**
+   * 介入対象となった延べagent数(重複除く)。`open-group-signal`は特定agentを狙い撃つ介入ではなく
+   * 未決定者全員への一時効果のため、「対象群にいたと確認できるagent」= 対象groupへ接近したagentの
+   * 近似値になる(`nearby-peer-prompt`は`schoolInterventionTriggered`のagentId/secondAgentIdそのもの)。
+   */
+  targetedAgentCount: number;
+  /** 介入対象となったgroup数(`nearby-peer-prompt`は候補と紐づかないため常に0) */
+  targetedGroupCount: number;
+  /** 対象agentのうち、関連する効果期間内に接近(`agentApproached`/`observerApproached`)を開始した数 */
+  approachedDuringEffectCount: number;
+  /** 効果期間中の接近から実際に所属まで至った数(`assignmentOrigins.lowPressureAssisted`と同値) */
+  assistedJoinCount: number;
+  /** 効果期間中に接近したが、満員化・消滅等で所属に至らなかった数 */
+  failedAfterApproachCount: number;
+  /** 対象になったが接近すら起きなかった数 */
+  noActionCount: number;
+};
+
+/** Issue #170: 分位点1件分(中央値・90パーセンタイル)。`quantiles.ts`の`computeQuantileSummary`が返す */
+export type QuantileSummary = {
+  p50: number;
+  p90: number;
+};
+
+/** Issue #170: Monte Carlo集計へ追加する分位点一式。各値はrun毎に1値を対応させた上でrun間の分位点を取る */
+export type QuantileMetrics = {
+  /** run毎の`populationAverages.averageMaxStress`の分位点 */
+  maxStress: QuantileSummary;
+  /** run毎の完了tickの分位点 */
+  finishedTick: QuantileSummary;
+  /** run毎の`populationAverages.averageJoinFailureCount`(agentあたり参加失敗回数)の分位点 */
+  joinFailureCount: QuantileSummary;
+  /** run毎の`populationAverages.averageSearchRestartCount`(agentあたり再探索回数)の分位点 */
+  searchRestartCount: QuantileSummary;
+  /** run毎の`unassignedCount`の分位点 */
+  unassignedCount: QuantileSummary;
+  /** run毎の`excessUnassignedCount`の分位点。対象run(`structuralUnassignedFloor`定義済み)が1件もなければundefined */
+  excessUnassignedCount?: QuantileSummary;
 };
