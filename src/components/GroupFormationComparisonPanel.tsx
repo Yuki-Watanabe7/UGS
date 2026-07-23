@@ -5,9 +5,12 @@ import { getInterventionById } from "../simulation/interventions";
 import type { InterventionScenarioId } from "../simulation/interventions";
 import type { FormationRuntimeOptions } from "../simulation/formationPolicy";
 import type {
+  AssignmentOrigin,
+  AssignmentOriginCounts,
   GroupFormationComparisonResult,
   GroupFormationMonteCarloResult,
   GroupFormationRunSummary,
+  QuantileSummary,
   SimParams,
 } from "../simulation/types";
 import { isValidRunCount, MAX_RUNS, MIN_RUNS } from "./monteCarloPanelHelpers";
@@ -61,6 +64,37 @@ function aggregateGroupSizeDistribution(runs: GroupFormationRunSummary[]): Recor
     }
   }
   return totals;
+}
+
+function formatQuantile(quantile: QuantileSummary): string {
+  return `p50: ${quantile.p50.toFixed(1)} / p90: ${quantile.p90.toFixed(1)}`;
+}
+
+const ASSIGNMENT_ORIGIN_LABELS: Record<AssignmentOrigin, string> = {
+  natural: "自然形成",
+  lowPressureAssisted: "低圧介入支援",
+  recommendationAssisted: "教師推薦支援",
+  teacherAssigned: "教師強制割当",
+  randomAssigned: "ランダム割当",
+};
+
+const ASSIGNMENT_ORIGIN_ORDER: AssignmentOrigin[] = [
+  "natural",
+  "lowPressureAssisted",
+  "recommendationAssisted",
+  "teacherAssigned",
+  "randomAssigned",
+];
+
+function totalOf(counts: AssignmentOriginCounts): number {
+  return Object.values(counts).reduce((sum, n) => sum + n, 0);
+}
+
+function formatOriginCell(counts: AssignmentOriginCounts, origin: AssignmentOrigin): string {
+  const total = totalOf(counts);
+  const count = counts[origin];
+  if (total === 0) return `${formatCount(count)}人`;
+  return `${formatCount(count)}人 (${((count / total) * 100).toFixed(0)}%)`;
 }
 
 function formatGroupSizeDistribution(distribution: Record<number, number>, unitWord: string): string {
@@ -239,6 +273,18 @@ export function GroupFormationComparisonPanel({
               delta={formatCountDelta(result.groupFormationMetrics.averageMaxStress.delta)}
             />
             <MetricRow
+              label="最大stress(p50/p90)"
+              baseline={formatQuantile(result.baseline.groupFormationSummary.quantiles.maxStress)}
+              intervention={formatQuantile(result.intervention.groupFormationSummary.quantiles.maxStress)}
+              delta={`p50: ${formatCountDelta(result.groupFormationMetrics.maxStressP50.delta)} / p90: ${formatCountDelta(result.groupFormationMetrics.maxStressP90.delta)}`}
+            />
+            <MetricRow
+              label="完了tick(p50/p90)"
+              baseline={formatQuantile(result.baseline.groupFormationSummary.quantiles.finishedTick)}
+              intervention={formatQuantile(result.intervention.groupFormationSummary.quantiles.finishedTick)}
+              delta={`p50: ${formatCountDelta(result.groupFormationMetrics.finishedTickP50.delta)} / p90: ${formatCountDelta(result.groupFormationMetrics.finishedTickP90.delta)}`}
+            />
+            <MetricRow
               label="参加失敗回数(平均)"
               baseline={formatCount(result.baseline.groupFormationSummary.averageJoinFailureCount)}
               intervention={formatCount(result.intervention.groupFormationSummary.averageJoinFailureCount)}
@@ -283,6 +329,71 @@ export function GroupFormationComparisonPanel({
               unitWord,
             )}
           </p>
+
+          <section className="group-formation-assignment-origins">
+            <h3>所属起源別の人数(1runあたり平均)</h3>
+            <p className="monte-carlo-note">
+              最終stateだけでなく、所属確定時の構造化イベントから経路を分類したもの。低圧介入支援・教師推薦支援は
+              「介入と関連付けられた接近経路から所属した」ことを示すのみで、介入が原因で所属したと断定するものではない。
+            </p>
+            <div className="intervention-comparison-summary">
+              <div className="intervention-comparison-row intervention-comparison-header">
+                <span></span>
+                <span>介入なし</span>
+                <span>{resultInterventionName}</span>
+              </div>
+              {ASSIGNMENT_ORIGIN_ORDER.map((origin) => (
+                <div className="intervention-comparison-row" key={origin}>
+                  <span>{ASSIGNMENT_ORIGIN_LABELS[origin]}</span>
+                  <span>{formatOriginCell(result.baseline.groupFormationSummary.assignmentOriginAverages, origin)}</span>
+                  <span>{formatOriginCell(result.intervention.groupFormationSummary.assignmentOriginAverages, origin)}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {result.intervention.groupFormationSummary.lowPressureInterventionFunnelAverages && (
+            <section className="group-formation-low-pressure-funnel">
+              <h3>低圧介入ファネル(1runあたり平均、{resultInterventionName})</h3>
+              <p className="monte-carlo-note">
+                所属は強制されないため、「発火」から「所属」までの各段階は所要イベントの相関から算出した経過であり、
+                因果を証明するものではない。
+              </p>
+              {(() => {
+                const funnel = result.intervention.groupFormationSummary.lowPressureInterventionFunnelAverages!;
+                return (
+                  <div className="intervention-comparison-summary">
+                    <div className="intervention-comparison-row">
+                      <span>発火回数</span>
+                      <span>{formatCount(funnel.triggeredCount)}</span>
+                    </div>
+                    <div className="intervention-comparison-row">
+                      <span>対象agent数 / group数</span>
+                      <span>
+                        {formatCount(funnel.targetedAgentCount)} / {formatCount(funnel.targetedGroupCount)}
+                      </span>
+                    </div>
+                    <div className="intervention-comparison-row">
+                      <span>効果期間中に接近開始</span>
+                      <span>{formatCount(funnel.approachedDuringEffectCount)}</span>
+                    </div>
+                    <div className="intervention-comparison-row">
+                      <span>効果期間中の接近から所属</span>
+                      <span>{formatCount(funnel.assistedJoinCount)}</span>
+                    </div>
+                    <div className="intervention-comparison-row">
+                      <span>接近後に満員化等で失敗</span>
+                      <span>{formatCount(funnel.failedAfterApproachCount)}</span>
+                    </div>
+                    <div className="intervention-comparison-row">
+                      <span>発火したが接近も所属も無し</span>
+                      <span>{formatCount(funnel.noActionCount)}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+            </section>
+          )}
 
           {randomResult && (
             <section className="group-formation-random-baseline">
