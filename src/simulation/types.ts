@@ -809,6 +809,38 @@ export type ObserverJoinerInspection = {
   approachTargetGroupId?: string;
   /** Issue #135: joined/forming/approachingの場合に所属・対象となっている候補ID */
   currentGroupId?: string;
+  /**
+   * Issue #178: `currentGroupId`が指す候補の現在の状態。standingPartyでは合流後もこの値が
+   * "confirmed"のまま変動人数で維持され続けるため、Inspectorで「成立して固定されたグループ」に
+   * 見せないための材料として使う(nearestGroupStatusは最寄りの合流可能候補のものであり、
+   * 必ずしも現在の所属先と同一とは限らないため別フィールドとして持たせる)。
+   */
+  currentGroupStatus?: GroupCandidateStatus;
+  /** Issue #178: `currentGroupId`が指す候補の現在member数 */
+  currentGroupMemberCount?: number;
+  /**
+   * Issue #178: `currentGroupId`が指す候補が、成立最小人数へ実際に到達したことがあるか
+   * (`GroupCandidate.everConfirmed`)。standingParty以外・未所属時はundefined。
+   */
+  currentGroupEverConfirmed?: boolean;
+  /** Issue #178: `currentGroupId`が指す候補の成立最小人数(`FormationPolicy.resolveGroupCapacity`) */
+  currentGroupMinSize?: number;
+  /**
+   * Issue #178 (責務9): 現在`joined`の輪へ合流したtick(`Agent.clusterJoinedAtTick`)。
+   * 未所属、またはそもそも一度も合流していない場合はundefined。
+   */
+  clusterJoinedAtTick?: number;
+  /** Issue #178: `clusterJoinedAtTick`からの経過tick数(=現在の輪での滞在tick)。未所属ならundefined */
+  ticksInCurrentCluster?: number;
+  /**
+   * Issue #178 (責務9): 直前に(会場退出ではなく)輪自体を離脱した候補ID(`Agent.lastDepartedClusterId`)。
+   * standingParty以外では常にundefined(受入条件: 既存シナリオへ暫定離脱ルール由来の表示が混入しない)。
+   */
+  lastDepartedClusterId?: string;
+  /** Issue #178: `lastDepartedClusterId`が記録されたtick */
+  lastDepartedClusterAtTick?: number;
+  /** Issue #178: 合流→離脱→再探索の累計回数(`Agent.clusterDepartureCount`、未発生なら0) */
+  clusterDepartureCount: number;
   /** Issue #135: `approachTargetInvalidated`/`joinFailedCapacity`の発生回数 */
   joinFailureCount: number;
   /** Issue #135: 最新の参加失敗理由と発生tick。未発生ならundefined */

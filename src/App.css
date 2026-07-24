@@ -550,6 +550,14 @@
   stroke-dasharray: none;
 }
 
+/*
+ * Issue #178: standingPartyの成立済み輪は責務10により人数変動・解散し得るため、二次会の
+ * (不変の)確定グループと同じ実線リングにせず、破線を残して「まだ動きうる」ことを示す。
+ */
+.candidate-ring.confirmed.mutable {
+  stroke-dasharray: 3 3;
+}
+
 .candidate-ring.dissolving {
   fill: rgba(156, 163, 175, 0.05);
   stroke: rgba(156, 163, 175, 0.5);
@@ -636,6 +644,13 @@
   stroke-width: 3;
 }
 
+/* Issue #178: standingPartyで、直前に輪を離脱して再探索クールダウン中のagentを区別する */
+.agent-dot.post-cluster-departure {
+  stroke: #fde047;
+  stroke-width: 2.5;
+  stroke-dasharray: 2 2;
+}
+
 .agent-label {
   fill: #cbd5e1;
   font-size: 10px;
@@ -654,6 +669,14 @@
 
 .agent-status-label.unassigned {
   fill: #f9a8d4;
+}
+
+.agent-status-label.post-cluster-departure {
+  fill: #fde047;
+}
+
+.standing-party-capacity-label {
+  fill: #86efac;
 }
 
 .canvas-group-status {

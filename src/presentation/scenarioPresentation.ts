@@ -117,6 +117,13 @@ export type ScenarioPresentation = {
     joinFailureFilter: string;
     leaveFilter: string;
     showLeaveFilter: boolean;
+    /**
+     * Issue #178: 合流済みクラスタからの離脱・再探索・再参加・人数変動(`clusterDeparture`/
+     * `groupLifecycle`タグ)のみを絞り込むフィルタのラベル。standingParty以外では参照されない。
+     */
+    clusterDepartureFilter: string;
+    /** Issue #178: `clusterDepartureFilter`を表示するか。standingPartyのみtrue */
+    showClusterDepartureFilter: boolean;
   };
 };
 
@@ -467,6 +474,8 @@ export const AFTER_PARTY_PRESENTATION: ScenarioPresentation = {
     joinFailureFilter: "参加失敗・再探索のみ",
     leaveFilter: "離脱イベントのみ",
     showLeaveFilter: true,
+    clusterDepartureFilter: "クラスタ離脱・再探索のみ",
+    showClusterDepartureFilter: false,
   },
 };
 
@@ -554,6 +563,8 @@ export const CLASSROOM_PRESENTATION: ScenarioPresentation = {
     joinFailureFilter: "組み合わせ失敗・再探索のみ",
     leaveFilter: "待機移行イベントのみ",
     showLeaveFilter: false,
+    clusterDepartureFilter: "クラスタ離脱・再探索のみ",
+    showClusterDepartureFilter: false,
   },
 };
 
@@ -709,7 +720,7 @@ export const STANDING_PARTY_PRESENTATION: ScenarioPresentation = {
       { color: "#a855f7", label: "purple: 自分から話しかけ始めた人・核を作っている人" },
       { color: "#f97316", label: "orange: observerJoiner型(注目対象)" },
     ],
-    note: "円が大きいほど自分から話しかけ始めやすい人です。オレンジの太枠は observerJoiner 型(輪に入りたいが自分の意思で場を動かしたくない人)を示します。",
+    note: "円が大きいほど自分から話しかけ始めやすい人です。オレンジの太枠は observerJoiner 型(輪に入りたいが自分の意思で場を動かしたくない人)を示します。会話の輪の枠が点滅ぎみの点線(mutable)の場合は、成立後も人数が増減しうる輪であることを示します。灰色の円に黄色の細枠が付いている場合は、直前に輪を離脱して再探索中(別の輪へすぐには合流し直さない期間)であることを示します。",
   },
   summary: {
     joinedCount: "参加人数",
@@ -745,6 +756,10 @@ export const STANDING_PARTY_PRESENTATION: ScenarioPresentation = {
     joinFailureFilter: "参加失敗・再探索のみ",
     leaveFilter: "離脱イベントのみ",
     showLeaveFilter: true,
+    // Issue #178: 輪からの離脱・再探索・再参加・人数変動による縮小/解散(#176/#177)は
+    // 「会場からの退出」(leaveFilter)とは別に絞り込めるようにする。
+    clusterDepartureFilter: "輪の離脱・再探索・人数変動のみ",
+    showClusterDepartureFilter: true,
   },
 };
 
@@ -867,6 +882,8 @@ export function resolveClassroomPresentation(groupSize: GroupSizeRule): Scenario
       joinFailureFilter: base.eventLog.joinFailureFilter,
       leaveFilter: base.eventLog.leaveFilter,
       showLeaveFilter: base.eventLog.showLeaveFilter,
+      clusterDepartureFilter: base.eventLog.clusterDepartureFilter,
+      showClusterDepartureFilter: base.eventLog.showClusterDepartureFilter,
     },
   };
 }

@@ -19,6 +19,7 @@ type FilterKey =
   | "joinFailure"
   | "unassigned"
   | "leave"
+  | "clusterDeparture"
   | "speech"
   | "speechEffect"
   | "divergence"
@@ -27,8 +28,8 @@ type FilterKey =
 
 function filtersForPresentation(
   presentation: ScenarioPresentation,
-): Array<{ key: FilterKey; label: string; tag?: LogTag }> {
-  const filters: Array<{ key: FilterKey; label: string; tag?: LogTag }> = [
+): Array<{ key: FilterKey; label: string; tag?: LogTag; tags?: LogTag[] }> {
+  const filters: Array<{ key: FilterKey; label: string; tag?: LogTag; tags?: LogTag[] }> = [
     { key: "all", label: "全ログ" },
     {
       key: "observerJoiner",
@@ -47,6 +48,16 @@ function filtersForPresentation(
   ];
   if (presentation.eventLog.showLeaveFilter) {
     filters.splice(6, 0, { key: "leave", label: presentation.eventLog.leaveFilter, tag: "leave" });
+  }
+  // Issue #178: 立食パーティーの輪離脱・再探索・人数変動(clusterDeparture/groupLifecycleタグ)を
+  // 既存フィルタを増殖させずに1つの選択肢へまとめて絞り込めるようにする。standingParty以外では
+  // 表示しない(既存シナリオのフィルタ一覧に変化がないことを保つ)。
+  if (presentation.eventLog.showClusterDepartureFilter) {
+    filters.splice(7, 0, {
+      key: "clusterDeparture",
+      label: presentation.eventLog.clusterDepartureFilter,
+      tags: ["clusterDeparture", "groupLifecycle"],
+    });
   }
   return filters;
 }
@@ -196,7 +207,11 @@ export function EventLog({
     [state, labelById, presentation, seed, presetId],
   );
 
-  const activeTag = filters.find((f) => f.key === filter)?.tag;
+  const activeFilter = filters.find((f) => f.key === filter);
+  const activeTags = useMemo(
+    () => activeFilter?.tags ?? (activeFilter?.tag !== undefined ? [activeFilter.tag] : undefined),
+    [activeFilter],
+  );
   const filteredRows = useMemo(() => {
     if (filter === "all") return timeline;
     if (filter === "speech") return timeline.filter((row) => row.kind === "speech");
@@ -206,8 +221,10 @@ export function EventLog({
     if (filter === "divergence") return timeline.filter((row) => row.kind === "divergence");
     if (filter === "trust") return timeline.filter((row) => row.kind === "trustUpdate");
     if (filter === "tie") return timeline.filter((row) => row.kind === "tieUpdate");
-    return timeline.filter((row) => row.kind === "state" && activeTag !== undefined && row.tags.includes(activeTag));
-  }, [timeline, filter, activeTag]);
+    return timeline.filter(
+      (row) => row.kind === "state" && activeTags !== undefined && row.tags.some((t) => activeTags.includes(t)),
+    );
+  }, [timeline, filter, activeTags]);
 
   const isTruncated = !showAllRows && filteredRows.length > ROW_DISPLAY_LIMIT;
   const visibleRows = isTruncated ? filteredRows.slice(-ROW_DISPLAY_LIMIT) : filteredRows;
