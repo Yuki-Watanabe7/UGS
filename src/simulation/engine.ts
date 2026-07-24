@@ -7,6 +7,7 @@ import type {
   SimParams,
   SimulationEventMetadata,
   SimulationEventType,
+  SimulationFinishReason,
   SimulationState,
 } from "./types";
 import type { InterventionRuntimeOptions, InterventionScenarioId, SchoolInterventionHook } from "./interventions";
@@ -129,6 +130,12 @@ export function createInitialState(
   speechTrust?: Partial<SpeechTrustConfig>,
   relationshipTie?: Partial<RelationshipTieConfig>,
   formation?: FormationRuntimeOptions,
+  /**
+   * Issue #175: 意味論的な自然終了を持たないシナリオ(`standingParty`)向けの、観測期間の上限tick
+   * (observation horizon)。省略時は上限なし(対話的UI実行を想定、手動のpause/resume/resetのみで
+   * 実行を制御する)。詳細は`SimulationState.observationHorizonTick`のコメント参照。
+   */
+  observationHorizonTick?: number,
 ): SimulationState {
   const scenario = resolveInterventionScenario(intervention);
   const formationPolicy = resolveFormationPolicy(formation);
@@ -248,6 +255,7 @@ export function createInitialState(
     formationScenarioId: formationPolicy.id,
     formationDeadlineTick: formation?.formationDeadlineTick,
     formationClassroomGroupSize: formation?.classroomGroupSize,
+    observationHorizonTick,
     interventionRuntimeState,
     activeInterventionEffects: initialInterventionEffects,
     speechLog: [],
@@ -712,8 +720,14 @@ export function stepSimulation(
   speechTrust?: Partial<SpeechTrustConfig>,
   relationshipTie?: Partial<RelationshipTieConfig>,
   formation?: FormationRuntimeOptions,
+  /** Issue #175: `createInitialState`と同じ観測期間の上限tick。未指定時は直前のstateから引き継ぐ */
+  observationHorizonTick?: number,
 ): SimulationState {
   if (state.finished) return state;
+
+  // Issue #175: interventionId/formationScenarioIdと同じfall backパターンで、呼び出し側が
+  // このtickで渡し忘れても直前のstateに記録済みの観測期間上限が消えないようにする。
+  const resolvedObservationHorizonTick = observationHorizonTick ?? state.observationHorizonTick;
 
   // 呼び出し側がこのtickでinterventionを渡し忘れても、createInitialStateから続く
   // 介入設定が消えないよう、未指定時は直前のstateに記録済みのシナリオへfall backする。
@@ -1345,7 +1359,14 @@ export function stepSimulation(
 
   // Issue #134: boolだけでなく終了理由も同じpolicy境界から受け取り、終了イベントへ構造化して残す。
   // `allAssigned`はdeadlineと同一tickに成立した場合も優先される(classroomPairPolicy側の判定順)。
-  const finishReason = formationPolicy.finishReason(agents, tick);
+  const semanticFinishReason = formationPolicy.finishReason(agents, tick);
+  // Issue #175: FormationPolicyが意味論的な自然終了(semantic finish)を一度も返さないまま
+  // observation horizonに達した場合だけ、独立した理由("observationHorizonReached")として扱う。
+  // semantic finishが既に成立していれば、こちらは一切参照しない(常にsemantic finishを優先する)。
+  const observationHorizonReached =
+    resolvedObservationHorizonTick !== undefined && tick >= resolvedObservationHorizonTick;
+  const finishReason: SimulationFinishReason | undefined =
+    semanticFinishReason ?? (observationHorizonReached ? "observationHorizonReached" : undefined);
   const finished = finishReason !== undefined;
 
   if (finished && !state.finished) {
@@ -1389,10 +1410,15 @@ export function stepSimulation(
 
     const assignedCount = agents.filter((a) => a.state === "joined").length;
     const unassignedCount = agents.filter((a) => a.state === "unassigned").length;
+    // Issue #175: observation horizon到達は「社会過程が終わった」ことを意味しないため、
+    // 「グループ形成が完了した」「全員の行動が確定した」等と誤解されない文言にする
+    // (受入条件: horizon到達と既存シナリオの自然終了を表示から区別できる)。
     const finishedMessage =
-      formationPolicy.id === "classroomPair"
-        ? `シミュレーション終了: ペア成立${assignedCount}人 / 未割当${unassignedCount}人 / 終了理由: ${finishReason}`
-        : `シミュレーション終了: 参加${assignedCount}人 / 帰宅${agents.filter((a) => a.state === "left").length}人`;
+      finishReason === "observationHorizonReached"
+        ? `観測期間の上限(tick ${tick})に達したため記録を打ち切った: 現在所属${assignedCount}人 / 帰宅${agents.filter((a) => a.state === "left").length}人 (会場の交流はここで終わったわけではない)`
+        : formationPolicy.id === "classroomPair"
+          ? `シミュレーション終了: ペア成立${assignedCount}人 / 未割当${unassignedCount}人 / 終了理由: ${finishReason}`
+          : `シミュレーション終了: 参加${assignedCount}人 / 帰宅${agents.filter((a) => a.state === "left").length}人`;
     pushLog(log, tick, finishedMessage, ["simulation"], "simulationFinished", {
       assignedCount,
       unassignedCount,
@@ -1413,6 +1439,7 @@ export function stepSimulation(
     formationScenarioId: formationPolicy.id,
     formationDeadlineTick: resolvedFormation?.formationDeadlineTick,
     formationClassroomGroupSize: resolvedFormation?.classroomGroupSize,
+    observationHorizonTick: resolvedObservationHorizonTick,
     interventionRuntimeState,
     activeInterventionEffects: [...activeInterventionEffects, ...newInterventionEffects],
     speechLog: [],

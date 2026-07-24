@@ -35,6 +35,9 @@ const FINISH_REASON_LABEL: Record<SimulationFinishReason, string> = {
   deadlineReached: "締切到達",
   allSettled: "全員決着済み",
   maxTicksReached: "最大tick到達",
+  // Issue #175: 観測期間の上限到達による打ち切り。「社会過程が終わった」という意味を含む
+  // 他の終了理由と混同されないよう、あえて異なる言い回しにする(受入条件)。
+  observationHorizonReached: "観測期間の上限到達(打ち切り)",
 };
 
 const NOT_OCCURRED = "未発生";

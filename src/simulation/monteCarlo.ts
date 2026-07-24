@@ -20,6 +20,12 @@ import { buildPairFormationRunSummary, summarizePairFormationRuns } from "./pair
  * Monte Carlo層としての安全上限tick数。engine.ts内部の`tick >= 400`終了とは独立に持たせ、
  * 将来engine側の上限が変わっても`runSimulationToEnd`が無限ループしないようにするための保険。
  * `speechEffectsMonteCarlo.ts`のpaired比較も同じ上限を使う(受入条件: 既存Monte Carlo運用に合わせる)。
+ *
+ * Issue #175: `standingParty`のように意味論的な自然終了を持たないシナリオでは、この値が
+ * `engine.ts`の観測期間の上限(`observationHorizonTick`)としてそのまま使われ、`finished: true`・
+ * `finishReason: "observationHorizonReached"`で明示的に打ち切られる(受入条件: 非対話実行は
+ * 有限horizonで必ず停止し、無限loopにならない。かつ、既存シナリオ側は通常この値に到達する前に
+ * 自らの自然終了で先に停止するため、既存挙動には影響しない)。
  */
 export const DEFAULT_MAX_TICKS = 1000;
 
@@ -41,9 +47,32 @@ export function runSimulationToEnd(
   const formation = options?.formation;
   const rng = new SeededRandom(seed);
 
-  let state = createInitialState(seed, params, intervention, speechEffects, undefined, undefined, undefined, formation);
+  // Issue #175: maxTicksをそのままengine.tsの観測期間上限としても渡す。formationPolicyが自然終了を
+  // 返すシナリオ(afterParty/classroomPair)ではこちらに到達する前に自然終了するため既存挙動は不変。
+  let state = createInitialState(
+    seed,
+    params,
+    intervention,
+    speechEffects,
+    undefined,
+    undefined,
+    undefined,
+    formation,
+    maxTicks,
+  );
   while (!state.finished && state.tick < maxTicks) {
-    state = stepSimulation(state, params, rng, intervention, speechEffects, undefined, undefined, undefined, formation);
+    state = stepSimulation(
+      state,
+      params,
+      rng,
+      intervention,
+      speechEffects,
+      undefined,
+      undefined,
+      undefined,
+      formation,
+      maxTicks,
+    );
   }
 
   const summary = buildSimulationSummary(state);

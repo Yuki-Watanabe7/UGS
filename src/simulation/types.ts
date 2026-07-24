@@ -111,12 +111,24 @@ export type Agent = {
  */
 export type ApproachFailureReason = "capacityFull" | "groupDissolved" | "groupExpired" | "groupMissing";
 
-/** `simulationFinished`イベントに保持する、シナリオ全体の終了理由 */
+/**
+ * `simulationFinished`イベントに保持する、シナリオ全体の終了理由。
+ * `allAssigned`/`deadlineReached`/`allSettled`/`maxTicksReached`は、いずれも`FormationPolicy`が
+ * 判定する**意味論的な自然終了**(semantic finish、社会過程そのものが終わったこと)を表す。
+ * `observationHorizonReached`(Issue #175)はこれらとは独立した軸で、`FormationPolicy`が
+ * 自然終了を持たない/まだ判定していない状態のまま、呼び出し側が明示した観測期間の上限tick
+ * (`SimulationState.observationHorizonTick`)に達したことだけを表す。「社会過程が終わった」という
+ * 意味づけを一切含まない(バッチ実行・テスト・Monte Carloが有限時間で必ず停止するための、観測側の
+ * 都合による打ち切り)。立食パーティー(`standingParty`)は`FormationPolicy.isFinished`/`finishReason`が
+ * 常に自然終了しない(全員所属・全クラスタ成立・クラスタ0件のいずれでも終了しない)ため、
+ * バッチ実行時はこの理由でのみ終了する。
+ */
 export type SimulationFinishReason =
   | "allAssigned"
   | "deadlineReached"
   | "allSettled"
-  | "maxTicksReached";
+  | "maxTicksReached"
+  | "observationHorizonReached";
 
 /**
  * GroupCandidateのライフサイクル状態。
@@ -446,6 +458,18 @@ export type SimulationState = {
    * `DEFAULT_CLASSROOM_PAIR_GROUP_SIZE`(`formationPolicy.ts`、2人固定)が使われる。
    */
   formationClassroomGroupSize?: GroupSizeRule;
+  /**
+   * Issue #175: 意味論的な自然終了(semantic finish)を持たないシナリオ(`standingParty`)向けに、
+   * バッチ実行・テスト・Monte Carlo等の非対話実行が有限tickで必ず停止できるようにする観測期間の
+   * 上限tick(observation horizon)。`formationPolicy.finishReason`が一度も自然終了を返さないまま
+   * このtickに到達すると、`stepSimulation`は`finished: true`・`finishReason:
+   * "observationHorizonReached"`として終了する(`FormationPolicy`が既に自然終了を返している場合は
+   * そちらを優先する)。`formationDeadlineTick`と同じfall backパターン(呼び出し側が引き継ぎ忘れても
+   * 直前の設定を維持する)で扱う。未指定(既存の対話的UI実行を含む)では上限自体が存在せず、
+   * 手動のpause/resume/resetのみで実行を制御する(意味論的な自然終了を持つ`afterParty`/
+   * `classroomPair`では通常到達しない安全網としても働く)。
+   */
+  observationHorizonTick?: number;
   /**
    * エージェントが実際に行った発言(`SpeechEvent`、`speech.ts`参照)の時系列記録。Phase 2で追加。
    * `log`(検証可能な出来事の記録)とは別軸で、「誰が何を発言したか」だけを構造化して保持する。
