@@ -93,6 +93,23 @@ export type Agent = {
   /** Issue #133: そのうち、満員(容量起因)が理由だった回数の累計 */
   capacityFailureCount?: number;
   /**
+   * Issue #176: 現在の`joinedGroupId`が指すクラスタへ最後に合流(参加)したtick。
+   * 責務9(`evaluateClusterDeparture`)が参照する「滞在tick」の起点として使う。
+   * `joined`以外の状態では意味を持たず、離脱・所属先喪失時にはクリアされる。
+   */
+  clusterJoinedAtTick?: number;
+  /**
+   * Issue #176: 直近で(会場退出ではなく)会話クラスタ自体を離脱した候補ID。
+   * Issue #133の`lastFailedCandidateId`(合流前の参加失敗)とは意味が異なるため独立したフィールドとして
+   * 持たせる(受入条件: 検索失敗用の既存フィールドと意味が衝突しない)。再探索時、この候補への
+   * 即時再接近を避けるクールダウン判定に使う(`lastDepartedClusterAtTick`からの経過tickで判定)。
+   */
+  lastDepartedClusterId?: string;
+  /** Issue #176: `lastDepartedClusterId`が記録されたtick(クールダウン判定の起点) */
+  lastDepartedClusterAtTick?: number;
+  /** Issue #176: `joined`から会話クラスタ離脱により`undecided`へ戻り、再探索した回数の累計 */
+  clusterDepartureCount?: number;
+  /**
    * Issue #136: このrunを通じて`stress`が到達した最大値。Phase 3の"greet"由来効果はstressを
    * 一時的に引き下げ得る(engine.tsのstress蓄積式参照)ため、最終的な`stress`だけでは
    * 「一番つらかった瞬間」の負荷を観察できない。`stress`が変化する箇所(通常のstress蓄積、
@@ -110,6 +127,15 @@ export type Agent = {
  * - "groupMissing": 候補自体が見当たらなくなった(通常は上記いずれかより先に検知されるため稀)
  */
 export type ApproachFailureReason = "capacityFull" | "groupDissolved" | "groupExpired" | "groupMissing";
+
+/**
+ * Issue #176: `clusterDepartureStarted`/`clusterDepartureCompleted`の`metadata.departureReason`に
+ * 保持する、離脱理由の構造化コード。表示文言の文字列解析に依存せず後続の集計・Phase 2への
+ * 交換判定ができるようにする。現時点では`formationPolicy.ts`の暫定ルール(責務9)由来の
+ * 1種類のみが存在する。
+ * - "provisionalStayDuration": Phase 1の暫定ルール(一定滞在tick超過後の固定確率抽選)による離脱
+ */
+export type ClusterDepartureReason = "provisionalStayDuration";
 
 /**
  * `simulationFinished`イベントに保持する、シナリオ全体の終了理由。
@@ -185,7 +211,12 @@ export type LogTag =
   /** Issue #134: 学校シナリオの締切で未割当が確定したイベント */
   | "unassigned"
   /** Issue #133: 接近先の無効化・参加失敗・再探索に関するイベント */
-  | "joinFailure";
+  | "joinFailure"
+  /**
+   * Issue #176: 合流済みクラスタからの離脱・再探索・再参加に関するイベント。「会場からの退出」
+   * (既存の`leave`タグ)とは意味を分ける(受入条件: クラスタ離脱と会場退出をログ/タグから区別できる)。
+   */
+  | "clusterDeparture";
 
 /**
  * 集計(終了サマリー/Monte Carlo)向けのイベント種別。
@@ -264,7 +295,23 @@ export type SimulationEventType =
   /** Issue #159: `random-assignment-baseline`。ランダム割当により1つの班(confirmed)を作成した */
   | "randomGroupCreated"
   /** Issue #159: `random-assignment-baseline`。ランダム割当処理が完了した(全体の集計をmetadataへ持つ) */
-  | "randomAssignmentCompleted";
+  | "randomAssignmentCompleted"
+  /**
+   * Issue #176: 責務9(`evaluateClusterDeparture`)によりjoined状態のagentが会話クラスタからの
+   * 離脱を開始した(candidate.memberIdsからはまだ除去していない時点)。Phase 1では
+   * `clusterDepartureCompleted`と同一tickで発生する(離脱そのものが多tickにまたがる遷移を
+   * 持たないため)が、将来multi-tick化されても開始/完了を区別できるよう別イベントとして分けている。
+   */
+  | "clusterDepartureStarted"
+  /** Issue #176: 上記の離脱が完了した(candidate.memberIdsから除去し、agentがundecidedへ戻った) */
+  | "clusterDepartureCompleted"
+  /** Issue #176: クラスタ離脱が完了し、再探索状態(undecided)に戻ったことを明示する */
+  | "clusterResearchStarted"
+  /**
+   * Issue #176: 一度でもクラスタ離脱したことのあるagentが、新たに(同じクラスタ・別クラスタの
+   * いずれでも)合流した。`metadata.previousClusterId`で離脱元、`metadata.groupId`で合流先を持つ。
+   */
+  | "clusterRejoined";
 
 /**
  * Issue #156: `schoolInterventionTriggered`の`metadata.outcome`。表示文言の解析に依存しない結果分類。
@@ -376,6 +423,17 @@ export type SimulationEventMetadata = {
    * 容量制約上どうしても割当不可能だった構造的な余り人数
    */
   structuralUnassignedCount?: number;
+  /**
+   * Issue #176: `clusterDepartureStarted`/`clusterDepartureCompleted`用。この時点までクラスタに
+   * 留まっていたtick数(責務9の`ClusterDepartureContext.ticksInCluster`のスナップショット)
+   */
+  ticksInCluster?: number;
+  /** Issue #176: `clusterDepartureStarted`/`clusterDepartureCompleted`用。離脱理由の構造化コード */
+  departureReason?: ClusterDepartureReason;
+  /** Issue #176: `clusterRejoined`用。離脱元のクラスタID(`agent.lastDepartedClusterId`) */
+  previousClusterId?: string;
+  /** Issue #176: `clusterRejoined`用。離脱してから今回の合流までに経過したtick数 */
+  ticksSinceDeparture?: number;
 };
 
 export type LogEntry = {

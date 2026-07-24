@@ -252,6 +252,21 @@ describe("afterPartyPolicy.resolveGroupCapacity (責務6: 容量制約, Issue #1
   });
 });
 
+describe("afterPartyPolicy.evaluateClusterDeparture (責務9: クラスタ離脱判定, Issue #176)", () => {
+  it("always returns ineligible with probability 0, regardless of ticksInCluster (受入条件: 既存挙動に回帰がない)", () => {
+    const agent = makeAgent({ state: "joined" });
+    const candidate: GroupCandidate = { id: "group-1", x: 0, y: 0, memberIds: [agent.id], status: "confirmed", age: 0 };
+    for (const ticksInCluster of [0, 1, 14, 15, 16, 1000]) {
+      const decision = afterPartyPolicy.evaluateClusterDeparture(agent, candidate, {
+        ticksInCluster,
+        memberCount: candidate.memberIds.length,
+        tick: 100,
+      });
+      expect(decision).toEqual({ eligible: false, probability: 0 });
+    }
+  });
+});
+
 describe("afterPartyPolicy.computeJoinFailureStressIncrement (責務8: 参加失敗stress, Issue #133)", () => {
   it("満員(capacityFull)が理由の場合のみ正のstress増分を返す", () => {
     const agent = makeAgent({ willingness: 0.8 });
@@ -349,6 +364,44 @@ describe("standingPartyPolicy (Issue #174, Phase 1)", () => {
     expect(standingPartyPolicy.isFinished([], 3)).toBe(false);
     expect(standingPartyPolicy.finishReason([], 3)).toBeUndefined();
   });
+
+  describe("evaluateClusterDeparture (責務9: クラスタ離脱判定, Issue #176)", () => {
+    const agent = makeAgent({ state: "joined" });
+    const candidate: GroupCandidate = { id: "group-1", x: 0, y: 0, memberIds: [agent.id], status: "confirmed", age: 0 };
+
+    it("is ineligible below the provisional minimum stay duration (暫定ルール: 最低滞在tick未満)", () => {
+      for (const ticksInCluster of [0, 1, 5, 14]) {
+        const decision = standingPartyPolicy.evaluateClusterDeparture(agent, candidate, {
+          ticksInCluster,
+          memberCount: 1,
+          tick: 100,
+        });
+        expect(decision).toEqual({ eligible: false, probability: 0 });
+      }
+    });
+
+    it("becomes eligible with a fixed provisional probability at/after the minimum stay duration", () => {
+      for (const ticksInCluster of [15, 16, 100, 10_000]) {
+        const decision = standingPartyPolicy.evaluateClusterDeparture(agent, candidate, {
+          ticksInCluster,
+          memberCount: 1,
+          tick: 100,
+        });
+        expect(decision.eligible).toBe(true);
+        expect(decision.probability).toBeGreaterThan(0);
+        expect(decision.probability).toBeLessThan(1);
+      }
+    });
+
+    it("does not depend on agent personality traits (暫定ルール: agent特性の現実的解釈を先取りしない)", () => {
+      const observerJoiner = makeAgent({ id: "b", state: "joined", isObserverJoiner: true, willingness: 0.01, conformity: 0.01 });
+      const eager = makeAgent({ id: "c", state: "joined", isObserverJoiner: false, willingness: 0.99, conformity: 0.99 });
+      const ctx = { ticksInCluster: 50, memberCount: 1, tick: 100 };
+      expect(standingPartyPolicy.evaluateClusterDeparture(observerJoiner, candidate, ctx)).toEqual(
+        standingPartyPolicy.evaluateClusterDeparture(eager, candidate, ctx),
+      );
+    });
+  });
 });
 
 describe("classroomPairPolicy (Issue #132, Phase 2)", () => {
@@ -411,6 +464,18 @@ describe("classroomPairPolicy (Issue #132, Phase 2)", () => {
       const agent = makeAgent({ leaveThreshold: 0.1 });
       expect(classroomPolicy.canLeave(agent, 1, 0)).toBe(false);
       expect(classroomPolicy.canLeave(agent, 0, 1)).toBe(false);
+    });
+  });
+
+  describe("evaluateClusterDeparture (責務9, Issue #176 受入条件: 学校シナリオでは引き続き離脱が発生しない)", () => {
+    it("is always ineligible regardless of ticksInCluster", () => {
+      const agent = makeAgent({ state: "joined" });
+      const candidate: GroupCandidate = { id: "pair-1", x: 0, y: 0, memberIds: [agent.id], status: "confirmed", age: 0 };
+      for (const ticksInCluster of [0, 15, 1000]) {
+        expect(
+          classroomPolicy.evaluateClusterDeparture(agent, candidate, { ticksInCluster, memberCount: 1, tick: 100 }),
+        ).toEqual({ eligible: false, probability: 0 });
+      }
     });
   });
 
