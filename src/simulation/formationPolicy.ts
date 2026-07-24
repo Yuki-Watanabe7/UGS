@@ -48,6 +48,12 @@ import { clamp, distance } from "./model";
  * 黙示的なエイリアスではなく、`id: "standingParty"`を持つ独立した`FormationPolicy`実装であり、
  * 後続IssueがADRの責務9/10だけを追加すれば済むよう、意図的に明示している(受入条件: 未実装の後続機能を
  * afterPartyの挙動へ黙ってaliasしない)。
+ *
+ * Issue #175 (Phase 1): 上記の形成力学(責務1〜4/6〜8)はafterPartyと共有する一方、責務5(終了条件)は
+ * 共有しない。立食パーティーは意味論的な自然終了を持たない(全員所属・全クラスタ成立・クラスタ0件の
+ * いずれでも終了しない)ため、`standingPartyPolicy.isFinished`/`finishReason`は常に「自然終了しない」を
+ * 返す。終了はengine.tsが判定するobservation horizon(`SimulationState.observationHorizonTick`、
+ * バッチ実行・テスト・Monte Carlo向け)、またはUIのpause/resume/reset(manual control)のみが担う。
  */
 export type FormationScenarioId = "afterParty" | "classroomPair" | "standingParty";
 
@@ -361,15 +367,22 @@ export const afterPartyPolicy: FormationPolicy = {
 //
 // Phase 1時点では、複数の会話の輪が並行して形成される様子(核形成・接近・成立・未成立候補の解散/
 // 期限切れ)をafterPartyと同じ力学でそのまま表現する。会話クラスタからの離脱・再参加・縮小/再形成
-// (ADRの責務9/10)は後続Issueの対象であり、本Issueでは意図的に実装しない(対象外: 終了しないtick
-// ループの完成、離脱・再参加ロジック、成立済みクラスタの縮小・解散)。そのため`canLeave`到達後の
-// `leaving`は「会話の輪を諦めて会場を出る」を表し、`isFinished`もafterPartyと同じ安全上限
-// (`MAX_SIMULATION_TICKS`)付きの`allSettled`判定を暫定的に踏襲する。
-
-function standingPartyFinishReason(agents: Agent[], tick: number): SimulationFinishReason | undefined {
-  const allSettled = agents.every((a) => a.state === "joined" || a.state === "left");
-  if (allSettled) return "allSettled";
-  if (tick >= MAX_SIMULATION_TICKS) return "maxTicksReached";
+// (ADRの責務9/10)は後続Issueの対象であり、本Issueでは意図的に実装しない(対象外: 離脱・再参加ロジック、
+// 成立済みクラスタの縮小・解散)。そのため`canLeave`到達後の`leaving`は「会話の輪を諦めて会場を出る」
+// を表す。
+//
+// Issue #175 (Phase 1): 立食パーティーは意味論的な自然終了(semantic finish)を持たない
+// ―― 全員がいずれかの会話の輪へ所属しても、輪が0件になっても、すべての輪が成立状態になっても、
+// それ自体では終了しない(受入条件)。責務9/10がまだ実装されていない現時点でも、`isFinished`/
+// `finishReason`をafterPartyの`allSettled`/`MAX_SIMULATION_TICKS`セーフガードへ暫定的に寄せてしまうと、
+// 「会話の輪へ所属し終えた」ことが「立食パーティーという社会過程が終わった」ことを意味してしまい、
+// 本Issueが導入する契約(継続実行・observation horizon・manual controlの分離)と矛盾する。
+// したがって`standingPartyPolicy`は常に「自然終了しない」を返し、終了は
+// (a) 呼び出し側が明示するobservation horizon(`SimulationState.observationHorizonTick`、
+// `engine.ts`のstepSimulationが判定し`finishReason: "observationHorizonReached"`として記録する。
+// バッチ実行・テスト・Monte Carlo向け)、または (b) UIのpause/resume/reset(manual control)の
+// いずれかでのみ制御される。
+function standingPartyFinishReason(_agents: Agent[], _tick: number): SimulationFinishReason | undefined {
   return undefined;
 }
 

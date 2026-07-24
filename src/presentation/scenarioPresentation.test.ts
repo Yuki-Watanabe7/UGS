@@ -256,6 +256,11 @@ describe("scenario presentation: standing party rendering audit (Issue #174)", (
     const preset = getPresetById("standing-party");
     const seed = 12345;
     const formation = { scenarioId: "standingParty" as const };
+    // Issue #175: standingPartyは意味論的な自然終了を持たないため、監査用のスナップショットを
+    // 決定的に取得するには明示的なobservation horizonが必要(受入条件: 全員所属/全クラスタ成立でも
+    // 自動終了しない。ここでの終了は`observationHorizonReached`によるものであり、
+    // 「立食パーティーという社会過程が終わった」ことを意味しない)。
+    const observationHorizonTick = 500;
     const rng = new SeededRandom(seed);
     let state = createInitialState(
       seed,
@@ -266,8 +271,9 @@ describe("scenario presentation: standing party rendering audit (Issue #174)", (
       { enabled: true },
       { enabled: true },
       formation,
+      observationHorizonTick,
     );
-    while (!state.finished && state.tick < 500) {
+    while (!state.finished) {
       state = stepSimulation(
         state,
         preset.params,
@@ -278,6 +284,7 @@ describe("scenario presentation: standing party rendering audit (Issue #174)", (
         undefined,
         undefined,
         formation,
+        observationHorizonTick,
       );
       // 受入条件: 初期化後と複数tick更新後でformationScenarioId === "standingParty"が維持される
       expect(state.formationScenarioId).toBe("standingParty");

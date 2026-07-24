@@ -331,15 +331,23 @@ describe("standingPartyPolicy (Issue #174, Phase 1)", () => {
     );
   });
 
-  it("isFinished/finishReason mirrors afterParty's allSettled/maxTicksReached semantics (provisional Phase 1 termination)", () => {
+  it("isFinished/finishReason (Issue #175: 責務5) never naturally finishes, regardless of agent states or tick", () => {
+    // 受入条件: 全員がいずれかの会話クラスタに所属しても終了しない
     const settled = [makeAgent({ id: "a", state: "joined" }), makeAgent({ id: "b", state: "left" })];
-    expect(standingPartyPolicy.isFinished(settled, 3)).toBe(true);
-    expect(standingPartyPolicy.finishReason(settled, 3)).toBe("allSettled");
+    expect(standingPartyPolicy.isFinished(settled, 3)).toBe(false);
+    expect(standingPartyPolicy.finishReason(settled, 3)).toBeUndefined();
 
+    // 受入条件: afterPartyのMAX_SIMULATION_TICKS(400)相当のtickに達しても、それ自体では終了しない
     const undecided = [makeAgent({ id: "a", state: "undecided" })];
     expect(standingPartyPolicy.isFinished(undecided, 399)).toBe(false);
-    expect(standingPartyPolicy.isFinished(undecided, 400)).toBe(true);
-    expect(standingPartyPolicy.finishReason(undecided, 400)).toBe("maxTicksReached");
+    expect(standingPartyPolicy.isFinished(undecided, 400)).toBe(false);
+    expect(standingPartyPolicy.finishReason(undecided, 400)).toBeUndefined();
+    expect(standingPartyPolicy.isFinished(undecided, 100_000)).toBe(false);
+    expect(standingPartyPolicy.finishReason(undecided, 100_000)).toBeUndefined();
+
+    // 受入条件: エージェントが0人(cluster/参加者が誰もいない)でも終了しない
+    expect(standingPartyPolicy.isFinished([], 3)).toBe(false);
+    expect(standingPartyPolicy.finishReason([], 3)).toBeUndefined();
   });
 });
 
