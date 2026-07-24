@@ -2,11 +2,12 @@ import { PRESETS, type ScenarioPreset } from "./simulation/presets";
 import {
   AFTER_PARTY_PRESENTATION,
   CLASSROOM_PRESENTATION,
+  STANDING_PARTY_PRESENTATION,
   getScenarioPresentation,
   type ScenarioPresentation,
 } from "./presentation/scenarioPresentation";
 
-export type ScenarioCategoryId = "after-party" | "classroom";
+export type ScenarioCategoryId = "after-party" | "classroom" | "standing-party";
 
 export type ScenarioConfig = {
   id: ScenarioCategoryId;
@@ -65,6 +66,22 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
     ],
     initialPresetId: "classroom-pair",
     presentation: CLASSROOM_PRESENTATION,
+  },
+  {
+    id: "standing-party",
+    routePath: "/simulate/standing-party",
+    pageTitle: "立食パーティーの会話クラスタ形成シミュレーション",
+    homeTitle: "立食パーティーの会話クラスタ形成",
+    homeDescription:
+      "会場のあちこちで複数の会話の輪が並行して形成される立食パーティーで、誰がどの輪を見つけ、誰が輪を探し続けるかを観察します。",
+    observationTargets: "複数の輪の並行形成、輪への接近、様子見",
+    availableScenarios: "立食パーティー(標準)の1種類",
+    introText:
+      "立食パーティーの会場で、複数の会話の輪が同時並行に生まれていく過程を可視化します。オレンジ色のエージェントは「輪に入りたいが、自分の意思で場を動かしたくない人 (observerJoiner)」です。" +
+      "会話の輪からの離脱・再探索・再参加そのものの実装は今後のアップデートで追加予定です。",
+    presetIds: ["standing-party"],
+    initialPresetId: "standing-party",
+    presentation: STANDING_PARTY_PRESENTATION,
   },
 ] as const;
 

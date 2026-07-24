@@ -18,6 +18,7 @@ import { SeededRandom } from "../simulation/random";
 import {
   AFTER_PARTY_PRESENTATION,
   CLASSROOM_PRESENTATION,
+  STANDING_PARTY_PRESENTATION,
   getScenarioPresentation,
   normalizeInterventionForPresentation,
   resolveClassroomPresentation,
@@ -25,6 +26,16 @@ import {
 } from "./scenarioPresentation";
 
 const FORBIDDEN_CLASSROOM_TERMS = ["二次会", "もう一軒", "店", "会場", "帰宅", "途中参加"];
+
+// Issue #174 受入条件: 立食パーティー画面に二次会・学校固有の主要文言を表示しない
+const FORBIDDEN_STANDING_PARTY_TERMS = [
+  "二次会に行く",
+  "もう一軒行く",
+  "先生が",
+  "締切到達",
+  "先生がペア",
+  "先生が班",
+];
 
 const SPEECH_REASONS: SpeechReason[] = [
   "initiativeFormedCore",
@@ -55,6 +66,12 @@ const EXPRESSION_REASONS: ExpressionReason[] = [
 function expectNoClassroomForbiddenTerms(text: string): void {
   for (const term of FORBIDDEN_CLASSROOM_TERMS) {
     expect(text, `学校表示に禁止語「${term}」が含まれています`).not.toContain(term);
+  }
+}
+
+function expectNoStandingPartyForbiddenTerms(text: string): void {
+  for (const term of FORBIDDEN_STANDING_PARTY_TERMS) {
+    expect(text, `立食パーティー表示に禁止語「${term}」が含まれています`).not.toContain(term);
   }
 }
 
@@ -219,6 +236,89 @@ describe("scenario presentation: classroom rendering audit", () => {
   });
 });
 
+describe("scenario presentation: standing party rendering audit (Issue #174)", () => {
+  it("does not render after-party- or classroom-only vocabulary on the standing-party route, and only offers the 'none' intervention", () => {
+    const html = renderToStaticMarkup(
+      createElement(Router, { initialPathname: "/simulate/standing-party" }),
+    );
+
+    expectNoStandingPartyForbiddenTerms(html);
+    expect(html).toContain("立食パーティー");
+    expect(html).toContain("会話の輪の成立に必要な人数");
+    expect(html).toContain("全体の参加意欲");
+    // Issue #174: Phase 1時点で立食パーティー向けに実装済みの介入は存在しないため、
+    // 二次会・学校向け介入名(「介入なしとの比較」以外の具体的な介入名)は表示されない
+    expect(html).not.toContain("集合場所の明示");
+    expect(html).not.toContain("近くの人への声かけ促進");
+  });
+
+  it("audits the dynamic standing-party logs, speech inspector, canvas, and summary after a full run", () => {
+    const preset = getPresetById("standing-party");
+    const seed = 12345;
+    const formation = { scenarioId: "standingParty" as const };
+    const rng = new SeededRandom(seed);
+    let state = createInitialState(
+      seed,
+      preset.params,
+      { interventionId: "none" },
+      { enabled: true },
+      { enabled: true },
+      { enabled: true },
+      { enabled: true },
+      formation,
+    );
+    while (!state.finished && state.tick < 500) {
+      state = stepSimulation(
+        state,
+        preset.params,
+        rng,
+        { interventionId: "none" },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        formation,
+      );
+      // 受入条件: 初期化後と複数tick更新後でformationScenarioId === "standingParty"が維持される
+      expect(state.formationScenarioId).toBe("standingParty");
+    }
+
+    const html = [
+      renderToStaticMarkup(
+        createElement(EventLog, {
+          state,
+          presentation: STANDING_PARTY_PRESENTATION,
+          seed,
+          presetId: preset.id,
+        }),
+      ),
+      renderToStaticMarkup(
+        createElement(ObserverJoinerInspector, {
+          state,
+          params: preset.params,
+          seed,
+          presetId: preset.id,
+        }),
+      ),
+      renderToStaticMarkup(createElement(SimulationSummaryPanel, { state, params: preset.params })),
+      renderToStaticMarkup(
+        createElement(SimulationCanvas, {
+          agents: state.agents,
+          groupCandidates: state.groupCandidates,
+          width: state.width,
+          height: state.height,
+          formationScenarioId: state.formationScenarioId,
+        }),
+      ),
+    ].join("\n");
+
+    expect(state.finished).toBe(true);
+    expect(state.interventionId).toBe("none");
+    expect(state.formationScenarioId).toBe("standingParty");
+    expectNoStandingPartyForbiddenTerms(html);
+  });
+});
+
 describe("scenario presentation: operation and intervention contract", () => {
   it("shows the fixed pair size but hides parameters that have no classroom meaning", () => {
     const sliders = getSlidersForPresentation(CLASSROOM_PRESENTATION);
@@ -236,6 +336,13 @@ describe("scenario presentation: operation and intervention contract", () => {
     expect(normalizeInterventionForPresentation("predecided-venue", CLASSROOM_PRESENTATION)).toBe("none");
     expect(normalizeInterventionForPresentation("late-join-ok", CLASSROOM_PRESENTATION)).toBe("none");
     expect(normalizeInterventionForPresentation("late-join-ok", AFTER_PARTY_PRESENTATION)).toBe("late-join-ok");
+  });
+
+  it("forces every after-party/classroom-only intervention to none on the standing-party presentation (Issue #174)", () => {
+    expect(STANDING_PARTY_PRESENTATION.availableInterventionIds).toEqual(["none"]);
+    expect(normalizeInterventionForPresentation("late-join-ok", STANDING_PARTY_PRESENTATION)).toBe("none");
+    expect(normalizeInterventionForPresentation("nearby-peer-prompt", STANDING_PARTY_PRESENTATION)).toBe("none");
+    expect(normalizeInterventionForPresentation("none", STANDING_PARTY_PRESENTATION)).toBe("none");
   });
 });
 
@@ -347,5 +454,11 @@ describe("scenario presentation: dynamic classroom group-size resolution (Issue 
       capacityLabel: "2人固定",
     });
     expect(AFTER_PARTY_PRESENTATION.groupUnit).toBeUndefined();
+  });
+
+  it("resolves getScenarioPresentation('standingParty') to STANDING_PARTY_PRESENTATION, not AFTER_PARTY_PRESENTATION (Issue #174)", () => {
+    expect(getScenarioPresentation("standingParty")).toBe(STANDING_PARTY_PRESENTATION);
+    expect(STANDING_PARTY_PRESENTATION.id).toBe("standingParty");
+    expect(STANDING_PARTY_PRESENTATION).not.toBe(AFTER_PARTY_PRESENTATION);
   });
 });
