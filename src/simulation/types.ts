@@ -110,6 +110,15 @@ export type Agent = {
   /** Issue #176: `joined`から会話クラスタ離脱により`undecided`へ戻り、再探索した回数の累計 */
   clusterDepartureCount?: number;
   /**
+   * Issue #186 (Phase 2): 現在`joined`している会話クラスタの「1回のjoin〜離脱」を表すエピソード状態。
+   * `clusterJoinedAtTick`と同じライフサイクル(合流時に初期化、離脱・所属先喪失時にクリア)で扱う、
+   * 上位互換のコンテナ。`joinedAtTick`は常に`clusterJoinedAtTick`と一致する(二重管理の不変条件、
+   * `conversationEpisode.test.ts`で検証)。`joined`以外の状態、または一度も合流していない場合はundefined。
+   * 満足度の具体的な初期化・更新式はPhase 2の対象外(docs/conversation-satisfaction-model.md) ―
+   * `conversationSatisfaction`は後続Issueが設定可能な器としてのみ用意する。
+   */
+  currentEpisode?: ConversationEpisode;
+  /**
    * Issue #136: このrunを通じて`stress`が到達した最大値。Phase 3の"greet"由来効果はstressを
    * 一時的に引き下げ得る(engine.tsのstress蓄積式参照)ため、最終的な`stress`だけでは
    * 「一番つらかった瞬間」の負荷を観察できない。`stress`が変化する箇所(通常のstress蓄積、
@@ -138,6 +147,40 @@ export type ApproachFailureReason = "capacityFull" | "groupDissolved" | "groupEx
  *   (`clusterMemberReleased`イベントで使う)
  */
 export type ClusterDepartureReason = "provisionalStayDuration" | "clusterBelowMinimumSize";
+
+/**
+ * Issue #186 (Phase 2): 1回の`joined`〜離脱までの、ひとつながりの会話エピソードの状態。
+ * `docs/conversation-satisfaction-model.md` 1.3節「会話エピソード / 滞在時間」の型化。
+ * - `episodeId`: `${agentId}:${clusterId}:${joinedAtTick}`から決定的に導出する(rngを消費しない)。
+ *   同一clusterへの再参加でも`joinedAtTick`が異なるため、常に前回と異なるIDになる。
+ * - `joinedAtTick`/`lastUpdatedTick`: 合流tickと、直近でこのエピソードの状態を更新したtick
+ *   (`joinedAtTick <= lastUpdatedTick <= 現在tick`)。滞在tickは`lastUpdatedTick - joinedAtTick`で導出する。
+ * - `memberCountAtJoin`: 合流が成立した瞬間の`candidate.memberIds.length`(自分自身を含む)。
+ * - `lastObservedMemberCount`: 直近の更新時点で観測した同席人数。次回更新時に現在の人数と比較すると
+ *   「直近tickでmember構成が変化したか」を判定できる(具体的な比較・反映タイミングの契約は
+ *   `docs/conversation-satisfaction-model.md` 3.3節、実装はPhase 2の対象外)。
+ * - `conversationSatisfaction`: 後続Issueが初期化・更新式を実装するための器。Phase 2では一切
+ *   書き込まれない(常にundefined)。
+ */
+export type ConversationEpisode = {
+  episodeId: string;
+  clusterId: string;
+  joinedAtTick: number;
+  lastUpdatedTick: number;
+  memberCountAtJoin: number;
+  lastObservedMemberCount: number;
+  conversationSatisfaction?: number;
+};
+
+/**
+ * Issue #186 (Phase 2): 会話エピソードが終了した理由。表示文言の解析に依存させず、構造化イベントの
+ * metadata(`episodeEndReason`)や将来のテスト・集計から区別できるようにする。
+ * - "voluntaryDeparture": 責務9による自発的なクラスタ離脱(`clusterDepartureCompleted`)
+ * - "memberReleased": 責務10によるクラスタの成立最小人数割れに伴う強制解放(`clusterMemberReleased`)
+ * - "membershipLost": 所属先候補自体がmissing/dissolved/expired等になった際の整合性回復
+ *   (現時点では専用のSimulationEventTypeを持たず、`Agent.currentEpisode`のクリアのみで表現する)
+ */
+export type ConversationEpisodeEndReason = "voluntaryDeparture" | "memberReleased" | "membershipLost";
 
 /**
  * `simulationFinished`イベントに保持する、シナリオ全体の終了理由。
@@ -488,6 +531,14 @@ export type SimulationEventMetadata = {
    * 変化後の値を保持する既存の意味を維持する)
    */
   memberCountBefore?: number;
+  /**
+   * Issue #186 (Phase 2): `agentJoined`/`observerJoinedForming`/`observerJoinedConfirmed`/
+   * `clusterRejoined`(開始)・`clusterDepartureCompleted`/`clusterMemberReleased`(終了)用。
+   * 該当する会話エピソードの`ConversationEpisode.episodeId`
+   */
+  episodeId?: string;
+  /** Issue #186 (Phase 2): `clusterDepartureCompleted`/`clusterMemberReleased`用。エピソード終了理由 */
+  episodeEndReason?: ConversationEpisodeEndReason;
 };
 
 export type LogEntry = {
@@ -832,6 +883,13 @@ export type ObserverJoinerInspection = {
   clusterJoinedAtTick?: number;
   /** Issue #178: `clusterJoinedAtTick`からの経過tick数(=現在の輪での滞在tick)。未所属ならundefined */
   ticksInCurrentCluster?: number;
+  /** Issue #186 (Phase 2): 現在の会話エピソードID(`Agent.currentEpisode.episodeId`)。未所属ならundefined */
+  episodeId?: string;
+  /**
+   * Issue #186 (Phase 2): 現在の会話満足度(`Agent.currentEpisode.conversationSatisfaction`)。
+   * 満足度の更新式はPhase 2の対象外のため、実装が入るまでは常にundefined(ダミー値は返さない)。
+   */
+  conversationSatisfaction?: number;
   /**
    * Issue #178 (責務9): 直前に(会場退出ではなく)輪自体を離脱した候補ID(`Agent.lastDepartedClusterId`)。
    * standingParty以外では常にundefined(受入条件: 既存シナリオへ暫定離脱ルール由来の表示が混入しない)。

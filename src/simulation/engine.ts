@@ -1,6 +1,7 @@
 import type {
   Agent,
   ApproachFailureReason,
+  ConversationEpisode,
   GroupCandidate,
   LogEntry,
   LogTag,
@@ -380,6 +381,45 @@ function buildSchoolInterventionContext(
 }
 
 /**
+ * Issue #186 (Phase 2): `ConversationEpisode.episodeId`を決定的に導出する(rngを消費しない)。
+ * `joinedAtTick`は合流のたびに単調増加するため、同一clusterへの再参加でも常に前回と異なるIDになる。
+ */
+function createConversationEpisodeId(agentId: string, clusterId: string, joinedAtTick: number): string {
+  return `${agentId}:${clusterId}:${joinedAtTick}`;
+}
+
+/**
+ * Issue #186 (Phase 2): agentが会話クラスタへ合流した瞬間、新しい会話エピソードを初期化する。
+ * `agent.clusterJoinedAtTick`(Issue #176)と同じライフサイクル・同じ値で扱う上位互換のコンテナ
+ * (二重管理の不変条件、`conversationEpisode.test.ts`で検証)。合流経路(責務3到着/forming確定/
+ * 介入によるcreateGroup・assignToGroup)を問わず、この関数を唯一の開始点として通す。
+ * 満足度の初期化式はPhase 2の対象外のため、`conversationSatisfaction`は設定しない。
+ */
+function startConversationEpisode(agent: Agent, candidate: GroupCandidate, tick: number): void {
+  agent.clusterJoinedAtTick = tick;
+  const episode: ConversationEpisode = {
+    episodeId: createConversationEpisodeId(agent.id, candidate.id, tick),
+    clusterId: candidate.id,
+    joinedAtTick: tick,
+    lastUpdatedTick: tick,
+    memberCountAtJoin: candidate.memberIds.length,
+    lastObservedMemberCount: candidate.memberIds.length,
+  };
+  agent.currentEpisode = episode;
+}
+
+/**
+ * Issue #186 (Phase 2): `joined`かつ有効なclusterに所属している間、毎tick呼び出して滞在時間
+ * (`lastUpdatedTick`)とmember構成の直近観測値を最新化する。満足度そのものの更新式は対象外
+ * (docs/conversation-satisfaction-model.md 3.3節、後続Issueで`lastObservedMemberCount`との比較を使う)。
+ */
+function updateConversationEpisode(agent: Agent, candidate: GroupCandidate, tick: number): void {
+  if (!agent.currentEpisode || agent.currentEpisode.clusterId !== candidate.id) return;
+  agent.currentEpisode.lastUpdatedTick = tick;
+  agent.currentEpisode.lastObservedMemberCount = candidate.memberIds.length;
+}
+
+/**
  * `actions`(割当操作等)を汎用的に適用する。engineは`InterventionAction.kind`だけを見て処理し、
  * どの介入がこのactionを生成したかは一切参照しない(受入条件: engineが介入IDごとの詳細を知らずに
  * 結果を適用できる)。
@@ -401,7 +441,8 @@ function settleIntoGroup(agent: Agent, candidate: GroupCandidate, tick: number):
   agent.lastFailedCandidateAtTick = undefined;
   // Issue #176: 責務9(クラスタ離脱判定)の滞在tick計算に使う合流tick。classroomPair等
   // 離脱経路を持たないシナリオでは参照されないが、settleIntoGroup経由の全joinで一貫して設定する。
-  agent.clusterJoinedAtTick = tick;
+  // Issue #186: 会話エピソードの開始も同じタイミングで一括して行う。
+  startConversationEpisode(agent, candidate, tick);
 }
 
 function applyInterventionActions(
@@ -764,6 +805,9 @@ function departFromCluster(agent: Agent, candidate: GroupCandidate, tick: number
   agent.state = "undecided";
   agent.joinedGroupId = undefined;
   agent.clusterJoinedAtTick = undefined;
+  // Issue #186: 会話エピソードの終了も同じタイミングで一括して行う(呼び出し側が終了理由を
+  // 構造化イベントへ記録する際は、このクリアより前に`agent.currentEpisode?.episodeId`を退避しておく)。
+  agent.currentEpisode = undefined;
   agent.lastDepartedClusterId = candidate.id;
   agent.lastDepartedClusterAtTick = tick;
   agent.clusterDepartureCount = (agent.clusterDepartureCount ?? 0) + 1;
@@ -794,6 +838,9 @@ function logClusterRejoinIfApplicable(agent: Agent, candidate: GroupCandidate, t
       groupId: candidate.id,
       previousClusterId,
       ticksSinceDeparture,
+      // Issue #186: 呼び出し時点で新しいエピソードが既に開始済み(この関数は
+      // startConversationEpisode後にのみ呼ばれる)なので、そのepisodeIdをそのまま記録する。
+      episodeId: agent.currentEpisode?.episodeId,
     },
   );
 }
@@ -813,6 +860,8 @@ function releaseMemberFromDissolvingCluster(
   log: LogEntry[],
 ): void {
   const memberCountBefore = candidate.memberIds.length;
+  // Issue #186: departFromClusterがcurrentEpisodeをクリアする前にepisodeIdを退避しておく。
+  const episodeId = agent.currentEpisode?.episodeId;
   departFromCluster(agent, candidate, tick, rng);
 
   const tags: LogTag[] = agent.isObserverJoiner ? ["observerJoiner", "clusterDeparture"] : ["clusterDeparture"];
@@ -831,6 +880,8 @@ function releaseMemberFromDissolvingCluster(
       memberCountBefore,
       memberCount: candidate.memberIds.length,
       departureReason: "clusterBelowMinimumSize",
+      episodeId,
+      episodeEndReason: "memberReleased",
     },
   );
 }
@@ -1206,7 +1257,8 @@ export function stepSimulation(
         continue;
       }
       agent.state = "joined";
-      agent.clusterJoinedAtTick = tick;
+      // Issue #186: 会話エピソードの開始(episodeId発行含む)もこの合流タイミングで一括して行う。
+      startConversationEpisode(agent, candidate, tick);
       if (agent.isObserverJoiner) {
         pushLog(
           log,
@@ -1227,6 +1279,7 @@ export function stepSimulation(
             agentLabel: agent.label,
             groupId: candidate.id,
             joinedGroupStatus: candidate.status,
+            episodeId: agent.currentEpisode?.episodeId,
             ...capacityMetadataFields(capacity, candidate.memberIds.length),
           },
         );
@@ -1251,6 +1304,7 @@ export function stepSimulation(
             groupId: candidate.id,
             joinedGroupStatus: candidate.status,
             memberCount: candidate.memberIds.length,
+            episodeId: agent.currentEpisode?.episodeId,
             ...capacityMetadataFields(capacity, candidate.memberIds.length),
           },
         );
@@ -1293,6 +1347,10 @@ export function stepSimulation(
     // (受入条件: 消滅済みclusterからの離脱処理でも例外にならない)。
     if (!candidate) continue;
 
+    // Issue #186 (Phase 2, step 5a): 離脱判定の直前に会話エピソードの滞在時間・member観測値を
+    // 最新化する(docs/conversation-satisfaction-model.md 3.2節の順序)。rngは消費しない。
+    updateConversationEpisode(agent, candidate, tick);
+
     const ticksInCluster = agent.clusterJoinedAtTick !== undefined ? tick - agent.clusterJoinedAtTick : 0;
     const departure = formationPolicy.evaluateClusterDeparture(agent, candidate, {
       ticksInCluster,
@@ -1309,6 +1367,9 @@ export function stepSimulation(
       groupId: clusterId,
       ticksInCluster,
       departureReason: "provisionalStayDuration",
+      // Issue #186: departFromCluster呼び出し前のepisodeIdを退避しておく(呼び出し後はクリアされる)。
+      episodeId: agent.currentEpisode?.episodeId,
+      episodeEndReason: "voluntaryDeparture",
     };
     pushLog(
       log,
@@ -1569,7 +1630,8 @@ export function stepSimulation(
         if (candidate.memberIds.includes(agent.id) && agent.state === "forming") {
           agent.state = "joined";
           agent.joinedGroupId = candidate.id;
-          agent.clusterJoinedAtTick = tick;
+          // Issue #186: 会話エピソードの開始もこの合流タイミングで一括して行う。
+          startConversationEpisode(agent, candidate, tick);
           // Issue #176: 過去に離脱経験があるagentのみ対象(standingParty以外では常にno-op)
           logClusterRejoinIfApplicable(agent, candidate, tick, log);
         }
@@ -1632,6 +1694,9 @@ export function stepSimulation(
         agent.state = "undecided";
         agent.joinedGroupId = undefined;
         agent.clusterJoinedAtTick = undefined;
+        // Issue #186: 所属先の消滅/解散/期限切れによる整合性回復(endReason: "membershipLost")。
+        // この経路は防御的な掃除であり専用イベントは持たないため、episode状態のクリアのみ行う。
+        agent.currentEpisode = undefined;
       }
     }
   }

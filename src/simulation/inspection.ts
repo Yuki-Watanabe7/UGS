@@ -352,6 +352,8 @@ function buildInspection(
       agent.state === "joined" && agent.clusterJoinedAtTick !== undefined
         ? state.tick - agent.clusterJoinedAtTick
         : undefined,
+    episodeId: agent.currentEpisode?.episodeId,
+    conversationSatisfaction: agent.currentEpisode?.conversationSatisfaction,
     lastDepartedClusterId: agent.lastDepartedClusterId,
     lastDepartedClusterAtTick: agent.lastDepartedClusterAtTick,
     clusterDepartureCount: agent.clusterDepartureCount ?? 0,
