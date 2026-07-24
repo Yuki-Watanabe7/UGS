@@ -796,6 +796,43 @@ function logClusterRejoinIfApplicable(agent: Agent, candidate: GroupCandidate, t
   );
 }
 
+/**
+ * Issue #177 (責務10): 成立(confirmed)後のクラスタが成立最小人数を下回った際、残存memberを
+ * `joined`のまま孤立させず再探索(undecided)へ戻す。責務9の`departFromCluster`と同じ原子的更新
+ * (detach + 離脱移動 + 状態リセット + クールダウン設定)を再利用しつつ、「自ら離脱を選んだ」
+ * のではなく「クラスタが構造的に維持できなくなった」ことを表す専用の構造化イベント
+ * (`clusterMemberReleased`)を記録する点だけが責務9の任意離脱と異なる。
+ */
+function releaseMemberFromDissolvingCluster(
+  agent: Agent,
+  candidate: GroupCandidate,
+  tick: number,
+  rng: SeededRandom,
+  log: LogEntry[],
+): void {
+  const memberCountBefore = candidate.memberIds.length;
+  departFromCluster(agent, candidate, tick, rng);
+
+  const tags: LogTag[] = agent.isObserverJoiner ? ["observerJoiner", "clusterDeparture"] : ["clusterDeparture"];
+  pushLog(
+    log,
+    tick,
+    agent.isObserverJoiner
+      ? `observerJoinerが解散した会話の輪から再探索状態に戻った`
+      : `${agent.label}さんが解散した会話の輪から再探索状態に戻った`,
+    tags,
+    "clusterMemberReleased",
+    {
+      agentId: agent.id,
+      agentLabel: agent.label,
+      groupId: candidate.id,
+      memberCountBefore,
+      memberCount: candidate.memberIds.length,
+      departureReason: "clusterBelowMinimumSize",
+    },
+  );
+}
+
 export function stepSimulation(
   state: SimulationState,
   params: SimParams,
@@ -1200,6 +1237,16 @@ export function stepSimulation(
             : formationPolicy.id === "classroomPair"
               ? `${agent.label}さんがペア候補 ${candidate.id} に合流`
               : `${agent.label}さんが輪に合流`,
+          [],
+          "agentJoined",
+          {
+            agentId: agent.id,
+            agentLabel: agent.label,
+            groupId: candidate.id,
+            joinedGroupStatus: candidate.status,
+            memberCount: candidate.memberIds.length,
+            ...capacityMetadataFields(capacity, candidate.memberIds.length),
+          },
         );
       }
       // Issue #176: 過去に離脱経験があるagentのみ対象(standingParty以外では常にno-op)
@@ -1268,6 +1315,7 @@ export function stepSimulation(
       { ...departureMetadataBase, memberCount: candidate.memberIds.length },
     );
 
+    const memberCountBeforeDeparture = candidate.memberIds.length;
     departFromCluster(agent, candidate, tick, rng);
 
     pushLog(
@@ -1288,6 +1336,27 @@ export function stepSimulation(
       "clusterResearchStarted",
       { agentId: agent.id, agentLabel: agent.label, groupId: clusterId },
     );
+
+    // Issue #177 (責務10): 離脱後も成立最小人数以上を維持していれば、このクラスタは引き続き
+    // active(confirmedのまま)。下回った場合は何もしない(このtick後段の責務10ループが
+    // dissolving/dissolvedへ遷移させ、残存memberを`releaseMemberFromDissolvingCluster`で戻す)。
+    if (formationPolicy.confirmedClusterIsMutable && candidate.status === "confirmed") {
+      const capacity = formationPolicy.resolveGroupCapacity(candidate, effectiveParams);
+      if (candidate.memberIds.length >= capacity.minGroupSize) {
+        pushLog(
+          log,
+          tick,
+          `会話の輪が1人減ったが、会話は引き続き続いている`,
+          ["groupLifecycle"],
+          "activeClusterShrunk",
+          {
+            groupId: clusterId,
+            memberCountBefore: memberCountBeforeDeparture,
+            memberCount: candidate.memberIds.length,
+          },
+        );
+      }
+    }
   }
 
   // 6. undecided な人はゆるく漂う (何もしていないわけではないことを示す)
@@ -1402,7 +1471,63 @@ export function stepSimulation(
       : formationPolicy.defaultMaxAge;
 
   for (const candidate of candidates) {
-    if (candidate.status === "confirmed") continue;
+    if (candidate.status === "confirmed") {
+      // Issue #177 (責務10): confirmedClusterIsMutableでないポリシー(afterParty/classroomPair)は
+      // 既存の`continue`と等価(confirmedは終端状態のまま)。
+      if (!formationPolicy.confirmedClusterIsMutable) continue;
+
+      const capacity = formationPolicy.resolveGroupCapacity(candidate, effectiveParams);
+
+      if (candidate.memberIds.length >= capacity.minGroupSize) {
+        // 実際にmemberIdsが成立最小人数へ追いついた(責務3の近接ヒューリスティックにより、
+        // confirmed遷移直後は下回っていることがある――GroupCandidate.everConfirmed参照)。
+        // 以降のtickでの人数減少だけを責務10の解散判定対象にする。
+        candidate.everConfirmed = true;
+        continue;
+      }
+      if (!candidate.everConfirmed) continue;
+
+      // 責務9由来の離脱(5b)は既にcandidate.memberIdsへ反映済みなので、現在の人数と
+      // capacity.minGroupSizeを比較するだけでよい。
+      const outcome = formationPolicy.evaluatePostConfirmationLifecycle(candidate, capacity);
+      if (outcome !== "dissolve") continue;
+
+      const memberCountBefore = candidate.memberIds.length;
+      // 3節不変条件(join/leaveの原子的更新): 残存member全員を、孤立させず再探索へ戻す
+      // (「最後の1人」を特別扱いする専用状態は設けない)。存在しないagent IDが紛れ込んでいた場合も
+      // memberIdsへ残さないよう防御的に掃除する。
+      for (const memberId of [...candidate.memberIds]) {
+        const member = agents.find((a) => a.id === memberId);
+        if (member) {
+          releaseMemberFromDissolvingCluster(member, candidate, tick, rng, log);
+        } else {
+          detachMemberFromCandidate(candidate, memberId);
+        }
+      }
+
+      if (memberCountBefore === 0) {
+        // 空(0人)は猶予なしで即dissolved(ADR 3.3節4)
+        candidate.status = "dissolved";
+        candidate.age = 0;
+        pushLog(log, tick, `会話の輪が誰もいなくなり消滅した`, ["groupLifecycle"], "activeClusterDissolved", {
+          groupId: candidate.id,
+          memberCountBefore,
+          memberCount: 0,
+        });
+      } else {
+        candidate.status = "dissolving";
+        candidate.age = 0;
+        pushLog(
+          log,
+          tick,
+          `会話の輪が成立最小人数を下回り、解散した`,
+          ["groupLifecycle"],
+          "activeClusterDissolving",
+          { groupId: candidate.id, memberCountBefore, memberCount: 0 },
+        );
+      }
+      continue;
+    }
 
     // dissolving/dissolved/expiredは既に決着済み。フェードアウト表現用にageだけ進める
     if (candidate.status === "dissolving") {

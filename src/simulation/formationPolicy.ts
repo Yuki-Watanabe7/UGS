@@ -41,13 +41,10 @@ import { clamp, distance } from "./model";
  * Issue #174 (Phase 1): `standingParty`は「立食パーティーで、参加者が会話の輪を探し・離脱し・
  * 再探索する」シナリオ。#173のADR(`docs/interaction-cluster-model.md`)が採用した案3
  * (共通基底+シナリオ別ライフサイクル)に従い、`GroupCandidate`型は変更せず、成立後の会話クラスタが
- * 増減・再形成する挙動(ADRの責務9「クラスタ離脱判定」・責務10「確定後ライフサイクル」)は
- * 後続Issue(Follow-up A/B/C)で`FormationPolicy`へ追加実装する。**本Issueではその2責務を実装しない**
- * ため、`standingPartyPolicy`は成立(confirmed)後のクラスタが最終形になる点で暫定的に`afterParty`と
- * 同じ形成力学(核形成・接近・成立・未成立候補の解散/期限切れ)を再利用する。これは`afterParty`への
- * 黙示的なエイリアスではなく、`id: "standingParty"`を持つ独立した`FormationPolicy`実装であり、
- * 後続IssueがADRの責務9/10だけを追加すれば済むよう、意図的に明示している(受入条件: 未実装の後続機能を
- * afterPartyの挙動へ黙ってaliasしない)。
+ * 増減・再形成する挙動はADRの責務9「クラスタ離脱判定」(Issue #176)・責務10「確定後ライフサイクル」
+ * (Issue #177)として`FormationPolicy`へ追加実装した。これは`afterParty`への黙示的なエイリアスではなく、
+ * `id: "standingParty"`を持つ独立した`FormationPolicy`実装であり、後続Issueが未実装機能を`afterParty`の
+ * 挙動へ黙ってaliasしないという意図を保ったまま、責務9/10を追加している。
  *
  * Issue #175 (Phase 1): 上記の形成力学(責務1〜4/6〜8)はafterPartyと共有する一方、責務5(終了条件)は
  * 共有しない。立食パーティーは意味論的な自然終了を持たない(全員所属・全クラスタ成立・クラスタ0件の
@@ -174,6 +171,15 @@ export type ClusterDepartureDecision = {
 };
 
 /**
+ * 責務10(Issue #177、ADR: docs/interaction-cluster-model.md 3.1節)の判定結果。
+ * "continue": このクラスタは引き続きconfirmed(active)のまま。
+ * "dissolve": 成立最小人数を下回った(0人を含む)ため解散させる。0人かどうかの分岐・
+ *   残存memberの再探索復帰・猶予tickの扱いはengine.ts側の汎用ロジックが担う
+ *   (ADR 3.3節4「最後の1人を特別扱いしない」「空(0人)は猶予なしで即dissolved」)。
+ */
+export type PostConfirmationLifecycleOutcome = "continue" | "dissolve";
+
+/**
  * 責務6(Issue #131): 候補の成立最小人数・収容最大人数(容量制約)。
  * `maxGroupSize`に`Number.POSITIVE_INFINITY`を返すポリシー/候補は「実質無制限」を表す。
  */
@@ -254,6 +260,23 @@ export interface FormationPolicy {
    * 一切変えない(受入条件: 二次会・学校シナリオの既存離脱挙動に回帰がない)。
    */
   evaluateClusterDeparture(agent: Agent, candidate: GroupCandidate, ctx: ClusterDepartureContext): ClusterDepartureDecision;
+
+  /**
+   * 責務10(Issue #177、ADR: docs/interaction-cluster-model.md): confirmed状態の候補が、
+   * その後もmemberIds増減に応じたライフサイクル遷移(縮小・解散)の対象であり続けるか。
+   * `afterParty`/`classroomPair`は常に`false`を返し、既存の
+   * `if (candidate.status === "confirmed") continue;`と等価な挙動を保つ(受入条件: 二次会・学校の
+   * 既存status・容量・終了挙動に回帰がない)。
+   */
+  readonly confirmedClusterIsMutable: boolean;
+
+  /**
+   * 責務10(新規): `confirmedClusterIsMutable`が`true`の場合のみengine.tsから呼ばれる。
+   * 責務9由来の離脱は呼び出し時点で既に`candidate.memberIds`へ反映済みのため、この関数は
+   * 現在の人数と`capacity.minGroupSize`を比較するだけでよい(0人かどうかの分岐、猶予tick管理、
+   * 残存memberの再探索復帰はengine.ts側の共通ロジックが担う)。
+   */
+  evaluatePostConfirmationLifecycle(candidate: GroupCandidate, capacity: GroupCapacity): PostConfirmationLifecycleOutcome;
 }
 
 // --- afterParty: 現行の二次会シナリオのロジック(既存挙動を維持したまま移設) --------------------
@@ -399,6 +422,15 @@ export const afterPartyPolicy: FormationPolicy = {
     // 常に「離脱なし」を返す(受入条件: 既存の二次会離脱挙動に回帰がない)。
     return { eligible: false, probability: 0 };
   },
+
+  confirmedClusterIsMutable: false,
+
+  evaluatePostConfirmationLifecycle() {
+    // 二次会シナリオではconfirmedは終端状態のまま(既存の`continue`と等価)。
+    // evaluateClusterDepartureが常に離脱なしを返すため、実際にはmemberIdsが減ることもなく、
+    // この関数自体engine.tsからは呼ばれない(confirmedClusterIsMutableがfalseのため)。
+    return "continue";
+  },
 };
 
 // --- standingParty: Issue #174 (Phase 1) 立食パーティーで会話の輪を探すシナリオ -----------------
@@ -410,10 +442,13 @@ export const afterPartyPolicy: FormationPolicy = {
 // Issue #176 (Phase 1): ADRの責務9(`evaluateClusterDeparture`、クラスタ離脱判定)をここで実装する。
 // 合流済み(state === "joined")のエージェントが会話クラスタを離れてundecidedへ戻り、再探索・
 // 再参加できるようにする(`engine.ts`側の状態遷移・membership更新・クールダウン・構造化イベントは
-// engine.ts参照)。責務10(確定後クラスタの縮小に伴うdissolving/dissolved遷移)は本Issueの対象外
-// (対象外: 「cluster人数減少後の詳細ライフサイクル」)のため、`confirmedClusterIsMutable`相当の
-// responsibility自体を追加しない。すなわち縮小したconfirmedクラスタは(人数が0になっても)status
-// 自体はconfirmedのまま残り続ける。
+// engine.ts参照)。
+//
+// Issue #177 (Phase 1): ADRの責務10(`confirmedClusterIsMutable`/`evaluatePostConfirmationLifecycle`、
+// 確定後ライフサイクル)をここで実装する。責務9由来の離脱でconfirmed(=activeな会話クラスタ)の人数が
+// 成立最小人数を下回ったら、engine.ts側がdissolving/dissolvedへ遷移させ、残存memberを再探索へ戻す
+// (member 0人化・猶予tick・残存memberの扱いはengine.ts側の共通ロジック。ここでは
+// 「人数が最小人数を下回ったか」だけを判定する)。
 //
 // Phase 1では心理モデルを実装しない(対象外: 会話満足度・社交性・観察参加者の遠慮葛藤)。
 // `evaluateClusterDeparture`は「一定滞在tick数を超えたら、agentの特性に一切依存しない一定の
@@ -504,6 +539,14 @@ export const standingPartyPolicy: FormationPolicy = {
       return { eligible: false, probability: 0 };
     }
     return { eligible: true, probability: STANDING_PARTY_PROVISIONAL_DEPARTURE_PROBABILITY };
+  },
+
+  // Issue #177(責務10): 会話クラスタは成立(confirmed)後も増減を続けるactiveな単位のため、
+  // ここだけafterPartyへ委譲せずtrueを返す。実際の縮小・解散判定はengine.tsの共通ロジックが担う。
+  confirmedClusterIsMutable: true,
+
+  evaluatePostConfirmationLifecycle(candidate, capacity) {
+    return candidate.memberIds.length < capacity.minGroupSize ? "dissolve" : "continue";
   },
 };
 
@@ -639,6 +682,13 @@ function createClassroomGroupPolicy(options: ClassroomGroupFormationOptions): Fo
       // 受入条件: 学校シナリオでは引き続き離脱が発生しない(canLeaveが常にfalseであることと同様、
       // 一度決まった班からの離脱経路もIssue #176の対象外)
       return { eligible: false, probability: 0 };
+    },
+
+    confirmedClusterIsMutable: false,
+
+    evaluatePostConfirmationLifecycle() {
+      // 学校シナリオでは班確定(confirmed)は終端状態のまま(既存の`continue`と等価)。
+      return "continue";
     },
   };
 }
