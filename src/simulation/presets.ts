@@ -105,6 +105,24 @@ export const PRESETS: ScenarioPreset[] = [
     },
   },
   {
+    id: "standing-party",
+    name: "立食パーティー",
+    description:
+      "会場のあちこちで複数の会話の輪が並行して形成される立食パーティー。既存の関係性は強すぎず、" +
+      "自分から話しかけ始める人も複数いるため、いくつもの小さな輪が同時に生まれやすい。" +
+      "参加者は輪を探し、時に離脱し、再び探し直す(離脱・再探索・再参加そのものの実装は後続Issue)。",
+    params: {
+      ...DEFAULT_PARAMS,
+      populationSize: 24,
+      groupConfirmSize: 3,
+      numLeaders: 4,
+      overallWillingness: 0.65,
+      lateJoinEase: 0.5,
+      existingTieStrength: 0.25,
+    },
+    formationScenarioId: "standingParty",
+  },
+  {
     id: "classroom-pair",
     name: "教室で自由にペアを作る場",
     description:

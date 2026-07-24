@@ -4,6 +4,7 @@ import {
   DEFAULT_CLASSROOM_PAIR_DEADLINE_TICK,
   getFormationPolicyById,
   resolveFormationPolicy,
+  standingPartyPolicy,
 } from "./formationPolicy";
 import { createInitialState, stepSimulation } from "./engine";
 import { SeededRandom } from "./random";
@@ -286,6 +287,59 @@ describe("engine wiring: formation policy persists through state across ticks", 
       state = stepSimulation(state, getPresetById("natural").params, rng);
       expect(state.formationScenarioId).toBe("afterParty");
     }
+  });
+});
+
+describe("standingPartyPolicy (Issue #174, Phase 1)", () => {
+  it("resolves via resolveFormationPolicy/getFormationPolicyById with id 'standingParty', distinct from afterPartyPolicy", () => {
+    expect(resolveFormationPolicy({ scenarioId: "standingParty" })).toBe(standingPartyPolicy);
+    expect(getFormationPolicyById("standingParty")).toBe(standingPartyPolicy);
+    expect(standingPartyPolicy.id).toBe("standingParty");
+    // 受入条件: 未実装の後続機能をafterPartyの挙動へ黙ってaliasしない
+    // (=同一オブジェクト参照ではなく、idの異なる独立したFormationPolicy実装であること)
+    expect(standingPartyPolicy).not.toBe(afterPartyPolicy);
+  });
+
+  it("createInitialState/stepSimulation keep formationScenarioId as standingParty across ticks (never falls back to afterParty/classroomPair)", () => {
+    const preset = getPresetById("standing-party");
+    expect(preset.formationScenarioId).toBe("standingParty");
+
+    const formation = { scenarioId: "standingParty" as const };
+    const rng = new SeededRandom(7);
+    let state = createInitialState(7, preset.params, { interventionId: "none" }, undefined, undefined, undefined, undefined, formation);
+    expect(state.formationScenarioId).toBe("standingParty");
+
+    for (let i = 0; i < 20; i++) {
+      // 呼び出し側が毎tick formation を渡し忘れても直前の設定を引き継ぐ(既存のfall backパターン)
+      state = stepSimulation(state, preset.params, rng);
+      expect(state.formationScenarioId).toBe("standingParty");
+    }
+  });
+
+  it("shares afterParty's core formation mechanics in Phase 1 (candidate initiation, confirmation, lifecycle, stress, capacity)", () => {
+    const agent = makeAgent({ initiative: 0.8, willingness: 0.9 });
+    const params = { ...DEFAULT_PARAMS, numLeaders: 1 };
+    expect(standingPartyPolicy.evaluateCandidateInitiation(agent, { agents: [agent], params })).toEqual(
+      afterPartyPolicy.evaluateCandidateInitiation(agent, { agents: [agent], params }),
+    );
+    expect(standingPartyPolicy.shouldConfirmCandidate(3, DEFAULT_PARAMS)).toBe(
+      afterPartyPolicy.shouldConfirmCandidate(3, DEFAULT_PARAMS),
+    );
+    const candidate: GroupCandidate = { id: "group-1", x: 0, y: 0, memberIds: ["a"], status: "forming", age: 0 };
+    expect(standingPartyPolicy.resolveGroupCapacity(candidate, DEFAULT_PARAMS)).toEqual(
+      afterPartyPolicy.resolveGroupCapacity(candidate, DEFAULT_PARAMS),
+    );
+  });
+
+  it("isFinished/finishReason mirrors afterParty's allSettled/maxTicksReached semantics (provisional Phase 1 termination)", () => {
+    const settled = [makeAgent({ id: "a", state: "joined" }), makeAgent({ id: "b", state: "left" })];
+    expect(standingPartyPolicy.isFinished(settled, 3)).toBe(true);
+    expect(standingPartyPolicy.finishReason(settled, 3)).toBe("allSettled");
+
+    const undecided = [makeAgent({ id: "a", state: "undecided" })];
+    expect(standingPartyPolicy.isFinished(undecided, 399)).toBe(false);
+    expect(standingPartyPolicy.isFinished(undecided, 400)).toBe(true);
+    expect(standingPartyPolicy.finishReason(undecided, 400)).toBe("maxTicksReached");
   });
 });
 

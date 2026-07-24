@@ -144,7 +144,7 @@ export const NONE_INTERVENTION: InterventionScenario = {
   category: "none",
   expectedEffect: "既存プリセットの挙動をそのまま観察するための基準点(ベースライン)。",
   applicability: {
-    scenarios: ["afterParty", "classroomPair"],
+    scenarios: ["afterParty", "classroomPair", "standingParty"],
     audience: "none",
     hooks: [],
     configKeys: [],

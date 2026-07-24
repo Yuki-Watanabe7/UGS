@@ -37,8 +37,19 @@ import { clamp, distance } from "./model";
  * engine.ts側の`formationPolicy.id === "classroomPair"`分岐(メッセージ文言・deadline処理)を
  * 一切増やさずに固定3人/4人班・3〜4人可変定員班まで同じ形成ルール境界で表現できる
  * (受入条件: engineへ学校の班人数別条件分岐が散在していない)。
+ *
+ * Issue #174 (Phase 1): `standingParty`は「立食パーティーで、参加者が会話の輪を探し・離脱し・
+ * 再探索する」シナリオ。#173のADR(`docs/interaction-cluster-model.md`)が採用した案3
+ * (共通基底+シナリオ別ライフサイクル)に従い、`GroupCandidate`型は変更せず、成立後の会話クラスタが
+ * 増減・再形成する挙動(ADRの責務9「クラスタ離脱判定」・責務10「確定後ライフサイクル」)は
+ * 後続Issue(Follow-up A/B/C)で`FormationPolicy`へ追加実装する。**本Issueではその2責務を実装しない**
+ * ため、`standingPartyPolicy`は成立(confirmed)後のクラスタが最終形になる点で暫定的に`afterParty`と
+ * 同じ形成力学(核形成・接近・成立・未成立候補の解散/期限切れ)を再利用する。これは`afterParty`への
+ * 黙示的なエイリアスではなく、`id: "standingParty"`を持つ独立した`FormationPolicy`実装であり、
+ * 後続IssueがADRの責務9/10だけを追加すれば済むよう、意図的に明示している(受入条件: 未実装の後続機能を
+ * afterPartyの挙動へ黙ってaliasしない)。
  */
-export type FormationScenarioId = "afterParty" | "classroomPair";
+export type FormationScenarioId = "afterParty" | "classroomPair" | "standingParty";
 
 /** Issue #154: 候補の成立最小人数・収容最大人数のペア。`minGroupSize === maxGroupSize`なら固定定員 */
 export type GroupSizeRule = {
@@ -346,6 +357,70 @@ export const afterPartyPolicy: FormationPolicy = {
   },
 };
 
+// --- standingParty: Issue #174 (Phase 1) 立食パーティーで会話の輪を探すシナリオ -----------------
+//
+// Phase 1時点では、複数の会話の輪が並行して形成される様子(核形成・接近・成立・未成立候補の解散/
+// 期限切れ)をafterPartyと同じ力学でそのまま表現する。会話クラスタからの離脱・再参加・縮小/再形成
+// (ADRの責務9/10)は後続Issueの対象であり、本Issueでは意図的に実装しない(対象外: 終了しないtick
+// ループの完成、離脱・再参加ロジック、成立済みクラスタの縮小・解散)。そのため`canLeave`到達後の
+// `leaving`は「会話の輪を諦めて会場を出る」を表し、`isFinished`もafterPartyと同じ安全上限
+// (`MAX_SIMULATION_TICKS`)付きの`allSettled`判定を暫定的に踏襲する。
+
+function standingPartyFinishReason(agents: Agent[], tick: number): SimulationFinishReason | undefined {
+  const allSettled = agents.every((a) => a.state === "joined" || a.state === "left");
+  if (allSettled) return "allSettled";
+  if (tick >= MAX_SIMULATION_TICKS) return "maxTicksReached";
+  return undefined;
+}
+
+export const standingPartyPolicy: FormationPolicy = {
+  id: "standingParty",
+  candidateMergeRadius: CANDIDATE_MERGE_RADIUS,
+  approachRateMultiplier: APPROACH_RATE_MULTIPLIER,
+  defaultWeakResponseAge: CANDIDATE_WEAK_RESPONSE_AGE,
+  defaultMaxAge: CANDIDATE_MAX_AGE,
+
+  evaluateCandidateInitiation(agent, ctx) {
+    return afterPartyPolicy.evaluateCandidateInitiation(agent, ctx);
+  },
+
+  shouldConfirmCandidate(nearbyCount, params) {
+    return afterPartyPolicy.shouldConfirmCandidate(nearbyCount, params);
+  },
+
+  evaluateUnconfirmedCandidateLifecycle(candidate, ctx) {
+    return afterPartyPolicy.evaluateUnconfirmedCandidateLifecycle(candidate, ctx);
+  },
+
+  computeStressIncrement(agent, ctx) {
+    return afterPartyPolicy.computeStressIncrement(agent, ctx);
+  },
+
+  canLeave(agent, stress, effectiveLeaveThreshold) {
+    return afterPartyPolicy.canLeave(agent, stress, effectiveLeaveThreshold);
+  },
+
+  isFinished(agents, tick) {
+    return standingPartyFinishReason(agents, tick) !== undefined;
+  },
+
+  finishReason(agents, tick) {
+    return standingPartyFinishReason(agents, tick);
+  },
+
+  resolveGroupCapacity(candidate, params) {
+    return afterPartyPolicy.resolveGroupCapacity(candidate, params);
+  },
+
+  computeConfirmationCount(candidate, agents) {
+    return afterPartyPolicy.computeConfirmationCount(candidate, agents);
+  },
+
+  computeJoinFailureStressIncrement(agent, reason) {
+    return afterPartyPolicy.computeJoinFailureStressIncrement(agent, reason);
+  },
+};
+
 // --- classroomPair: Issue #132 (Phase 2) 教室で自由にペアを作るシナリオ ------------------------
 
 // 教室シナリオでの核形成確率にかける基礎倍率。teacherの指示による活動のため、二次会の
@@ -486,6 +561,7 @@ function createClassroomPairPolicy(
 
 const FORMATION_POLICIES: Partial<Record<FormationScenarioId, FormationPolicy>> = {
   afterParty: afterPartyPolicy,
+  standingParty: standingPartyPolicy,
 };
 
 /**

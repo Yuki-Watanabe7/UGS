@@ -40,6 +40,8 @@ export function routeFromPathname(
       return { page: "simulation", scenarioId: "after-party" };
     case "/simulate/classroom":
       return { page: "simulation", scenarioId: "classroom" };
+    case "/simulate/standing-party":
+      return { page: "simulation", scenarioId: "standing-party" };
     default:
       return { page: "not-found" };
   }

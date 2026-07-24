@@ -140,10 +140,13 @@ export function createInitialState(
   const agents = createInitialAgents(seed, effectiveParams);
   // Issue #132: 教室ペア形成シナリオの初期ログは、二次会シナリオ向けの文言(「二次会に行くか」)を
   // そのまま使うと文脈が合わないため、formationPolicy.idで出し分ける
+  // Issue #174: 立食パーティーでも同様に、二次会固有の文言を避け会場で会話の輪を探す文脈にする
   const openingMessage =
     formationPolicy.id === "classroomPair"
       ? "先生が「自由にペアを作ってください」と指示した。まだ誰も相手を決めていない。"
-      : "参加者が集まり始めた。まだ誰も二次会に行くかは決めていない。";
+      : formationPolicy.id === "standingParty"
+        ? "立食パーティーの会場に参加者が集まり始めた。まだ誰も会話の輪に加わっていない。"
+        : "参加者が集まり始めた。まだ誰も二次会に行くかは決めていない。";
   const log: LogEntry[] = [
     {
       tick: 0,
@@ -850,10 +853,13 @@ export function stepSimulation(
         addMemberToCandidate(candidate, agent.id, formationPolicy.resolveGroupCapacity(candidate, effectiveParams));
         candidates.push(candidate);
         // Issue #132: 教室ペア形成シナリオでは「もう一軒行く?」ではなく、ペア相手探しの声かけとして表現する
+        // Issue #174: 立食パーティーでは会話の輪への声かけとして表現する
         const nucleusMessage =
           formationPolicy.id === "classroomPair"
             ? `${agent.label}さんが「一緒にペアになろう」と声をかけ、ペア探しを始めた`
-            : `${agent.label}さんが「もう一軒行く?」と発言し、核を作り始めた`;
+            : formationPolicy.id === "standingParty"
+              ? `${agent.label}さんが「ちょっと話さない?」と声をかけ、会話の輪を作り始めた`
+              : `${agent.label}さんが「もう一軒行く?」と発言し、核を作り始めた`;
         pushLog(log, tick, nucleusMessage, ["nucleus"], "nucleusCreated", {
           agentId: agent.id,
           agentLabel: agent.label,
@@ -1246,7 +1252,9 @@ export function stepSimulation(
       const confirmedMessage =
         formationPolicy.id === "classroomPair"
           ? `ペア候補 ${candidate.id} が${nearbyCount}人で成立した`
-          : `${nearbyCount}人が集まり二次会グループが成立`;
+          : formationPolicy.id === "standingParty"
+            ? `${nearbyCount}人が集まり会話の輪が成立`
+            : `${nearbyCount}人が集まり二次会グループが成立`;
       pushLog(log, tick, confirmedMessage, ["groupConfirmed"], "groupConfirmed", {
         groupId: candidate.id,
         memberCount: nearbyCount,
@@ -1282,10 +1290,15 @@ export function stepSimulation(
     } else if (lifecycleOutcome === "expire") {
       candidate.status = "expired";
       candidate.age = 0;
+      // Issue #174: 立食パーティーでは「二次会成立」ではなく「会話の輪の成立」として表現する
+      const expiredMessage =
+        formationPolicy.id === "standingParty"
+          ? `輪(${candidate.memberIds.length}人)は会話の輪として成立しないまま時間切れになった`
+          : `輪(${candidate.memberIds.length}人)は二次会成立に至らないまま時間切れになった`;
       pushLog(
         log,
         tick,
-        `輪(${candidate.memberIds.length}人)は二次会成立に至らないまま時間切れになった`,
+        expiredMessage,
         ["groupLifecycle"],
         "groupExpired",
         { groupId: candidate.id, memberCount: candidate.memberIds.length },

@@ -557,6 +557,197 @@ export const CLASSROOM_PRESENTATION: ScenarioPresentation = {
   },
 };
 
+// --- standingParty: Issue #174 (Phase 1) 立食パーティーで会話の輪を探すシナリオ -----------------
+
+const STANDING_PARTY_PARAMETERS: Record<keyof SimParams, ParameterPresentation> = {
+  populationSize: {
+    label: "人数",
+    description: "会場にいる参加者の総数です。",
+    visible: true,
+    editable: true,
+  },
+  groupConfirmSize: {
+    label: "会話の輪の成立に必要な人数",
+    description: "形成中の輪が会話の輪として成立する人数です。",
+    visible: true,
+    editable: true,
+  },
+  numLeaders: {
+    label: "自分から話しかけ始める人の人数",
+    description: "自分から声を上げ、会話の輪を作り始めやすい人の人数です。",
+    visible: true,
+    editable: true,
+  },
+  overallWillingness: {
+    label: "全体の参加意欲",
+    description: "参加者全体が会話の輪に加わりたいと思う度合いです。",
+    visible: true,
+    editable: true,
+  },
+  ambiguityDuration: {
+    label: "曖昧な時間の長さ(耐えられる長さ)",
+    description: "話し相手が決まらない時間に耐えられる度合いです。",
+    visible: true,
+    editable: true,
+  },
+  lateJoinEase: {
+    label: "後から輪に加わる参加しやすさ",
+    description: "既に成立している会話の輪へ後から加わる心理的な容易さです。",
+    visible: true,
+    editable: true,
+  },
+  existingTieStrength: {
+    label: "既存関係性の強さ",
+    description: "もともとの仲良し関係がまとまりやすさへ与える強さです。",
+    visible: true,
+    editable: true,
+  },
+  observerAmbiguityTolerance: {
+    label: "observerJoinerの曖昧さ耐性",
+    description: "様子を見やすい人が、決まらない時間に耐えられる度合いです。",
+    visible: true,
+    editable: true,
+  },
+  observerInfluenceAvoidance: {
+    label: "observerJoinerの影響回避度",
+    description: "自分の意思で場を動かすことを避ける度合いです。",
+    visible: true,
+    editable: true,
+  },
+  observerLeaveEase: {
+    label: "observerJoinerの退出しやすさ",
+    description: "様子を見やすい人が、決まらない状況から離れやすい度合いです。",
+    visible: true,
+    editable: true,
+  },
+};
+
+const STANDING_PARTY_SPEECH: Record<SpeechReason, string> = {
+  initiativeFormedCore: "ちょっと話さない?",
+  cliqueFormedCore: "みんなでちょっと話そうよ",
+  formingGroupRecruitment: "こっちも一緒にどう?",
+  approachWelcome: "おいでおいで、こっちだよ",
+  joinGreeting: "合流できた、よろしく!",
+  leaveDeclaration: "少し他も回ってみるね",
+  lightObserverInvitation: "よかったら一緒に話す?",
+};
+
+const STANDING_PARTY_EXPRESSIONS: Record<ExpressionReason, ExpressionTemplateVariants> = {
+  initiativeFormedCore: { general: ["よし、声をかけてみよう", "近くの人と話してみるか"] },
+  cliqueFormedCore: { general: ["いつものメンバーで少し話そうか", "この面子ならすぐ話が弾みそうだ"] },
+  approachedFormingGroup: { general: ["輪が見えてきた。近づいてみようかな", "あそこの輪、行ってみよう"] },
+  approachedConfirmedGroup: { general: ["もう盛り上がっている輪に加わろう", "あそこなら入れそうだ"] },
+  arrivedAtFormingGroup: {
+    general: ["よし、輪に加われた", "無事に合流できた"],
+    observerJoiner: ["よかった、自然に入れた", "思ったより自然に加われた"],
+  },
+  arrivedAtConfirmedGroup: {
+    general: ["会話の輪に参加できた", "間に合ってよかった"],
+    observerJoiner: ["よかった、自然に入れた", "後からでも入れてよかった"],
+  },
+  ambiguityStressExceeded: {
+    general: ["今日はもう他を回るのはやめておこう", "これ以上待つのはやめておこう"],
+    observerJoiner: ["今日はもうこの辺にしておこう", "やっぱり今日はやめておこう"],
+  },
+  reachedScreenEdge: { general: ["会場の外へ向かう", "そのまま会場を後にした"] },
+  receivedLightInvitation: {
+    general: ["声をかけてもらえた", "誘ってもらえて少しほっとした"],
+    observerJoiner: ["声をかけてもらえた", "誘ってもらえて少し気が楽になった"],
+  },
+  stressCrossedRisingThreshold: {
+    general: ["まだ輪に入れないな…少し疲れてきた", "そろそろ長いな、と感じ始めた"],
+    observerJoiner: ["まだ輪に入れないな…少し疲れてきた", "この空気、少し疲れるな"],
+  },
+  stressNearLeaveThreshold: {
+    general: ["そろそろ会場を出た方がよさそうだ", "潮時かもしれない"],
+    observerJoiner: ["そろそろ会場を出た方がよさそうだ", "そろそろ潮時かもしれない"],
+  },
+  nearbyGroupUnapproached: {
+    general: ["話したいけど、今入るのは少し気まずいな…", "声をかけるタイミングが難しい"],
+    observerJoiner: ["話したいけど、今入るのは少し気まずいな…", "輪はあるけど、自分から入るのは気が引ける"],
+  },
+  noJoinableGroupNearby: {
+    general: ["近くに輪が見当たらないな", "もう少し様子を見てみよう"],
+    observerJoiner: ["近くに輪が見当たらないな", "入れそうな輪がまだないから、様子を見よう"],
+  },
+};
+
+export const STANDING_PARTY_PRESENTATION: ScenarioPresentation = {
+  id: "standingParty",
+  parameters: STANDING_PARTY_PARAMETERS,
+  // Issue #174: Phase 1時点で立食パーティー向けに実装済みの介入は存在しないため、"none"のみが
+  // 定義順のまま返る(`resolveAvailableInterventionIds`が`applicability.scenarios`から自動的に絞る)。
+  availableInterventionIds: resolveAvailableInterventionIds("standingParty"),
+  showInterventionControls: true,
+  // 比較対象となる立食パーティー専用介入が未実装のため、二次会向け比較パネルは表示しない
+  showInterventionComparison: false,
+  showGroupFormationComparison: false,
+  speechTemplates: STANDING_PARTY_SPEECH,
+  expressionTemplates: STANDING_PARTY_EXPRESSIONS,
+  agentStateLabels: {
+    undecided: "未定",
+    forming: "輪を形成中",
+    approaching: "接近中",
+    joined: "輪に参加済み",
+    leaving: "離脱中",
+    left: "離脱済み",
+    unassigned: "未割当",
+  },
+  canvas: {
+    ariaLabel: "立食パーティーの会話クラスタ形成シミュレーション領域",
+    confirmedCandidate: "会話の輪",
+    formingCandidate: "形成中の輪",
+    dissolvedCandidate: "解散した輪",
+    expiredCandidate: "時間切れの輪",
+  },
+  legend: {
+    items: [
+      { color: "#9ca3af", label: "gray: 未定" },
+      { color: "#3b82f6", label: "blue: 会話の輪に加わる意思が強まりつつある" },
+      { color: "#22c55e", label: "green: 輪に合流済み(形成中の輪 or 成立済みの輪)" },
+      { color: "#ef4444", label: "red: 会場を出る方向" },
+      { color: "#a855f7", label: "purple: 自分から話しかけ始めた人・核を作っている人" },
+      { color: "#f97316", label: "orange: observerJoiner型(注目対象)" },
+    ],
+    note: "円が大きいほど自分から話しかけ始めやすい人です。オレンジの太枠は observerJoiner 型(輪に入りたいが自分の意思で場を動かしたくない人)を示します。",
+  },
+  summary: {
+    joinedCount: "参加人数",
+    leftCount: "離脱人数",
+    unassignedCount: "未割当人数",
+    observerSection: "observerJoinerサマリー",
+    firstNucleusTick: "最初の核形成tick",
+    firstConfirmedTick: "最初の輪成立tick",
+    confirmedCount: "成立した輪の数",
+    failure: "輪不成立",
+  },
+  monteCarlo: {
+    observerJoinRate: "observerJoiner参加率",
+    observerLeaveRate: "observerJoiner離脱率",
+    groupFailureRate: "輪不成立率",
+    averageFirstConfirmedTick: "平均輪成立tick",
+    lateJoinSuccessRate: "後乗り成功率",
+    averageJoinedCount: "平均参加人数",
+    averageLeftCount: "平均離脱人数",
+    confirmedUnit: "輪",
+    showLeaveMetrics: true,
+    showLateJoinMetric: true,
+  },
+  speechEffects: {
+    stress: "ストレス蓄積率",
+    attractiveness: "輪の魅力度",
+    approachProbability: "接近確率",
+    leaveThreshold: "離脱しきい値",
+  },
+  eventLog: {
+    nucleusFilter: "核形成イベントのみ",
+    confirmedFilter: "輪成立イベントのみ",
+    joinFailureFilter: "参加失敗・再探索のみ",
+    leaveFilter: "離脱イベントのみ",
+    showLeaveFilter: true,
+  },
+};
+
 function isSameGroupSize(a: GroupSizeRule, b: GroupSizeRule): boolean {
   return a.minGroupSize === b.minGroupSize && a.maxGroupSize === b.maxGroupSize;
 }
@@ -684,8 +875,9 @@ export function getScenarioPresentation(
   id: FormationScenarioId | undefined,
   classroomGroupSize?: GroupSizeRule,
 ): ScenarioPresentation {
-  if (id !== "classroomPair") return AFTER_PARTY_PRESENTATION;
-  return resolveClassroomPresentation(classroomGroupSize ?? DEFAULT_CLASSROOM_PAIR_GROUP_SIZE);
+  if (id === "classroomPair") return resolveClassroomPresentation(classroomGroupSize ?? DEFAULT_CLASSROOM_PAIR_GROUP_SIZE);
+  if (id === "standingParty") return STANDING_PARTY_PRESENTATION;
+  return AFTER_PARTY_PRESENTATION;
 }
 
 export function normalizeInterventionForPresentation(
