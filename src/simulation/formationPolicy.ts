@@ -151,6 +151,29 @@ export type UnconfirmedCandidateLifecycleContext = {
 export type UnconfirmedCandidateLifecycleOutcome = "continue" | "dissolve" | "expire";
 
 /**
+ * 責務9(Issue #176、ADR: docs/interaction-cluster-model.md 3.1節)の入力コンテキスト。
+ * 合流済み(state === "joined")のエージェントが今のクラスタから離れてよいかの判定に使う。
+ * Phase 1では`ticksInCluster`のみを参照する暫定ルールだが、Phase 2で満足度・他クラスタ魅力度・
+ * 遠慮等の状態を追加できるよう、拡張余地のある専用コンテキスト型として独立させている。
+ */
+export type ClusterDepartureContext = {
+  /** このクラスタへ合流してからの経過tick数(合流tickが不明な場合は呼び出し側が0を渡す) */
+  ticksInCluster: number;
+  /** 現時点のクラスタの人数(判定式が人数を参照できるよう渡す。Phase 1では未使用) */
+  memberCount: number;
+  /** 現在tick(将来の時間依存判定のために渡す。Phase 1では未使用) */
+  tick: number;
+};
+
+/** 責務9の判定結果。責務1の`CandidateInitiationDecision`と同じ形(eligible + probability)を踏襲する */
+export type ClusterDepartureDecision = {
+  /** このtickで離脱判定(rng判定)の対象になるか */
+  eligible: boolean;
+  /** `eligible`な場合の離脱確率(呼び出し側がrng.chanceにそのまま渡す) */
+  probability: number;
+};
+
+/**
  * 責務6(Issue #131): 候補の成立最小人数・収容最大人数(容量制約)。
  * `maxGroupSize`に`Number.POSITIVE_INFINITY`を返すポリシー/候補は「実質無制限」を表す。
  */
@@ -223,6 +246,14 @@ export interface FormationPolicy {
    * (「最後の1枠を逃した」という個別の失敗体験にのみ追加stressを紐づけるため)。
    */
   computeJoinFailureStressIncrement(agent: Agent, reason: ApproachFailureReason): number;
+
+  /**
+   * 責務9(Issue #176、ADR: docs/interaction-cluster-model.md): 合流済み(state === "joined")の
+   * エージェントが、このクラスタから離れてundecidedへ戻り再探索してよいかを判定する。
+   * `afterParty`/`classroomPair`は常に`{ eligible: false, probability: 0 }`を返し、既存挙動を
+   * 一切変えない(受入条件: 二次会・学校シナリオの既存離脱挙動に回帰がない)。
+   */
+  evaluateClusterDeparture(agent: Agent, candidate: GroupCandidate, ctx: ClusterDepartureContext): ClusterDepartureDecision;
 }
 
 // --- afterParty: 現行の二次会シナリオのロジック(既存挙動を維持したまま移設) --------------------
@@ -361,15 +392,35 @@ export const afterPartyPolicy: FormationPolicy = {
     if (reason !== "capacityFull") return 0;
     return agent.willingness * JOIN_FAILURE_STRESS_RATE;
   },
+
+  evaluateClusterDeparture() {
+    // 二次会シナリオでは「成立済みグループへの参加」は終端的な意思決定であり、以後の離脱経路を
+    // 持たない(既存挙動)。責務9はIssue #176で新設したstandingParty専用の振る舞いのため、
+    // 常に「離脱なし」を返す(受入条件: 既存の二次会離脱挙動に回帰がない)。
+    return { eligible: false, probability: 0 };
+  },
 };
 
 // --- standingParty: Issue #174 (Phase 1) 立食パーティーで会話の輪を探すシナリオ -----------------
 //
-// Phase 1時点では、複数の会話の輪が並行して形成される様子(核形成・接近・成立・未成立候補の解散/
-// 期限切れ)をafterPartyと同じ力学でそのまま表現する。会話クラスタからの離脱・再参加・縮小/再形成
-// (ADRの責務9/10)は後続Issueの対象であり、本Issueでは意図的に実装しない(対象外: 離脱・再参加ロジック、
-// 成立済みクラスタの縮小・解散)。そのため`canLeave`到達後の`leaving`は「会話の輪を諦めて会場を出る」
-// を表す。
+// 複数の会話の輪が並行して形成される様子(核形成・接近・成立・未成立候補の解散/期限切れ)は
+// afterPartyと同じ力学でそのまま表現する。`canLeave`到達後の`leaving`は(#174時点から変わらず)
+// 「会話の輪を諦めて会場を出る」という会場退出を表す。
+//
+// Issue #176 (Phase 1): ADRの責務9(`evaluateClusterDeparture`、クラスタ離脱判定)をここで実装する。
+// 合流済み(state === "joined")のエージェントが会話クラスタを離れてundecidedへ戻り、再探索・
+// 再参加できるようにする(`engine.ts`側の状態遷移・membership更新・クールダウン・構造化イベントは
+// engine.ts参照)。責務10(確定後クラスタの縮小に伴うdissolving/dissolved遷移)は本Issueの対象外
+// (対象外: 「cluster人数減少後の詳細ライフサイクル」)のため、`confirmedClusterIsMutable`相当の
+// responsibility自体を追加しない。すなわち縮小したconfirmedクラスタは(人数が0になっても)status
+// 自体はconfirmedのまま残り続ける。
+//
+// Phase 1では心理モデルを実装しない(対象外: 会話満足度・社交性・観察参加者の遠慮葛藤)。
+// `evaluateClusterDeparture`は「一定滞在tick数を超えたら、agentの特性に一切依存しない一定の
+// 低確率で離脱対象になる」という、社会的意味を持たない暫定ルールのみを置く(受入条件: 暫定ルール
+// であることの明記、agent特性の現実的解釈を先取りしない、Phase 2でdecision実装を交換できる、
+// 同一seedで再現可能——ctx以外の外部状態を参照しない純粋関数であるため、呼び出し側が同じrng系列で
+// rng.chanceする限り自動的に満たされる)。
 //
 // Issue #175 (Phase 1): 立食パーティーは意味論的な自然終了(semantic finish)を持たない
 // ―― 全員がいずれかの会話の輪へ所属しても、輪が0件になっても、すべての輪が成立状態になっても、
@@ -385,6 +436,15 @@ export const afterPartyPolicy: FormationPolicy = {
 function standingPartyFinishReason(_agents: Agent[], _tick: number): SimulationFinishReason | undefined {
   return undefined;
 }
+
+// Issue #176 (Phase 1, 暫定ルール): このtick数だけクラスタに留まるまでは離脱判定の対象にしない。
+// 「合流直後に即離脱する」ような不自然な振動を避けるための最低限の下限であり、agentの特性は
+// 一切参照しない(社会的意味を持たせない)。
+const STANDING_PARTY_MIN_TICKS_BEFORE_DEPARTURE = 15;
+// Issue #176 (Phase 1, 暫定ルール): 上記の最低滞在tickを超えた後、1tickあたりこの固定確率で
+// 離脱対象になる。Phase 2でdecision実装(満足度・他クラスタ魅力度・遠慮等)に交換される前提の
+// プレースホルダー値(受入条件: 社会的意味を持たない明示的な暫定ルール)。
+const STANDING_PARTY_PROVISIONAL_DEPARTURE_PROBABILITY = 0.05;
 
 export const standingPartyPolicy: FormationPolicy = {
   id: "standingParty",
@@ -431,6 +491,19 @@ export const standingPartyPolicy: FormationPolicy = {
 
   computeJoinFailureStressIncrement(agent, reason) {
     return afterPartyPolicy.computeJoinFailureStressIncrement(agent, reason);
+  },
+
+  /**
+   * 責務9(Issue #176)の暫定ルール本体。agent/candidateそのものは参照せず、`ctx.ticksInCluster`
+   * のみを見る(agent特性の現実的解釈を先取りしないため、willingness/conformity等は一切使わない)。
+   * rngを直接消費しない純粋関数で、実際の確率判定(rng.chance)はengine.ts側が行う
+   * (責務1の`evaluateCandidateInitiation`と同じ「eligible + probability」の分離パターン)。
+   */
+  evaluateClusterDeparture(_agent, _candidate, ctx) {
+    if (ctx.ticksInCluster < STANDING_PARTY_MIN_TICKS_BEFORE_DEPARTURE) {
+      return { eligible: false, probability: 0 };
+    }
+    return { eligible: true, probability: STANDING_PARTY_PROVISIONAL_DEPARTURE_PROBABILITY };
   },
 };
 
@@ -560,6 +633,12 @@ function createClassroomGroupPolicy(options: ClassroomGroupFormationOptions): Fo
     computeJoinFailureStressIncrement(agent, reason) {
       if (reason !== "capacityFull") return 0;
       return agent.willingness * CLASSROOM_JOIN_FAILURE_STRESS_RATE;
+    },
+
+    evaluateClusterDeparture() {
+      // 受入条件: 学校シナリオでは引き続き離脱が発生しない(canLeaveが常にfalseであることと同様、
+      // 一度決まった班からの離脱経路もIssue #176の対象外)
+      return { eligible: false, probability: 0 };
     },
   };
 }

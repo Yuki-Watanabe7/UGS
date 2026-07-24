@@ -92,6 +92,12 @@ const CANDIDATE_LINGER_TICKS = 4;
 // Issue #133: 参加失敗した候補への即時再接近を避けるクールダウンtick数。
 // `maxGroupSize`はcandidate存続中に変化しないため実質恒久的な除外に近いが、明示的な制御として持たせる
 const REAPPROACH_COOLDOWN_TICKS = 8;
+// Issue #176: クラスタ離脱直後、同じクラスタへ即座に再接近するのを避けるクールダウンtick数
+// (責務9の判定式そのものではなく、離脱後の移動・再探索という「経路」側の制御)
+const CLUSTER_REJOIN_COOLDOWN_TICKS = 10;
+// Issue #176: クラスタ離脱時、離脱元の中心から一度に離れる距離。JOIN_DISTANCE(26)より大きくして
+// 「同じ場所に重なったまま即時再参加」を避ける(3節の受入条件)
+const CLUSTER_DEPARTURE_STEP_DISTANCE = 34;
 
 // `predecided-venue`: 成立済みグループへのattractivenessに加える固定ボーナス
 const PREDECIDED_VENUE_CONFIRMED_BONUS = 0.25;
@@ -309,6 +315,18 @@ export function isCandidateFull(candidate: GroupCandidate, capacity: GroupCapaci
 }
 
 /**
+ * Issue #176 (ADR 3.3節「join/leave時のagent側・cluster側の原子的更新」): candidate.memberIdsからの
+ * 除去は必ずこの関数を通す。`addMemberToCandidate`と対になるヘルパーで、対象が既に含まれていなければ
+ * 何もせず"notMember"を返す(受入条件: 離脱開始・完了を複数回行ってもmemberが二重削除されない)。
+ */
+function detachMemberFromCandidate(candidate: GroupCandidate, agentId: string): "removed" | "notMember" {
+  const index = candidate.memberIds.indexOf(agentId);
+  if (index === -1) return "notMember";
+  candidate.memberIds.splice(index, 1);
+  return "removed";
+}
+
+/**
  * Issue #131: 構造化イベントmetadataへ定員・空き人数を載せる際の共通ヘルパー。
  * `maxGroupSize`が有限(候補固有のオーバーライド等で実際に容量制限がある)場合のみ値を持たせ、
  * 「実質無制限」(Number.POSITIVE_INFINITY)の場合はmetadataに含めない(JSON化できない値を
@@ -370,7 +388,7 @@ function buildSchoolInterventionContext(
  * 古いtargetやcooldownをクリアする)。位置も候補の座標へ揃え(#149の成立済み表示上、
  * 割り当てられた本人がその班の位置に居るように見せるため)、以後の移動計算に残存速度を残さない。
  */
-function settleIntoGroup(agent: Agent, candidate: GroupCandidate): void {
+function settleIntoGroup(agent: Agent, candidate: GroupCandidate, tick: number): void {
   agent.state = "joined";
   agent.joinedGroupId = candidate.id;
   agent.x = candidate.x;
@@ -379,6 +397,9 @@ function settleIntoGroup(agent: Agent, candidate: GroupCandidate): void {
   agent.vy = 0;
   agent.lastFailedCandidateId = undefined;
   agent.lastFailedCandidateAtTick = undefined;
+  // Issue #176: 責務9(クラスタ離脱判定)の滞在tick計算に使う合流tick。classroomPair等
+  // 離脱経路を持たないシナリオでは参照されないが、settleIntoGroup経由の全joinで一貫して設定する。
+  agent.clusterJoinedAtTick = tick;
 }
 
 function applyInterventionActions(
@@ -387,6 +408,7 @@ function applyInterventionActions(
   actions: InterventionAction[],
   formationPolicy: FormationPolicy,
   params: SimParams,
+  tick: number,
 ): void {
   for (const action of actions) {
     if (action.kind === "createGroup") {
@@ -409,7 +431,7 @@ function applyInterventionActions(
         maxGroupSize: action.maxGroupSize,
       };
       candidates.push(candidate);
-      for (const memberAgent of memberAgents) settleIntoGroup(memberAgent, candidate);
+      for (const memberAgent of memberAgents) settleIntoGroup(memberAgent, candidate, tick);
       continue;
     }
 
@@ -421,7 +443,7 @@ function applyInterventionActions(
       if (!candidate) continue;
       const capacity = formationPolicy.resolveGroupCapacity(candidate, params);
       if (addMemberToCandidate(candidate, agent.id, capacity) === "full") continue;
-      settleIntoGroup(agent, candidate);
+      settleIntoGroup(agent, candidate, tick);
     } else if (action.kind === "removeFromGroup") {
       const candidate = candidates.find((c) => c.id === action.groupId);
       if (!candidate) continue;
@@ -451,7 +473,7 @@ function fireSchoolInterventionHook(
 ): InterventionRuntimeState {
   const result = runSchoolInterventionHook(schoolIntervention, ctx);
 
-  applyInterventionActions(agents, candidates, result.actions, formationPolicy, params);
+  applyInterventionActions(agents, candidates, result.actions, formationPolicy, params, ctx.tick);
   for (const event of result.events) {
     pushLog(log, ctx.tick, event.message, event.tags ?? ["intervention"], event.eventType, event.metadata);
   }
@@ -476,15 +498,17 @@ export function nearestCandidate(
   candidates: GroupCandidate[],
   capacityOf?: (candidate: GroupCandidate) => GroupCapacity,
   /**
-   * Issue #133: 再探索時のクールダウン制御用。指定されたIDの候補は(満員/消滅で既に除外されて
-   * いるかどうかに関わらず)この呼び出しでは選択肢から外す。省略時は従来どおり除外しない。
+   * Issue #133/#176: 再探索時のクールダウン制御用。指定されたID群の候補は(満員/消滅で既に
+   * 除外されているかどうかに関わらず)この呼び出しでは選択肢から外す。省略時は従来どおり除外しない。
+   * Issue #176で、参加失敗クールダウン(単一ID)とクラスタ離脱クールダウン(単一ID)を同時に
+   * 除外できるよう、単一IDからSetへ一般化した。
    */
-  excludeId?: string,
+  excludeIds?: ReadonlySet<string>,
 ): GroupCandidate | undefined {
   let best: GroupCandidate | undefined;
   let bestDist = Infinity;
   for (const c of candidates) {
-    if (excludeId !== undefined && c.id === excludeId) continue;
+    if (excludeIds !== undefined && excludeIds.has(c.id)) continue;
     if (!isJoinable(c, capacityOf?.(c))) continue;
     const d = distance(agent.x, agent.y, c.x, c.y);
     if (d < bestDist) {
@@ -708,6 +732,68 @@ function stepAgentMotion(agent: Agent, target?: { x: number; y: number }, speed 
   agent.vy = (dy / d) * speed;
   agent.x = clamp(agent.x + agent.vx, 5, WORLD_WIDTH - 5);
   agent.y = clamp(agent.y + agent.vy, 5, WORLD_HEIGHT - 5);
+}
+
+/**
+ * Issue #176 (責務9): 合流済み(state === "joined")のagentが会話クラスタから離脱し、undecidedへ戻る
+ * 一連の更新を1箇所にまとめる(ADR 3.3節「join/leave時の原子的更新」)。
+ * - candidate.memberIdsからの除去(`detachMemberFromCandidate`、二重削除にならない)
+ * - agent側所属の解除・再探索クールダウン用フィールドの更新
+ * - クラスタ中心から一定距離だけ離れる短い離脱移動(2節: 同じ場所に重なったまま即時再参加しない)。
+ *   Canvas境界内に収まるよう既存の`clamp`を再利用する(3節: Canvas境界外へ出ない)。
+ */
+function departFromCluster(agent: Agent, candidate: GroupCandidate, tick: number, rng: SeededRandom): void {
+  detachMemberFromCandidate(candidate, agent.id);
+
+  let dx = agent.x - candidate.x;
+  let dy = agent.y - candidate.y;
+  if (Math.hypot(dx, dy) < 1e-6) {
+    // 合流直後等、クラスタ中心と完全に同座標な場合のフォールバック方向
+    dx = rng.range(-1, 1);
+    dy = rng.range(-1, 1);
+    if (Math.hypot(dx, dy) < 1e-6) dx = 1;
+  }
+  const len = Math.hypot(dx, dy) || 1;
+  agent.x = clamp(agent.x + (dx / len) * CLUSTER_DEPARTURE_STEP_DISTANCE, 5, WORLD_WIDTH - 5);
+  agent.y = clamp(agent.y + (dy / len) * CLUSTER_DEPARTURE_STEP_DISTANCE, 5, WORLD_HEIGHT - 5);
+  agent.vx = 0;
+  agent.vy = 0;
+
+  agent.state = "undecided";
+  agent.joinedGroupId = undefined;
+  agent.clusterJoinedAtTick = undefined;
+  agent.lastDepartedClusterId = candidate.id;
+  agent.lastDepartedClusterAtTick = tick;
+  agent.clusterDepartureCount = (agent.clusterDepartureCount ?? 0) + 1;
+}
+
+/**
+ * Issue #176: 一度でもクラスタ離脱したことのある(`lastDepartedClusterId`を持つ)agentが、新たに
+ * (同じクラスタ・別クラスタのいずれでも)合流したタイミングで`clusterRejoined`を記録する。
+ * `lastDepartedClusterId`はstandingPartyの離脱経路以外では設定されないため、この呼び出し自体は
+ * afterParty/classroomPairでは常にno-op(受入条件: 既存シナリオへの回帰がない)。
+ */
+function logClusterRejoinIfApplicable(agent: Agent, candidate: GroupCandidate, tick: number, log: LogEntry[]): void {
+  if (agent.lastDepartedClusterId === undefined) return;
+
+  const previousClusterId = agent.lastDepartedClusterId;
+  const ticksSinceDeparture = tick - (agent.lastDepartedClusterAtTick ?? tick);
+  pushLog(
+    log,
+    tick,
+    agent.isObserverJoiner
+      ? `observerJoinerが${previousClusterId === candidate.id ? "元の" : "別の"}会話の輪へ再び合流した`
+      : `${agent.label}さんが${previousClusterId === candidate.id ? "元の" : "別の"}会話の輪へ再び合流した`,
+    agent.isObserverJoiner ? ["observerJoiner", "clusterDeparture"] : ["clusterDeparture"],
+    "clusterRejoined",
+    {
+      agentId: agent.id,
+      agentLabel: agent.label,
+      groupId: candidate.id,
+      previousClusterId,
+      ticksSinceDeparture,
+    },
+  );
 }
 
 export function stepSimulation(
@@ -940,18 +1026,29 @@ export function stepSimulation(
     // Issue #133: 直前に参加失敗した候補は、クールダウン期間中は再探索の選択肢から除外する
     // (「直前の失敗候補を即座に再選択しない」制御。容量が変わらない限り実質恒久的な除外と等価だが、
     // 明示的なフィールドとして持たせることで再探索の系列がログ・テストから追跡できるようにする)
-    const cooldownExcludeId =
+    // Issue #176: クラスタ離脱直後も同じ考え方で、離脱元クラスタをクールダウン期間中は除外する
+    // (「意味が衝突しない」よう、参加失敗クールダウンとは別のフィールド・別の除外条件として扱う)
+    const cooldownExcludeIds = new Set<string>();
+    if (
       agent.lastFailedCandidateId !== undefined &&
       agent.lastFailedCandidateAtTick !== undefined &&
       tick - agent.lastFailedCandidateAtTick < REAPPROACH_COOLDOWN_TICKS
-        ? agent.lastFailedCandidateId
-        : undefined;
+    ) {
+      cooldownExcludeIds.add(agent.lastFailedCandidateId);
+    }
+    if (
+      agent.lastDepartedClusterId !== undefined &&
+      agent.lastDepartedClusterAtTick !== undefined &&
+      tick - agent.lastDepartedClusterAtTick < CLUSTER_REJOIN_COOLDOWN_TICKS
+    ) {
+      cooldownExcludeIds.add(agent.lastDepartedClusterId);
+    }
     // Issue #131: 既に満員の候補へは新たに接近を始めさせない(容量込みのjoinable判定)
     const candidate = nearestCandidate(
       agent,
       candidates,
       (c) => formationPolicy.resolveGroupCapacity(c, effectiveParams),
-      cooldownExcludeId,
+      cooldownExcludeIds.size > 0 ? cooldownExcludeIds : undefined,
     );
     if (!candidate) continue;
 
@@ -1070,6 +1167,7 @@ export function stepSimulation(
         continue;
       }
       agent.state = "joined";
+      agent.clusterJoinedAtTick = tick;
       if (agent.isObserverJoiner) {
         pushLog(
           log,
@@ -1104,6 +1202,8 @@ export function stepSimulation(
               : `${agent.label}さんが輪に合流`,
         );
       }
+      // Issue #176: 過去に離脱経験があるagentのみ対象(standingParty以外では常にno-op)
+      logClusterRejoinIfApplicable(agent, candidate, tick, log);
     }
   }
 
@@ -1128,6 +1228,66 @@ export function stepSimulation(
       };
       stepAgentMotion(agent, target, WANDER_SPEED);
     }
+  }
+
+  // 5b. クラスタ離脱判定(責務9, Issue #176): 合流済みのagentが会話クラスタを離れ、再探索状態へ戻るか
+  // afterParty/classroomPairは常に{ eligible: false }を返すため、この処理はstandingParty以外では
+  // rngを一切消費しないno-op(受入条件: 既存シナリオへの回帰がない)。
+  for (const agent of agents) {
+    if (agent.state !== "joined") continue;
+    const candidate = candidates.find((c) => c.id === agent.joinedGroupId);
+    // 所属先が既に見当たらない場合は、直後(9)の整合性チェックがundecidedへ戻す。ここでは何もしない
+    // (受入条件: 消滅済みclusterからの離脱処理でも例外にならない)。
+    if (!candidate) continue;
+
+    const ticksInCluster = agent.clusterJoinedAtTick !== undefined ? tick - agent.clusterJoinedAtTick : 0;
+    const departure = formationPolicy.evaluateClusterDeparture(agent, candidate, {
+      ticksInCluster,
+      memberCount: candidate.memberIds.length,
+      tick,
+    });
+    if (!departure.eligible || !rng.chance(departure.probability)) continue;
+
+    const clusterId = candidate.id;
+    const departureTags: LogTag[] = agent.isObserverJoiner ? ["observerJoiner", "clusterDeparture"] : ["clusterDeparture"];
+    const departureMetadataBase: SimulationEventMetadata = {
+      agentId: agent.id,
+      agentLabel: agent.label,
+      groupId: clusterId,
+      ticksInCluster,
+      departureReason: "provisionalStayDuration",
+    };
+    pushLog(
+      log,
+      tick,
+      agent.isObserverJoiner
+        ? `observerJoinerが会話の輪を離れ始めた`
+        : `${agent.label}さんが会話の輪を離れ始めた`,
+      departureTags,
+      "clusterDepartureStarted",
+      { ...departureMetadataBase, memberCount: candidate.memberIds.length },
+    );
+
+    departFromCluster(agent, candidate, tick, rng);
+
+    pushLog(
+      log,
+      tick,
+      agent.isObserverJoiner ? `observerJoinerが会話の輪から離れた` : `${agent.label}さんが会話の輪から離れた`,
+      departureTags,
+      "clusterDepartureCompleted",
+      { ...departureMetadataBase, memberCount: candidate.memberIds.length },
+    );
+    pushLog(
+      log,
+      tick,
+      agent.isObserverJoiner
+        ? `observerJoinerが新しい会話の輪を探し始めた`
+        : `${agent.label}さんが新しい会話の輪を探し始めた`,
+      departureTags,
+      "clusterResearchStarted",
+      { agentId: agent.id, agentLabel: agent.label, groupId: clusterId },
+    );
   }
 
   // 6. undecided な人はゆるく漂う (何もしていないわけではないことを示す)
@@ -1278,6 +1438,9 @@ export function stepSimulation(
         if (candidate.memberIds.includes(agent.id) && agent.state === "forming") {
           agent.state = "joined";
           agent.joinedGroupId = candidate.id;
+          agent.clusterJoinedAtTick = tick;
+          // Issue #176: 過去に離脱経験があるagentのみ対象(standingParty以外では常にno-op)
+          logClusterRejoinIfApplicable(agent, candidate, tick, log);
         }
       }
       continue;
@@ -1337,6 +1500,7 @@ export function stepSimulation(
       if (!candidate || !isJoinable(candidate) || !candidate.memberIds.includes(agent.id)) {
         agent.state = "undecided";
         agent.joinedGroupId = undefined;
+        agent.clusterJoinedAtTick = undefined;
       }
     }
   }
