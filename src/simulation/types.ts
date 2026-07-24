@@ -131,11 +131,13 @@ export type ApproachFailureReason = "capacityFull" | "groupDissolved" | "groupEx
 /**
  * Issue #176: `clusterDepartureStarted`/`clusterDepartureCompleted`の`metadata.departureReason`に
  * 保持する、離脱理由の構造化コード。表示文言の文字列解析に依存せず後続の集計・Phase 2への
- * 交換判定ができるようにする。現時点では`formationPolicy.ts`の暫定ルール(責務9)由来の
- * 1種類のみが存在する。
+ * 交換判定ができるようにする。
  * - "provisionalStayDuration": Phase 1の暫定ルール(一定滞在tick超過後の固定確率抽選)による離脱
+ * - "clusterBelowMinimumSize": Issue #177(責務10)。自発的な離脱ではなく、他memberの離脱で
+ *   クラスタが成立最小人数を下回ったため、残存memberが強制的に再探索へ戻された
+ *   (`clusterMemberReleased`イベントで使う)
  */
-export type ClusterDepartureReason = "provisionalStayDuration";
+export type ClusterDepartureReason = "provisionalStayDuration" | "clusterBelowMinimumSize";
 
 /**
  * `simulationFinished`イベントに保持する、シナリオ全体の終了理由。
@@ -159,9 +161,13 @@ export type SimulationFinishReason =
 /**
  * GroupCandidateのライフサイクル状態。
  * forming: 未確定の輪として形成中。
- * confirmed: 成立済み二次会グループ(終端状態)。
- * dissolving: 反応が薄い/時間切れ等の理由で解散が決まり、視覚的にフェードアウトしている途中(終端手前)。
- * dissolved: 反応が薄いまま消えた(終端状態)。
+ * confirmed: 成立済みグループ。二次会・学校シナリオでは終端状態だが、`FormationPolicy
+ *   .confirmedClusterIsMutable`がtrueのシナリオ(Issue #177: standingParty)では「成立後も
+ *   join/leaveで人数が変動するactiveな会話クラスタ」を表す(ADR: docs/interaction-cluster-model.md
+ *   3.3節3。`status`列挙自体は追加せず、confirmedが終端か継続かはpolicyが決める)。
+ * dissolving: 反応が薄い/時間切れ/(standingPartyでは)成立最小人数割れ等の理由で解散が決まり、
+ *   視覚的にフェードアウトしている途中(終端手前)。
+ * dissolved: 反応が薄いまま、または成立後に人数が0になって消えた(終端状態)。
  * expired: 成立に至らないまま期限切れになった(終端状態)。
  */
 export type GroupCandidateStatus = "forming" | "confirmed" | "dissolving" | "dissolved" | "expired";
@@ -194,6 +200,17 @@ export type GroupCandidate = {
    */
   minGroupSize?: number;
   maxGroupSize?: number;
+  /**
+   * Issue #177(責務10、ADR 3.1節で検討候補として挙げられていたフィールド): この候補が
+   * `memberIds.length >= 成立最小人数`へ実際に達したことが一度でもあるか。責務3の成立判定
+   * (`computeConfirmationCount`)はafterPartyの近接ヒューリスティックを流用しており、
+   * まだ`memberIds`へ正式加入していない接近中/形成中の人も「集まった人数」に数えるため、
+   * confirmedへ遷移した直後は実際の`memberIds.length`がそれより少ないことがある。
+   * `FormationPolicy.confirmedClusterIsMutable`なクラスタの縮小判定(責務10)は、この猶予期間中の
+   * 人数不足を「離脱による解散」と誤判定しないよう、このフラグがtrueになって以降にのみ適用する。
+   * `confirmedClusterIsMutable`でないシナリオ(afterParty/classroomPair)では参照されない。
+   */
+  everConfirmed?: boolean;
 };
 
 /**
@@ -311,7 +328,38 @@ export type SimulationEventType =
    * Issue #176: 一度でもクラスタ離脱したことのあるagentが、新たに(同じクラスタ・別クラスタの
    * いずれでも)合流した。`metadata.previousClusterId`で離脱元、`metadata.groupId`で合流先を持つ。
    */
-  | "clusterRejoined";
+  | "clusterRejoined"
+  /**
+   * Issue #177: undecidedなagentが候補(forming/confirmed問わず)へ合流した(`state`が`joined`に
+   * なった)。`agentApproached`と同じ設計で、observerJoinerには従来どおり`observerJoinedForming`/
+   * `observerJoinedConfirmed`が別途記録される(このeventTypeはそれ以外のagent向け)。
+   * `metadata.joinedGroupStatus`で未確定の輪への合流("forming")か、成立済み/activeなクラスタへの
+   * 参加("confirmed")かを判別できる。
+   */
+  | "agentJoined"
+  /**
+   * Issue #177(責務10): `FormationPolicy.confirmedClusterIsMutable`なクラスタ(standingParty)で、
+   * 責務9由来の離脱が発生した後もmemberIds.lengthが成立最小人数以上を維持しており、
+   * クラスタが引き続きactiveであることを表す。
+   */
+  | "activeClusterShrunk"
+  /**
+   * Issue #177(責務10): activeなクラスタの人数が成立最小人数を下回り(0人にはなっていない)、
+   * dissolvingへ遷移したことを表す。残存memberは同一tickで`clusterMemberReleased`により
+   * 再探索へ戻される。
+   */
+  | "activeClusterDissolving"
+  /**
+   * Issue #177(責務10): activeなクラスタの人数が0人になり、猶予なく即座にdissolvedへ遷移した
+   * ことを表す。
+   */
+  | "activeClusterDissolved"
+  /**
+   * Issue #177(責務10): `activeClusterDissolving`/`activeClusterDissolved`により、joined状態
+   * だった残存memberが自発的な離脱ではなく強制的にundecidedへ戻され、再探索を始めたことを表す
+   * (`clusterDepartureStarted`/`Completed`は責務9由来の自発的離脱専用であり、この経路では発生しない)。
+   */
+  | "clusterMemberReleased";
 
 /**
  * Issue #156: `schoolInterventionTriggered`の`metadata.outcome`。表示文言の解析に依存しない結果分類。
@@ -434,6 +482,12 @@ export type SimulationEventMetadata = {
   previousClusterId?: string;
   /** Issue #176: `clusterRejoined`用。離脱してから今回の合流までに経過したtick数 */
   ticksSinceDeparture?: number;
+  /**
+   * Issue #177: `activeClusterShrunk`/`activeClusterDissolving`/`activeClusterDissolved`/
+   * `clusterMemberReleased`用。この変化が起きる直前のmemberIds.length(`memberCount`は
+   * 変化後の値を保持する既存の意味を維持する)
+   */
+  memberCountBefore?: number;
 };
 
 export type LogEntry = {
