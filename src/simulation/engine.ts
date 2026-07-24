@@ -94,7 +94,9 @@ const CANDIDATE_LINGER_TICKS = 4;
 const REAPPROACH_COOLDOWN_TICKS = 8;
 // Issue #176: クラスタ離脱直後、同じクラスタへ即座に再接近するのを避けるクールダウンtick数
 // (責務9の判定式そのものではなく、離脱後の移動・再探索という「経路」側の制御)
-const CLUSTER_REJOIN_COOLDOWN_TICKS = 10;
+// Canvas側(Issue #178)がクールダウン中のagentを「離脱後の再探索中」として区別表示するため、
+// 判定式そのものをここへ再実装せずに定数だけexportする。
+export const CLUSTER_REJOIN_COOLDOWN_TICKS = 10;
 // Issue #176: クラスタ離脱時、離脱元の中心から一度に離れる距離。JOIN_DISTANCE(26)より大きくして
 // 「同じ場所に重なったまま即時再参加」を避ける(3節の受入条件)
 const CLUSTER_DEPARTURE_STEP_DISTANCE = 34;
@@ -1212,7 +1214,9 @@ export function stepSimulation(
           candidate.status === "confirmed"
             ? formationPolicy.id === "classroomPair"
               ? `observerJoinerがペア候補 ${candidate.id} に参加`
-              : `observerJoinerが成立済みグループに参加`
+              : formationPolicy.id === "standingParty"
+                ? `observerJoinerが会話の輪に加わった`
+                : `observerJoinerが成立済みグループに参加`
             : formationPolicy.id === "classroomPair"
               ? `observerJoinerがペア候補 ${candidate.id} に合流`
               : `observerJoinerが未確定の輪に合流`,
@@ -1233,7 +1237,9 @@ export function stepSimulation(
           candidate.status === "confirmed"
             ? formationPolicy.id === "classroomPair"
               ? `${agent.label}さんがペア候補 ${candidate.id} に参加`
-              : `${agent.label}さんが成立済みグループに参加`
+              : formationPolicy.id === "standingParty"
+                ? `${agent.label}さんが会話の輪に加わった`
+                : `${agent.label}さんが成立済みグループに参加`
             : formationPolicy.id === "classroomPair"
               ? `${agent.label}さんがペア候補 ${candidate.id} に合流`
               : `${agent.label}さんが輪に合流`,

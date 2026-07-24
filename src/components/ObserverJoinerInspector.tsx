@@ -511,6 +511,58 @@ function InspectionCard({
         </div>
       )}
 
+      {presentation.id === "standingParty" && (
+        <>
+          <div className="observer-inspector-divider" />
+
+          <div className="observer-inspector-row observer-inspector-row--header">
+            <span>会話クラスタの状態</span>
+          </div>
+          <div className="observer-inspector-row">
+            <span>現在の輪</span>
+            <span title={inspection.currentGroupId}>{inspection.currentGroupId ?? "なし"}</span>
+          </div>
+          {inspection.currentGroupId !== undefined && (
+            <>
+              <div className="observer-inspector-row">
+                <span>輪の状態</span>
+                <span>
+                  {inspection.currentGroupStatus
+                    ? GROUP_STATUS_LABEL[inspection.currentGroupStatus]
+                    : "不明"}
+                  {inspection.currentGroupEverConfirmed === false ? "(成立最小人数へ未到達)" : ""}
+                </span>
+              </div>
+              <div className="observer-inspector-row">
+                <span>輪の人数</span>
+                <span>
+                  {inspection.currentGroupMemberCount}人
+                  {inspection.currentGroupMinSize !== undefined
+                    ? `(最小${inspection.currentGroupMinSize}人)`
+                    : ""}
+                </span>
+              </div>
+              <div className="observer-inspector-row">
+                <span>この輪での滞在tick</span>
+                <span>{inspection.ticksInCurrentCluster ?? "-"}</span>
+              </div>
+            </>
+          )}
+          <div className="observer-inspector-row">
+            <span>直前に離脱した輪</span>
+            <span title={inspection.lastDepartedClusterId}>
+              {inspection.lastDepartedClusterId
+                ? `${inspection.lastDepartedClusterId}(tick ${inspection.lastDepartedClusterAtTick})`
+                : "なし"}
+            </span>
+          </div>
+          <div className="observer-inspector-row">
+            <span>離脱→再探索の累計回数</span>
+            <span>{inspection.clusterDepartureCount}回</span>
+          </div>
+        </>
+      )}
+
       <div className="observer-inspector-divider" />
 
       <div className="observer-inspector-row observer-inspector-row--header">

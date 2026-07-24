@@ -364,6 +364,7 @@ function SimulationApp({ scenario }: Props) {
             runId={runId}
             thoughts={visibleThoughts}
             speeches={visibleSpeeches}
+            tick={simState.tick}
           />
         </section>
 

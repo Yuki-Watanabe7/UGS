@@ -78,7 +78,8 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
     availableScenarios: "立食パーティー(標準)の1種類",
     introText:
       "立食パーティーの会場で、複数の会話の輪が同時並行に生まれていく過程を可視化します。オレンジ色のエージェントは「輪に入りたいが、自分の意思で場を動かしたくない人 (observerJoiner)」です。" +
-      "会話の輪からの離脱・再探索・再参加そのものの実装は今後のアップデートで追加予定です。",
+      "輪が成立した後も観察は終わらず、人はその輪から離脱して別の輪を再探索したり、別の輪へ再参加したりします。輪自体も人数が減れば縮小・解散します(Phase 1の暫定ルールによるもので、現実の性格診断ではありません)。" +
+      "この動的な循環は決まった終了条件を持たないため、区切りたいタイミングで一時停止してください。",
     presetIds: ["standing-party"],
     initialPresetId: "standing-party",
     presentation: STANDING_PARTY_PRESENTATION,

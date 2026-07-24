@@ -19,6 +19,7 @@ import { derivePrivateEvaluations, derivePublicExpressions } from "./socialExpre
 import { correctionFromHistory } from "./relationshipTie";
 import { distance } from "./model";
 import { attractiveness, nearestCandidate } from "./engine";
+import { getFormationPolicyById } from "./formationPolicy";
 
 /**
  * Issue #119: 全observerJoinerで共有するPhase 4(本心/対外表現)の導出結果。
@@ -290,6 +291,12 @@ function buildInspection(
   );
   const lastFailure = failureEntries.at(-1);
   const currentGroupId = currentGroupIdFor(agent, state);
+  const currentGroup = currentGroupId
+    ? state.groupCandidates.find((c) => c.id === currentGroupId)
+    : undefined;
+  const currentGroupPolicy = currentGroup
+    ? getFormationPolicyById(state.formationScenarioId ?? "afterParty", state.formationDeadlineTick, state.formationClassroomGroupSize)
+    : undefined;
 
   return {
     agentId: agent.id,
@@ -334,6 +341,20 @@ function buildInspection(
     assignmentStatus: assignmentStatusFor(agent),
     approachTargetGroupId: agent.state === "approaching" ? agent.joinedGroupId : undefined,
     currentGroupId,
+    currentGroupStatus: currentGroup?.status,
+    currentGroupMemberCount: currentGroup?.memberIds.length,
+    currentGroupEverConfirmed: currentGroup?.everConfirmed,
+    currentGroupMinSize: currentGroup && currentGroupPolicy
+      ? currentGroupPolicy.resolveGroupCapacity(currentGroup, params).minGroupSize
+      : undefined,
+    clusterJoinedAtTick: agent.clusterJoinedAtTick,
+    ticksInCurrentCluster:
+      agent.state === "joined" && agent.clusterJoinedAtTick !== undefined
+        ? state.tick - agent.clusterJoinedAtTick
+        : undefined,
+    lastDepartedClusterId: agent.lastDepartedClusterId,
+    lastDepartedClusterAtTick: agent.lastDepartedClusterAtTick,
+    clusterDepartureCount: agent.clusterDepartureCount ?? 0,
     joinFailureCount: failureEntries.length,
     lastFailureReason: lastFailure?.metadata?.reason,
     lastFailureTick: lastFailure?.tick,

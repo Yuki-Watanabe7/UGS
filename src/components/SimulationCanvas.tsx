@@ -3,6 +3,7 @@ import type { Agent, GroupCandidate } from "../simulation/types";
 import type { FormationScenarioId, GroupSizeRule } from "../simulation/formationPolicy";
 import type { ExpressionIntent } from "../simulation/expression";
 import type { SpeechIntent } from "../simulation/speech";
+import { CLUSTER_REJOIN_COOLDOWN_TICKS } from "../simulation/engine";
 import { ThoughtBubble } from "./ThoughtBubble";
 import { SpeechBubble } from "./SpeechBubble";
 import { computeThoughtBubbleLayouts, type ThoughtBubblePlacementInput } from "./thoughtBubbleLayout";
@@ -63,6 +64,12 @@ type Props = {
   thoughts?: ThoughtBubbleDisplay[];
   /** 現在表示すべき発言。未指定/空配列なら発言吹き出しは表示しない */
   speeches?: SpeechBubbleDisplay[];
+  /**
+   * Issue #178: standingPartyで、直前にクラスタを離脱したagentを再探索クールダウン中として
+   * 区別表示するために使う現在tick。未指定ならこの区別表示自体を行わない(既存シナリオ・
+   * 既存呼び出し元は影響を受けない)。
+   */
+  tick?: number;
 };
 
 function stateColor(agent: Agent, showClassroomAssignmentState: boolean): string {
@@ -86,18 +93,37 @@ function stateColor(agent: Agent, showClassroomAssignmentState: boolean): string
   }
 }
 
-function agentStateClass(agent: Agent, showClassroomAssignmentState: boolean): string {
+function agentStateClass(agent: Agent, showClassroomAssignmentState: boolean, isPostClusterDeparture: boolean): string {
   if (showClassroomAssignmentState && agent.state === "unassigned") return "unassigned";
   if (showClassroomAssignmentState && agent.state === "undecided" && (agent.searchRestartCount ?? 0) > 0) {
     return "searching-again";
   }
+  if (isPostClusterDeparture) return "post-cluster-departure";
   return agent.state;
 }
 
-function agentStatusLabel(agent: Agent): string | undefined {
-  if (agent.state === "unassigned") return "未割当";
-  if (agent.state === "undecided" && (agent.searchRestartCount ?? 0) > 0) return "再探索";
+function agentStatusLabel(
+  agent: Agent,
+  showClassroomAssignmentState: boolean,
+  isPostClusterDeparture: boolean,
+): string | undefined {
+  if (showClassroomAssignmentState && agent.state === "unassigned") return "未割当";
+  if (showClassroomAssignmentState && agent.state === "undecided" && (agent.searchRestartCount ?? 0) > 0) {
+    return "再探索";
+  }
+  if (isPostClusterDeparture) return "輪を離脱・再探索中";
   return undefined;
+}
+
+/**
+ * Issue #178: standingPartyで、直前に離脱した輪への再接近クールダウン中(`Agent.lastDepartedClusterAtTick`
+ * から`CLUSTER_REJOIN_COOLDOWN_TICKS`未満)のagentを「離脱後に再探索中」として区別表示するための判定。
+ * Canvas表示専用の派生であり、`SimulationState`は一切変更しない。
+ */
+function isPostClusterDeparture(agent: Agent, tick: number | undefined, isStandingParty: boolean): boolean {
+  if (!isStandingParty || tick === undefined) return false;
+  if (agent.state !== "undecided" || agent.lastDepartedClusterAtTick === undefined) return false;
+  return tick - agent.lastDepartedClusterAtTick < CLUSTER_REJOIN_COOLDOWN_TICKS;
 }
 
 function radiusFor(agent: Agent): number {
@@ -107,10 +133,15 @@ function radiusFor(agent: Agent): number {
   return base + leaderBonus + observerBonus;
 }
 
-function candidateRingClass(candidate: GroupCandidate): string {
+/**
+ * Issue #178 (受入条件: 成立済みclusterを「完了して固定されたグループ」のように見せない):
+ * standingPartyの成立済み輪は責務10により人数変動・解散し得るため、confirmedの見た目に
+ * `mutable`修飾クラスを足し、二次会の(不変の)確定グループと視覚的に区別する。
+ */
+function candidateRingClass(candidate: GroupCandidate, isMutableConfirmed: boolean): string {
   switch (candidate.status) {
     case "confirmed":
-      return "candidate-ring confirmed";
+      return isMutableConfirmed ? "candidate-ring confirmed mutable" : "candidate-ring confirmed";
     case "dissolving":
     case "dissolved":
       return "candidate-ring dissolving";
@@ -365,10 +396,19 @@ type CandidateGlyphProps = {
   visual: CandidateVisualLayout;
   agents: Agent[];
   isClassroomPair: boolean;
+  /** Issue #178: standingPartyでのみ、成立済み輪の人数変動可能な見た目・注記を有効にする */
+  isStandingParty?: boolean;
   presentation: ScenarioPresentation;
 };
 
-function CandidateGlyph({ candidate, visual, agents, isClassroomPair, presentation }: CandidateGlyphProps) {
+function CandidateGlyph({
+  candidate,
+  visual,
+  agents,
+  isClassroomPair,
+  isStandingParty = false,
+  presentation,
+}: CandidateGlyphProps) {
   const fading =
     candidate.status === "dissolving" ||
     candidate.status === "dissolved" ||
@@ -378,6 +418,7 @@ function CandidateGlyph({ candidate, visual, agents, isClassroomPair, presentati
   const classroomState = isClassroomPair ? classroomCandidateState(candidate, agents, fallbackMax) : undefined;
   const maxSize = classroomCandidateMaxSize(candidate, fallbackMax);
   const openSlots = Math.max(0, maxSize - candidate.memberIds.length);
+  const standingPartyActive = isStandingParty && candidate.status === "confirmed";
   const labelY = visual.isEvacuated
     ? visual.center.y - visual.displayRadius - 8
     : visual.center.y - 60;
@@ -394,7 +435,9 @@ function CandidateGlyph({ candidate, visual, agents, isClassroomPair, presentati
       aria-label={
         classroomState
           ? `${unitWord}候補 ${candidate.id}: ${classroomCandidateStateLabel(classroomState, unitWord)}、${candidate.memberIds.length}/${maxSize}、空き${openSlots}${visual.slotIndex === undefined ? "" : `、成立済み表示 ${visual.slotIndex + 1}`}`
-          : undefined
+          : standingPartyActive
+            ? `会話の輪 ${candidate.id}: 現在${candidate.memberIds.length}人、人数は今後も変動します`
+            : undefined
       }
     >
       <circle
@@ -404,7 +447,7 @@ function CandidateGlyph({ candidate, visual, agents, isClassroomPair, presentati
         className={
           classroomState
             ? `candidate-ring classroom-${classroomState}`
-            : candidateRingClass(candidate)
+            : candidateRingClass(candidate, standingPartyActive)
         }
       />
 
@@ -420,6 +463,11 @@ function CandidateGlyph({ candidate, visual, agents, isClassroomPair, presentati
           {candidate.memberIds.length} / {maxSize}（空き{openSlots}）
         </text>
       )}
+      {standingPartyActive && (
+        <text x={visual.center.x} y={capacityY} className="candidate-capacity-label standing-party-capacity-label">
+          現在{candidate.memberIds.length}人・人数は変動します
+        </text>
+      )}
     </g>
   );
 }
@@ -427,16 +475,18 @@ function CandidateGlyph({ candidate, visual, agents, isClassroomPair, presentati
 function AgentGlyph({
   agent,
   isClassroomPair,
+  isPostClusterDeparture: postClusterDeparture = false,
   candidateId,
 }: {
   agent: Agent;
   isClassroomPair: boolean;
+  isPostClusterDeparture?: boolean;
   candidateId?: string;
 }) {
   const radius = radiusFor(agent);
   const opacity = agent.state === "left" ? 0.3 : 1;
-  const statusLabel = isClassroomPair ? agentStatusLabel(agent) : undefined;
-  const stateClass = agentStateClass(agent, isClassroomPair);
+  const statusLabel = agentStatusLabel(agent, isClassroomPair, postClusterDeparture);
+  const stateClass = agentStateClass(agent, isClassroomPair, postClusterDeparture);
   return (
     <g
       opacity={opacity}
@@ -472,9 +522,11 @@ export function SimulationCanvas({
   runId = 0,
   thoughts = [],
   speeches = [],
+  tick,
 }: Props) {
   const presentation = getScenarioPresentation(formationScenarioId, formationClassroomGroupSize);
   const isClassroomPair = presentation.id === "classroomPair";
+  const isStandingParty = presentation.id === "standingParty";
   const unitWord = presentation.groupUnit?.unitWord ?? "ペア";
   const fallbackMax = presentation.groupUnit?.maxGroupSize ?? 2;
   const fallbackMin = presentation.groupUnit?.minGroupSize ?? 2;
@@ -600,6 +652,7 @@ export function SimulationCanvas({
                 visual={visualLayout.candidates.get(candidate.id)!}
                 agents={agents}
                 isClassroomPair={isClassroomPair}
+                isStandingParty={isStandingParty}
                 presentation={presentation}
               />
             ))}
@@ -608,6 +661,7 @@ export function SimulationCanvas({
                 key={agent.id}
                 agent={agent}
                 isClassroomPair={isClassroomPair}
+                isPostClusterDeparture={isPostClusterDeparture(agent, tick, isStandingParty)}
                 candidateId={visualLayout.agents.get(agent.id)?.candidateId}
               />
             ))}
