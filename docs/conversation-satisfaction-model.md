@@ -389,3 +389,45 @@ Phase 3/4フラグ(`speechEffectsEnabled`等)と同じfall-backパターンで�
 
 これらはCLAUDE.mdの`observerJoiner`archetype方針(「人格診断ではなくエージェントベースの社会過程の
 可視化」)と同じ立場であり、Phase 2でも維持する。
+
+---
+
+## 8. 実装ノート (Issue #187)
+
+Issue #187は、6.2節のFollow-up P2-A(型・状態の器)とP2-B(満足度更新のengine結線)を1つのIssueとして
+まとめて実装した。`evaluateClusterDeparture`(責務9)への入力接続はP2-C(#188)のまま未着手であり、
+`conversationSatisfaction`は引き続き**離脱判定に一切使われない観察専用値**である。実装は次の点で
+本文書の記述を具体化・一部調整している。
+
+- **配置**: `src/simulation/conversationSatisfaction.ts`に、型・`DEFAULT_CONVERSATION_SATISFACTION_CONFIG`・
+  validation・`initializeConversationSatisfaction`/`updateConversationSatisfaction`(いずれもrng不使用の
+  純粋関数)を実装した。5.1節の「当面はstandingPartyPolicy内のconstに置く」方針を、
+  「standingParty専用のscenario config」として独立モジュールに置く形で具体化した(`SimParams`は未変更)。
+  `socialCirculationTendency`(4節の型案)は本Issueでは追加していない ―― 離脱式(#188)が実際に読むまでは
+  意味を持たない値のため、P2-Cで導入する。
+- **standingParty限定のゲート**: `engine.ts`の`startConversationEpisode`/`updateConversationEpisode`は
+  `formationPolicy.id === "standingParty"`のときだけ満足度を計算する(`FormationPolicy`の既存の
+  「シナリオ分岐はpolicyへ委ねる」パターンに倣う具体的な境界)。`Agent.currentEpisode`のコンテナ自体は
+  #186どおり全シナリオ共通のため、この境界がないとafterParty/classroomPairの`conversationSatisfaction`が
+  undefinedのままという既存の受入条件(二次会・学校への非影響)を壊してしまう。
+- **人数観測の一本化**: 3.3節の「新規member参加は次tickへ反映、処理順に依存しない」というルールを、
+  member離脱(人数減少)にも同様に適用した(3.3節末尾で示唆されている「人数減少由来の変化も次tick反映で
+  統一する」を、新規member検出と同じ1つのスナップショット値(`observedMemberCount`、tick開始時点=
+  `stepSimulation`の入力`state.groupCandidates`が持つ値)で表現することで実現)。この値を新規member検出・
+  人数補正の両方に使うことで、同一tick内の他agentの処理順に一切依存しない。
+- **「departure / size contribution」を1つの値に統合**: 7節の要求どおり、member離脱専用の固定ペナルティは
+  設けず、`sizeContribution`(居心地のよい人数からの乖離)1つに一本化した。人数減少は`observedMemberCount`
+  の減少を通じて自動的にこの項へ反映されるため、「member減少が必ず悪影響とは限らない」(元の輪が
+  大きすぎた場合、減ることでむしろ`sizeContribution`が改善し得る)という設計上の要求を満たす。
+- **同clique補正**: `attractiveness()`(engine.ts)の「dominant clique占有率」ベースの式とは別に、
+  「エージェント自身のclique仲間比率」(`computeCliqueMateRatio`)を新設した。dominant cliqueは
+  「輪を占有している向き」を見る指標で、必ずしもagent自身の所属cliqueと一致しないため、
+  「同席者の構成が自分の既存関係とどれだけ噛み合うか」という満足度側の意味(1.1節)には
+  自分視点の比率の方が直接対応する(6節「同一関数にしない」を踏まえた別式)。
+- **テスト**: `src/simulation/conversationSatisfaction.test.ts`に純粋関数の単体テスト(範囲・決定性・
+  decay/新規member/人数/clique各寄与の単体挙動・validation)と、engine結線レベルの結合テスト
+  (standingParty限定・新規member反映の1tick遅延・同一seed再現性・Inspector呼び出しの有無による
+  非干渉)を追加した。既存の`conversationEpisode.test.ts`(#186)は、合流と同時に満足度が決定的な
+  初期値へ初期化されることを検証するよう更新した(以前は「Phase 2は対象外」として`undefined`を
+  期待していた箇所)。`afterPartyRegression.test.ts`・`classroomPairInvariants.test.ts`・
+  `standingParty*.test.ts`は無改修のまま全て通過し、既存シナリオへの回帰がないことを確認済み。
