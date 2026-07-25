@@ -25,7 +25,10 @@ import {
   type SpeechBubbleDisplaySettingsState,
 } from "./components/speechBubbleDisplayFilter";
 import { StandingPartyAdvancedSettings } from "./components/StandingPartyAdvancedSettings";
-import { DEFAULT_STANDING_PARTY_SCENARIO_CONFIG } from "./simulation/standingPartyScenarioConfig";
+import {
+  DEFAULT_STANDING_PARTY_SCENARIO_CONFIG,
+  validateStandingPartyScenarioConfig,
+} from "./simulation/standingPartyScenarioConfig";
 import type { StandingPartyScenarioConfig } from "./simulation/standingPartyScenarioConfig";
 import { createInitialState, stepSimulation } from "./simulation/engine";
 import { SeededRandom } from "./simulation/random";
@@ -55,6 +58,21 @@ const INITIAL_SEED = 12345;
  * 現在適用中の値(ユーザー編集を含む)を明示的に受け取る ―― プリセット切替時はプリセットの既定値、
  * Reset/Seed変更時は編集済みの値、と呼び出し側の意図によって使い分けるため。
  */
+/**
+ * Issue #189 (要件1節): UIのslider min/max/stepだけに頼らず、domain layerでも不正値を拒否する
+ * (defense-in-depth)。sliderの構造上ここに到達する値は既に有効域内のはずだが、万一不正な値が
+ * 渡された場合は既定値へ安全にフォールバックし、シミュレーション自体をクラッシュさせない。
+ */
+function sanitizedStandingPartyConfig(config: StandingPartyScenarioConfig): StandingPartyScenarioConfig {
+  try {
+    validateStandingPartyScenarioConfig(config);
+    return config;
+  } catch (error) {
+    console.error("Invalid standingPartyConfig, falling back to default:", error);
+    return DEFAULT_STANDING_PARTY_SCENARIO_CONFIG;
+  }
+}
+
 function formationOptionsForPreset(
   presetId: string,
   standingPartyConfig: StandingPartyScenarioConfig,
@@ -64,7 +82,7 @@ function formationOptionsForPreset(
     scenarioId: preset.formationScenarioId ?? "afterParty",
     formationDeadlineTick: preset.formationDeadlineTick,
     classroomGroupSize: preset.formationClassroomGroupSize,
-    standingPartyConfig,
+    standingPartyConfig: sanitizedStandingPartyConfig(standingPartyConfig),
   };
 }
 
