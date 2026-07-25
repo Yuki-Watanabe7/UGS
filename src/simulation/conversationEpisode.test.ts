@@ -4,11 +4,14 @@ import { SeededRandom } from "./random";
 import { DEFAULT_PARAMS } from "./presets";
 import type { FormationRuntimeOptions } from "./formationPolicy";
 import type { Agent, GroupCandidate, SimParams, SimulationState } from "./types";
+import { DEFAULT_CONVERSATION_SATISFACTION_CONFIG, initializeConversationSatisfaction } from "./conversationSatisfaction";
 
 /**
  * Issue #186 (Phase 2): 会話エピソード状態(`Agent.currentEpisode`)と滞在時間の追跡を検証する。
- * 満足度の具体的な初期化・更新式(#187以降)は対象外 ―― ここでは器(episodeId/joinedAtTick/
- * lastUpdatedTick/memberCountAtJoin/lastObservedMemberCount)の開始・更新・終了だけを確認する。
+ * 器(episodeId/joinedAtTick/lastUpdatedTick/memberCountAtJoin/lastObservedMemberCount)の
+ * 開始・更新・終了だけを確認する。満足度の初期化・更新式そのもの(Issue #187)の網羅的な検証は
+ * `conversationSatisfaction.test.ts`が担う ―― ここではstandingPartyの合流経路で実際に
+ * `conversationSatisfaction`が設定されること(器との結線)だけを確認する。
  */
 
 const STANDING_PARTY_FORMATION: FormationRuntimeOptions = { scenarioId: "standingParty" };
@@ -88,7 +91,16 @@ describe("会話エピソード: 開始 (Issue #186)", () => {
     expect(joined.currentEpisode?.lastUpdatedTick).toBe(next.tick);
     expect(joined.currentEpisode?.memberCountAtJoin).toBe(2);
     expect(joined.currentEpisode?.lastObservedMemberCount).toBe(2);
-    expect(joined.currentEpisode?.conversationSatisfaction).toBeUndefined();
+    // Issue #187: standingPartyでは合流と同時に満足度が決定的に初期化される(cliqueId未設定なので
+    // clique補正は0、人数補正のみが基礎初期値へ加わる)。
+    expect(joined.currentEpisode?.conversationSatisfaction).toBe(
+      initializeConversationSatisfaction({
+        config: DEFAULT_CONVERSATION_SATISFACTION_CONFIG,
+        memberCountAtJoin: 2,
+        cliqueRatio: 0,
+        existingTieStrength: DEFAULT_PARAMS.existingTieStrength,
+      }),
+    );
 
     const joinEvent = next.log.find((e) => e.eventType === "agentJoined");
     expect(joinEvent?.metadata?.episodeId).toBe(joined.currentEpisode?.episodeId);

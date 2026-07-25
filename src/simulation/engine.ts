@@ -56,6 +56,12 @@ import {
 import { SeededRandom } from "./random";
 import { WORLD_WIDTH, WORLD_HEIGHT, clamp, distance, createInitialAgents } from "./model";
 import { formatTick } from "./time";
+import {
+  computeCliqueMateRatio,
+  DEFAULT_CONVERSATION_SATISFACTION_CONFIG,
+  initializeConversationSatisfaction,
+  updateConversationSatisfaction,
+} from "./conversationSatisfaction";
 // Issue #115: 発言生成の後段調整(乖離を反映した対外発言の選択)のためだけの依存。
 // socialExpression.ts側もattractiveness等のためにengine.tsをimportする循環参照になるが、
 // どちらもモジュール初期化時には相手側の値を評価しない(関数呼び出し時のみ参照する)ため安全。
@@ -393,9 +399,19 @@ function createConversationEpisodeId(agentId: string, clusterId: string, joinedA
  * `agent.clusterJoinedAtTick`(Issue #176)と同じライフサイクル・同じ値で扱う上位互換のコンテナ
  * (二重管理の不変条件、`conversationEpisode.test.ts`で検証)。合流経路(責務3到着/forming確定/
  * 介入によるcreateGroup・assignToGroup)を問わず、この関数を唯一の開始点として通す。
- * 満足度の初期化式はPhase 2の対象外のため、`conversationSatisfaction`は設定しない。
+ *
+ * Issue #187 (Phase 2): 満足度の実装はstandingPartyに限定する(docs/conversation-satisfaction-model.md
+ * 6.1節 ―― この設定はstandingPartyのみに作用し、afterParty/classroomPairの`conversationSatisfaction`は
+ * 引き続きundefinedのまま、既存の挙動・イベント・PRNG消費順序に一切影響しない)。
  */
-function startConversationEpisode(agent: Agent, candidate: GroupCandidate, tick: number): void {
+function startConversationEpisode(
+  agent: Agent,
+  candidate: GroupCandidate,
+  tick: number,
+  agents: Agent[],
+  params: SimParams,
+  formationPolicy: FormationPolicy,
+): void {
   agent.clusterJoinedAtTick = tick;
   const episode: ConversationEpisode = {
     episodeId: createConversationEpisodeId(agent.id, candidate.id, tick),
@@ -405,18 +421,65 @@ function startConversationEpisode(agent: Agent, candidate: GroupCandidate, tick:
     memberCountAtJoin: candidate.memberIds.length,
     lastObservedMemberCount: candidate.memberIds.length,
   };
+  if (formationPolicy.id === "standingParty") {
+    episode.conversationSatisfaction = initializeConversationSatisfaction({
+      config: DEFAULT_CONVERSATION_SATISFACTION_CONFIG,
+      memberCountAtJoin: episode.memberCountAtJoin,
+      cliqueRatio: computeCliqueMateRatio(agent.id, agent.cliqueId, candidate.memberIds, agents),
+      existingTieStrength: params.existingTieStrength,
+    });
+  }
   agent.currentEpisode = episode;
 }
 
 /**
  * Issue #186 (Phase 2): `joined`かつ有効なclusterに所属している間、毎tick呼び出して滞在時間
- * (`lastUpdatedTick`)とmember構成の直近観測値を最新化する。満足度そのものの更新式は対象外
- * (docs/conversation-satisfaction-model.md 3.3節、後続Issueで`lastObservedMemberCount`との比較を使う)。
+ * (`lastUpdatedTick`)とmember構成の直近観測値を最新化する。
+ *
+ * Issue #187 (Phase 2): standingPartyに限り、`conversationSatisfaction`もここで更新する
+ * (docs/conversation-satisfaction-model.md 3.2節のstep 5a)。`priorCandidates`には
+ * `stepSimulation`の入力`state.groupCandidates`(このtickの合流/離脱処理が一切反映される前の
+ * スナップショット)をそのまま渡すこと ―― 3.3節の順序ルール(このtickの加入/離脱は次tickまで
+ * 満足度へ反映しない、同一tick内の他agentの処理順に依存しない)を、agentごとに毎回同じ不変な
+ * スナップショットから読むことで自動的に満たす。合流したその場のtick(`joinedAtTick === tick`)では
+ * 何もしない ―― このtickの初期値は`startConversationEpisode`が既に計算済みで、`lastObservedMemberCount`
+ * を書き換えると「自分自身のjoin」を次tickに新規member参加として誤検出してしまうため
+ * (要件: 自分自身のjoinを新規member参加と二重に数えない)。
  */
-function updateConversationEpisode(agent: Agent, candidate: GroupCandidate, tick: number): void {
+function updateConversationEpisode(
+  agent: Agent,
+  candidate: GroupCandidate,
+  tick: number,
+  agents: Agent[],
+  params: SimParams,
+  formationPolicy: FormationPolicy,
+  priorCandidates: GroupCandidate[],
+): void {
   if (!agent.currentEpisode || agent.currentEpisode.clusterId !== candidate.id) return;
-  agent.currentEpisode.lastUpdatedTick = tick;
-  agent.currentEpisode.lastObservedMemberCount = candidate.memberIds.length;
+  const episode = agent.currentEpisode;
+  const isJoinTick = episode.joinedAtTick === tick;
+
+  if (formationPolicy.id === "standingParty") {
+    if (!isJoinTick) {
+      const observedMemberCount =
+        priorCandidates.find((c) => c.id === candidate.id)?.memberIds.length ?? episode.lastObservedMemberCount;
+      if (episode.conversationSatisfaction !== undefined) {
+        const result = updateConversationSatisfaction({
+          config: DEFAULT_CONVERSATION_SATISFACTION_CONFIG,
+          previousSatisfaction: episode.conversationSatisfaction,
+          lastObservedMemberCount: episode.lastObservedMemberCount,
+          observedMemberCount,
+          cliqueRatio: computeCliqueMateRatio(agent.id, agent.cliqueId, candidate.memberIds, agents),
+          existingTieStrength: params.existingTieStrength,
+        });
+        episode.conversationSatisfaction = result.nextSatisfaction;
+      }
+      episode.lastObservedMemberCount = observedMemberCount;
+    }
+  } else {
+    episode.lastObservedMemberCount = candidate.memberIds.length;
+  }
+  episode.lastUpdatedTick = tick;
 }
 
 /**
@@ -430,7 +493,14 @@ function updateConversationEpisode(agent: Agent, candidate: GroupCandidate, tick
  * 古いtargetやcooldownをクリアする)。位置も候補の座標へ揃え(#149の成立済み表示上、
  * 割り当てられた本人がその班の位置に居るように見せるため)、以後の移動計算に残存速度を残さない。
  */
-function settleIntoGroup(agent: Agent, candidate: GroupCandidate, tick: number): void {
+function settleIntoGroup(
+  agent: Agent,
+  candidate: GroupCandidate,
+  tick: number,
+  agents: Agent[],
+  params: SimParams,
+  formationPolicy: FormationPolicy,
+): void {
   agent.state = "joined";
   agent.joinedGroupId = candidate.id;
   agent.x = candidate.x;
@@ -442,7 +512,7 @@ function settleIntoGroup(agent: Agent, candidate: GroupCandidate, tick: number):
   // Issue #176: 責務9(クラスタ離脱判定)の滞在tick計算に使う合流tick。classroomPair等
   // 離脱経路を持たないシナリオでは参照されないが、settleIntoGroup経由の全joinで一貫して設定する。
   // Issue #186: 会話エピソードの開始も同じタイミングで一括して行う。
-  startConversationEpisode(agent, candidate, tick);
+  startConversationEpisode(agent, candidate, tick, agents, params, formationPolicy);
 }
 
 function applyInterventionActions(
@@ -474,7 +544,7 @@ function applyInterventionActions(
         maxGroupSize: action.maxGroupSize,
       };
       candidates.push(candidate);
-      for (const memberAgent of memberAgents) settleIntoGroup(memberAgent, candidate, tick);
+      for (const memberAgent of memberAgents) settleIntoGroup(memberAgent, candidate, tick, agents, params, formationPolicy);
       continue;
     }
 
@@ -486,7 +556,7 @@ function applyInterventionActions(
       if (!candidate) continue;
       const capacity = formationPolicy.resolveGroupCapacity(candidate, params);
       if (addMemberToCandidate(candidate, agent.id, capacity) === "full") continue;
-      settleIntoGroup(agent, candidate, tick);
+      settleIntoGroup(agent, candidate, tick, agents, params, formationPolicy);
     } else if (action.kind === "removeFromGroup") {
       const candidate = candidates.find((c) => c.id === action.groupId);
       if (!candidate) continue;
@@ -1258,7 +1328,7 @@ export function stepSimulation(
       }
       agent.state = "joined";
       // Issue #186: 会話エピソードの開始(episodeId発行含む)もこの合流タイミングで一括して行う。
-      startConversationEpisode(agent, candidate, tick);
+      startConversationEpisode(agent, candidate, tick, agents, effectiveParams, formationPolicy);
       if (agent.isObserverJoiner) {
         pushLog(
           log,
@@ -1349,7 +1419,7 @@ export function stepSimulation(
 
     // Issue #186 (Phase 2, step 5a): 離脱判定の直前に会話エピソードの滞在時間・member観測値を
     // 最新化する(docs/conversation-satisfaction-model.md 3.2節の順序)。rngは消費しない。
-    updateConversationEpisode(agent, candidate, tick);
+    updateConversationEpisode(agent, candidate, tick, agents, effectiveParams, formationPolicy, state.groupCandidates);
 
     const ticksInCluster = agent.clusterJoinedAtTick !== undefined ? tick - agent.clusterJoinedAtTick : 0;
     const departure = formationPolicy.evaluateClusterDeparture(agent, candidate, {
@@ -1631,7 +1701,7 @@ export function stepSimulation(
           agent.state = "joined";
           agent.joinedGroupId = candidate.id;
           // Issue #186: 会話エピソードの開始もこの合流タイミングで一括して行う。
-          startConversationEpisode(agent, candidate, tick);
+          startConversationEpisode(agent, candidate, tick, agents, effectiveParams, formationPolicy);
           // Issue #176: 過去に離脱経験があるagentのみ対象(standingParty以外では常にno-op)
           logClusterRejoinIfApplicable(agent, candidate, tick, log);
         }
