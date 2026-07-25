@@ -9,6 +9,7 @@ import {
 import { createInitialState, stepSimulation } from "./engine";
 import { SeededRandom } from "./random";
 import { DEFAULT_PARAMS, getPresetById } from "./presets";
+import { DEFAULT_CLUSTER_DEPARTURE_DECISION_CONFIG } from "./clusterDepartureDecision";
 import type { Agent, GroupCandidate } from "./types";
 
 function makeAgent(overrides: Partial<Agent>): Agent {
@@ -261,6 +262,9 @@ describe("afterPartyPolicy.evaluateClusterDeparture (責務9: クラスタ離脱
         ticksInCluster,
         memberCount: candidate.memberIds.length,
         tick: 100,
+        // Issue #188: afterPartyはこれらを一切読まないため、値そのものに意味はない
+        conversationSatisfaction: 0,
+        socialCirculationTendency: 1,
       });
       expect(decision).toEqual({ eligible: false, probability: 0 });
     }
@@ -365,38 +369,75 @@ describe("standingPartyPolicy (Issue #174, Phase 1)", () => {
     expect(standingPartyPolicy.finishReason([], 3)).toBeUndefined();
   });
 
-  describe("evaluateClusterDeparture (責務9: クラスタ離脱判定, Issue #176)", () => {
+  describe("evaluateClusterDeparture (責務9: クラスタ離脱判定, Issue #188 Phase 2)", () => {
     const agent = makeAgent({ state: "joined" });
     const candidate: GroupCandidate = { id: "group-1", x: 0, y: 0, memberIds: [agent.id], status: "confirmed", age: 0 };
+    const { minStayTicks } = DEFAULT_CLUSTER_DEPARTURE_DECISION_CONFIG;
 
-    it("is ineligible below the provisional minimum stay duration (暫定ルール: 最低滞在tick未満)", () => {
-      for (const ticksInCluster of [0, 1, 5, 14]) {
+    it("is ineligible below the minimum stay duration, regardless of satisfaction/circulation tendency", () => {
+      for (const ticksInCluster of [0, 1, 5, minStayTicks - 1]) {
         const decision = standingPartyPolicy.evaluateClusterDeparture(agent, candidate, {
           ticksInCluster,
           memberCount: 1,
           tick: 100,
+          conversationSatisfaction: 0,
+          socialCirculationTendency: 1,
         });
         expect(decision).toEqual({ eligible: false, probability: 0 });
       }
     });
 
-    it("becomes eligible with a fixed provisional probability at/after the minimum stay duration", () => {
-      for (const ticksInCluster of [15, 16, 100, 10_000]) {
-        const decision = standingPartyPolicy.evaluateClusterDeparture(agent, candidate, {
-          ticksInCluster,
-          memberCount: 1,
-          tick: 100,
-        });
-        expect(decision.eligible).toBe(true);
-        expect(decision.probability).toBeGreaterThan(0);
-        expect(decision.probability).toBeLessThan(1);
-      }
+    it("stays at probability 0 when satisfied and circulation tendency is 0, even after a long stay (受入条件: 低回遊・高満足度では0)", () => {
+      const decision = standingPartyPolicy.evaluateClusterDeparture(agent, candidate, {
+        ticksInCluster: minStayTicks + 200,
+        memberCount: 1,
+        tick: 300,
+        conversationSatisfaction: 1,
+        socialCirculationTendency: 0,
+      });
+      expect(decision.eligible).toBe(true);
+      expect(decision.probability).toBe(0);
+      expect(decision.primaryReason).toBeUndefined();
     });
 
-    it("does not depend on agent personality traits (暫定ルール: agent特性の現実的解釈を先取りしない)", () => {
+    it("becomes a positive, lowConversationSatisfaction-attributed probability once satisfaction is low (受入条件: 低回遊agentでも満足度が十分低ければ移動し得る)", () => {
+      const decision = standingPartyPolicy.evaluateClusterDeparture(agent, candidate, {
+        ticksInCluster: minStayTicks,
+        memberCount: 1,
+        tick: 100,
+        conversationSatisfaction: 0,
+        socialCirculationTendency: 0,
+      });
+      expect(decision.eligible).toBe(true);
+      expect(decision.probability).toBeGreaterThan(0);
+      expect(decision.probability).toBeLessThan(1);
+      expect(decision.primaryReason).toBe("lowConversationSatisfaction");
+    });
+
+    it("becomes a positive, socialCirculation-attributed probability for a high-tendency agent at full satisfaction, after enough stay (受入条件: 高回遊agentが高満足度でも一定時間後に移動し得る)", () => {
+      const decision = standingPartyPolicy.evaluateClusterDeparture(agent, candidate, {
+        ticksInCluster: minStayTicks + 200,
+        memberCount: 1,
+        tick: 300,
+        conversationSatisfaction: 1,
+        socialCirculationTendency: 1,
+      });
+      expect(decision.eligible).toBe(true);
+      expect(decision.probability).toBeGreaterThan(0);
+      expect(decision.probability).toBeLessThan(1);
+      expect(decision.primaryReason).toBe("socialCirculation");
+    });
+
+    it("does not depend on agent personality traits or isObserverJoiner ―― only ctx (満足度・回遊傾向・滞在tick) drives the decision (ADR 2節: observerJoinerの遠慮・葛藤はPhase 3の対象外)", () => {
       const observerJoiner = makeAgent({ id: "b", state: "joined", isObserverJoiner: true, willingness: 0.01, conformity: 0.01 });
       const eager = makeAgent({ id: "c", state: "joined", isObserverJoiner: false, willingness: 0.99, conformity: 0.99 });
-      const ctx = { ticksInCluster: 50, memberCount: 1, tick: 100 };
+      const ctx = {
+        ticksInCluster: minStayTicks + 50,
+        memberCount: 1,
+        tick: 100,
+        conversationSatisfaction: 0.2,
+        socialCirculationTendency: 0.7,
+      };
       expect(standingPartyPolicy.evaluateClusterDeparture(observerJoiner, candidate, ctx)).toEqual(
         standingPartyPolicy.evaluateClusterDeparture(eager, candidate, ctx),
       );
@@ -473,7 +514,14 @@ describe("classroomPairPolicy (Issue #132, Phase 2)", () => {
       const candidate: GroupCandidate = { id: "pair-1", x: 0, y: 0, memberIds: [agent.id], status: "confirmed", age: 0 };
       for (const ticksInCluster of [0, 15, 1000]) {
         expect(
-          classroomPolicy.evaluateClusterDeparture(agent, candidate, { ticksInCluster, memberCount: 1, tick: 100 }),
+          classroomPolicy.evaluateClusterDeparture(agent, candidate, {
+            ticksInCluster,
+            memberCount: 1,
+            tick: 100,
+            // Issue #188: classroomPairはこれらを一切読まないため、値そのものに意味はない
+            conversationSatisfaction: 0,
+            socialCirculationTendency: 1,
+          }),
         ).toEqual({ eligible: false, probability: 0 });
       }
     });

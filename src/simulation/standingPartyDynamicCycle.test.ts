@@ -12,10 +12,10 @@ import type { LogEntry, SimulationEventType, SimulationState } from "./types";
  * を、1つの決定的な固定seed実行だけから、構造化イベント(`SimulationEventType`/`metadata`)のみを
  * 使って(表示文言の文字列解析なしに)一連の流れとして再現・検証する。
  *
- * 暫定離脱ルール(責務9)自体は毎tick確率的(`STANDING_PARTY_PROVISIONAL_DEPARTURE_PROBABILITY`)だが、
- * `SeededRandom`は同一seedなら常に同一の乱数列を返すため、固定seed(1)・生成人数24人・
- * 十分なtick数(400)の組み合わせで実行すれば、このテスト自体はflakyにならず毎回同じ結果になる
- * (`clusterDeparture.test.ts`/`standingPartyClusterLifecycle.test.ts`と同じ「固定seed + 十分な
+ * 離脱ルール(責務9)自体は毎tick確率的(Issue #188, Phase 2: `clusterDepartureDecision.ts`の満足度・
+ * 社交的回遊傾向モデル)だが、`SeededRandom`は同一seedなら常に同一の乱数列を返すため、固定seed(1)・
+ * 生成人数24人・十分なtick数(400)の組み合わせで実行すれば、このテスト自体はflakyにならず毎回同じ
+ * 結果になる(`clusterDeparture.test.ts`/`standingPartyClusterLifecycle.test.ts`と同じ「固定seed + 十分な
  * guard」方式。責務9の判定式に決定境界を注入するテスト専用フックは存在しないため、この方式を踏襲する)。
  */
 
@@ -83,10 +83,43 @@ describe("standingParty: 動的循環の統合確認 (Issue #178)", () => {
 
   it("特定のagentについて、参加した輪からの離脱->再探索->別の輪への再参加->元の輪の縮小/解散、という一連の流れを追跡できる", () => {
     // 「別clusterへの再参加」: previousClusterId(離脱元)とgroupId(再参加先)が異なるclusterRejoined。
-    const rejoinToDifferentCluster = entriesOfType(finalState.log, "clusterRejoined").find(
+    const rejoinsToDifferentCluster = entriesOfType(finalState.log, "clusterRejoined").filter(
       (entry) => entry.metadata?.groupId !== undefined && entry.metadata.groupId !== entry.metadata?.previousClusterId,
     );
-    expect(rejoinToDifferentCluster).toBeDefined();
+    expect(rejoinsToDifferentCluster.length).toBeGreaterThan(0);
+
+    // Issue #188 (Phase 2): 離脱確率がPhase 1の固定5%(agent特性非依存)から満足度・回遊傾向ベースの
+    // モデルへ変わったことで、各agentの離脱タイミングの分布が変わり、「最初に見つかる別clusterへの
+    // 再参加」の離脱元が必ずしもconfirmed状態のクラスタとは限らなくなった(forming状態のまま合流して
+    // いたagentが離脱するケースもある ―― 責務10のconfirmedClusterIsMutableチェックは
+    // `status === "confirmed"`のみを対象とするため、forming由来の離脱ではshrink/dissolveイベントが
+    // 記録されない、既存の意図どおりの挙動)。そのため、離脱元がconfirmedだった(=shrink/dissolveの
+    // 対象になった)ケースを探して一連の流れを検証する。
+    let rejoinToDifferentCluster: (typeof rejoinsToDifferentCluster)[number] | undefined;
+    for (const candidateRejoin of rejoinsToDifferentCluster) {
+      const candidateAgentId = candidateRejoin.metadata!.agentId!;
+      const candidateOriginClusterId = candidateRejoin.metadata!.previousClusterId!;
+      const candidateDepartureCompleted = finalState.log.find(
+        (entry) =>
+          entry.eventType === "clusterDepartureCompleted" &&
+          entry.metadata?.agentId === candidateAgentId &&
+          entry.metadata?.groupId === candidateOriginClusterId,
+      );
+      if (!candidateDepartureCompleted) continue;
+      const hasOriginLifecycleEvent = finalState.log.some(
+        (entry) =>
+          (entry.eventType === "activeClusterShrunk" ||
+            entry.eventType === "activeClusterDissolving" ||
+            entry.eventType === "activeClusterDissolved") &&
+          entry.metadata?.groupId === candidateOriginClusterId &&
+          entry.tick >= candidateDepartureCompleted.tick,
+      );
+      if (hasOriginLifecycleEvent) {
+        rejoinToDifferentCluster = candidateRejoin;
+        break;
+      }
+    }
+    expect(rejoinToDifferentCluster, "expected at least one departure whose origin cluster was confirmed (and thus shrinks/dissolves)").toBeDefined();
 
     const agentId = rejoinToDifferentCluster!.metadata!.agentId!;
     const originClusterId = rejoinToDifferentCluster!.metadata!.previousClusterId!;

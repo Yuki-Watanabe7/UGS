@@ -1422,10 +1422,17 @@ export function stepSimulation(
     updateConversationEpisode(agent, candidate, tick, agents, effectiveParams, formationPolicy, state.groupCandidates);
 
     const ticksInCluster = agent.clusterJoinedAtTick !== undefined ? tick - agent.clusterJoinedAtTick : 0;
+    // Issue #188 (Phase 2): 満足度モデル対象外のシナリオ・合流直後で未初期化の場合は、不満由来の
+    // 寄与が発生しない中立値(1)へフォールバックする。回遊傾向のtrait未設定時は0.5へフォールバックする
+    // (`Agent.socialCirculationTendency`のコメント参照、テストが直接Agentを構築するケースを含む)。
+    const conversationSatisfactionForDeparture = agent.currentEpisode?.conversationSatisfaction ?? 1;
+    const socialCirculationTendencyForDeparture = agent.socialCirculationTendency ?? 0.5;
     const departure = formationPolicy.evaluateClusterDeparture(agent, candidate, {
       ticksInCluster,
       memberCount: candidate.memberIds.length,
       tick,
+      conversationSatisfaction: conversationSatisfactionForDeparture,
+      socialCirculationTendency: socialCirculationTendencyForDeparture,
     });
     if (!departure.eligible || !rng.chance(departure.probability)) continue;
 
@@ -1436,7 +1443,11 @@ export function stepSimulation(
       agentLabel: agent.label,
       groupId: clusterId,
       ticksInCluster,
-      departureReason: "provisionalStayDuration",
+      departureReason: departure.primaryReason,
+      conversationSatisfactionAtDeparture: conversationSatisfactionForDeparture,
+      socialCirculationTendency: socialCirculationTendencyForDeparture,
+      departureFactors: departure.factors,
+      departureProbability: departure.probability,
       // Issue #186: departFromCluster呼び出し前のepisodeIdを退避しておく(呼び出し後はクリアされる)。
       episodeId: agent.currentEpisode?.episodeId,
       episodeEndReason: "voluntaryDeparture",

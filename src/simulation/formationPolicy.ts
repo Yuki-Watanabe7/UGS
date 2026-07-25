@@ -1,5 +1,14 @@
-import type { ApproachFailureReason, Agent, GroupCandidate, SimParams, SimulationFinishReason } from "./types";
+import type {
+  ApproachFailureReason,
+  Agent,
+  ClusterDepartureFactor,
+  ClusterDeparturePrimaryReason,
+  GroupCandidate,
+  SimParams,
+  SimulationFinishReason,
+} from "./types";
 import { clamp, distance } from "./model";
+import { computeClusterDepartureDecision, DEFAULT_CLUSTER_DEPARTURE_DECISION_CONFIG } from "./clusterDepartureDecision";
 
 /**
  * Issue #130 (Phase 1): シナリオごとに差し替え可能な「グループ形成・終了ルール」の集合。
@@ -150,24 +159,43 @@ export type UnconfirmedCandidateLifecycleOutcome = "continue" | "dissolve" | "ex
 /**
  * 責務9(Issue #176、ADR: docs/interaction-cluster-model.md 3.1節)の入力コンテキスト。
  * 合流済み(state === "joined")のエージェントが今のクラスタから離れてよいかの判定に使う。
- * Phase 1では`ticksInCluster`のみを参照する暫定ルールだが、Phase 2で満足度・他クラスタ魅力度・
- * 遠慮等の状態を追加できるよう、拡張余地のある専用コンテキスト型として独立させている。
+ *
+ * Issue #188 (Phase 2, ADR: docs/conversation-satisfaction-model.md 4節): 満足度・社交的回遊傾向を
+ * 追加した。`afterParty`/`classroomPair`は常に離脱なしを返すためこれらのフィールドを一切読まないが、
+ * `engine.ts`は全ポリシー共通で同じ`evaluateClusterDeparture`呼び出しを行うため、呼び出し側が
+ * 常に値を渡す(未計測時のフォールバックはengine.ts側 ―― 満足度は中立値1、回遊傾向は0.5)。
  */
 export type ClusterDepartureContext = {
   /** このクラスタへ合流してからの経過tick数(合流tickが不明な場合は呼び出し側が0を渡す) */
   ticksInCluster: number;
-  /** 現時点のクラスタの人数(判定式が人数を参照できるよう渡す。Phase 1では未使用) */
+  /** 現時点のクラスタの人数(判定式が人数を参照できるよう渡す。Phase 1/2とも未使用) */
   memberCount: number;
-  /** 現在tick(将来の時間依存判定のために渡す。Phase 1では未使用) */
+  /** 現在tick(将来の時間依存判定のために渡す。Phase 1/2とも未使用) */
   tick: number;
+  /**
+   * Issue #188 (Phase 2): 現在の会話エピソードの満足度`[0,1]`(step 5aで更新済みの値)。
+   * `agent.currentEpisode`が存在しない(満足度モデル対象外のシナリオ、または合流直後)場合、
+   * 呼び出し側は不満由来の寄与が発生しない中立値(1)を渡す。
+   */
+  conversationSatisfaction: number;
+  /** Issue #188 (Phase 2): このagentの社交的回遊傾向`[0,1]`(trait、run中不変)。未設定時は0.5 */
+  socialCirculationTendency: number;
 };
 
-/** 責務9の判定結果。責務1の`CandidateInitiationDecision`と同じ形(eligible + probability)を踏襲する */
+/**
+ * 責務9の判定結果。責務1の`CandidateInitiationDecision`と同じ形(eligible + probability)を踏襲する。
+ * Issue #188 (Phase 2): 寄与内訳・主要因を任意フィールドとして追加(`afterParty`/`classroomPair`は
+ * 未設定のままでよい)。
+ */
 export type ClusterDepartureDecision = {
   /** このtickで離脱判定(rng判定)の対象になるか */
   eligible: boolean;
   /** `eligible`な場合の離脱確率(呼び出し側がrng.chanceにそのまま渡す) */
   probability: number;
+  /** Issue #188: 寄与要因の内訳(probability > 0のとき)。contribution降順 */
+  factors?: ClusterDepartureFactor[];
+  /** Issue #188: 最も寄与の大きい要因(離脱が起きた際に構造化イベントへ記録する主要理由) */
+  primaryReason?: ClusterDeparturePrimaryReason;
 };
 
 /**
@@ -472,14 +500,11 @@ function standingPartyFinishReason(_agents: Agent[], _tick: number): SimulationF
   return undefined;
 }
 
-// Issue #176 (Phase 1, 暫定ルール): このtick数だけクラスタに留まるまでは離脱判定の対象にしない。
-// 「合流直後に即離脱する」ような不自然な振動を避けるための最低限の下限であり、agentの特性は
-// 一切参照しない(社会的意味を持たせない)。
-const STANDING_PARTY_MIN_TICKS_BEFORE_DEPARTURE = 15;
-// Issue #176 (Phase 1, 暫定ルール): 上記の最低滞在tickを超えた後、1tickあたりこの固定確率で
-// 離脱対象になる。Phase 2でdecision実装(満足度・他クラスタ魅力度・遠慮等)に交換される前提の
-// プレースホルダー値(受入条件: 社会的意味を持たない明示的な暫定ルール)。
-const STANDING_PARTY_PROVISIONAL_DEPARTURE_PROBABILITY = 0.05;
+// Issue #188 (Phase 2): Phase 1の暫定ルール(`STANDING_PARTY_MIN_TICKS_BEFORE_DEPARTURE`/
+// `STANDING_PARTY_PROVISIONAL_DEPARTURE_PROBABILITY`、agentの特性に一切依存しない固定確率抽選)は
+// ここで撤去され、`clusterDepartureDecision.ts`の満足度・社交的回遊傾向モデルへ置き換わった
+// (最低滞在tickの値そのものは`DEFAULT_CLUSTER_DEPARTURE_DECISION_CONFIG.minStayTicks`(15)として
+// 引き継いでいる)。
 
 export const standingPartyPolicy: FormationPolicy = {
   id: "standingParty",
@@ -529,16 +554,19 @@ export const standingPartyPolicy: FormationPolicy = {
   },
 
   /**
-   * 責務9(Issue #176)の暫定ルール本体。agent/candidateそのものは参照せず、`ctx.ticksInCluster`
-   * のみを見る(agent特性の現実的解釈を先取りしないため、willingness/conformity等は一切使わない)。
-   * rngを直接消費しない純粋関数で、実際の確率判定(rng.chance)はengine.ts側が行う
+   * 責務9(Issue #188, Phase 2)の本体。agent/candidateそのものは参照せず(observerJoinerの遠慮・
+   * 愛着等は対象外)、`ctx.conversationSatisfaction`/`ctx.socialCirculationTendency`/
+   * `ctx.ticksInCluster`のみから`clusterDepartureDecision.ts`の純粋関数で決定的に計算する。
+   * rngを直接消費せず、実際の確率判定(rng.chance)はengine.ts側が行う
    * (責務1の`evaluateCandidateInitiation`と同じ「eligible + probability」の分離パターン)。
    */
   evaluateClusterDeparture(_agent, _candidate, ctx) {
-    if (ctx.ticksInCluster < STANDING_PARTY_MIN_TICKS_BEFORE_DEPARTURE) {
-      return { eligible: false, probability: 0 };
-    }
-    return { eligible: true, probability: STANDING_PARTY_PROVISIONAL_DEPARTURE_PROBABILITY };
+    return computeClusterDepartureDecision({
+      config: DEFAULT_CLUSTER_DEPARTURE_DECISION_CONFIG,
+      ticksInCluster: ctx.ticksInCluster,
+      conversationSatisfaction: ctx.conversationSatisfaction,
+      socialCirculationTendency: ctx.socialCirculationTendency,
+    });
   },
 
   // Issue #177(責務10): 会話クラスタは成立(confirmed)後も増減を続けるactiveな単位のため、

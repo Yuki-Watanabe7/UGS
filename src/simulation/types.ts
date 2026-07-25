@@ -119,6 +119,16 @@ export type Agent = {
    */
   currentEpisode?: ConversationEpisode;
   /**
+   * Issue #188 (Phase 2): 社交的回遊傾向 ―― 会話への不満がなくても、より多くの人と交流するため
+   * 次の輪へ移りやすいかを表す安定的な個体特性 `[0,1]`(run中不変)。`docs/conversation-satisfaction-model.md`
+   * 1.2節。`willingness`/`initiative`/`conformity`とは独立した軸であり、これらから暗黙に導出しない
+   * (要件4節)。standingPartyの責務9(`evaluateClusterDeparture`)でのみ参照される
+   * ―― afterParty/classroomPairはこの値を読まない。`createInitialAgents`が主系列rngとは独立した
+   * 派生ストリームから常に生成するため、値自体は全シナリオのagentに存在するが、未設定
+   * (テストで直接`Agent`を構築する場合等)を許容し、その場合は読み取り側が`0.5`へフォールバックする。
+   */
+  socialCirculationTendency?: number;
+  /**
    * Issue #136: このrunを通じて`stress`が到達した最大値。Phase 3の"greet"由来効果はstressを
    * 一時的に引き下げ得る(engine.tsのstress蓄積式参照)ため、最終的な`stress`だけでは
    * 「一番つらかった瞬間」の負荷を観察できない。`stress`が変化する箇所(通常のstress蓄積、
@@ -138,15 +148,41 @@ export type Agent = {
 export type ApproachFailureReason = "capacityFull" | "groupDissolved" | "groupExpired" | "groupMissing";
 
 /**
+ * Issue #188 (Phase 2): 責務9の離脱確率へ寄与する要因の種別。`docs/conversation-satisfaction-model.md`
+ * 4節の型契約どおり、表示文言の文字列解析に依存しない構造化コードとして持つ。
+ * - "lowConversationSatisfaction": 今の会話への満足度が低いために離れる(不満由来)
+ * - "socialCirculation": 会話に不満はなくても、より多くの人と交流するため次の輪へ移る(回遊由来)
+ */
+export type ClusterDepartureFactorKind = "lowConversationSatisfaction" | "socialCirculation";
+
+/** Issue #188: 各要因の寄与(確率への加算分)を構造化して返す。`contribution`は常に`>= 0` */
+export type ClusterDepartureFactor = {
+  kind: ClusterDepartureFactorKind;
+  contribution: number;
+};
+
+/**
+ * Issue #188: `evaluateClusterDeparture`が返す主要因。両寄与の差が小さい場合は、どちらか一方を
+ * 強弁せず"mixedConversationAndSocialCirculation"として表現する(issue要件6節)。
+ */
+export type ClusterDeparturePrimaryReason = ClusterDepartureFactorKind | "mixedConversationAndSocialCirculation";
+
+/**
  * Issue #176: `clusterDepartureStarted`/`clusterDepartureCompleted`の`metadata.departureReason`に
- * 保持する、離脱理由の構造化コード。表示文言の文字列解析に依存せず後続の集計・Phase 2への
- * 交換判定ができるようにする。
- * - "provisionalStayDuration": Phase 1の暫定ルール(一定滞在tick超過後の固定確率抽選)による離脱
+ * 保持する、離脱理由の構造化コード。表示文言の文字列解析に依存せず後続の集計ができるようにする。
  * - "clusterBelowMinimumSize": Issue #177(責務10)。自発的な離脱ではなく、他memberの離脱で
  *   クラスタが成立最小人数を下回ったため、残存memberが強制的に再探索へ戻された
  *   (`clusterMemberReleased`イベントで使う)
+ * - `ClusterDeparturePrimaryReason`(Issue #188, Phase 2): 責務9の自発的離脱(`clusterDepartureStarted`/
+ *   `Completed`)の主要因。
+ *
+ * 移行メモ: Phase 1では"provisionalStayDuration"(一定滞在tick超過後の、agent特性に依存しない
+ * 固定確率抽選による離脱)という第3のコードが存在したが、Phase 2実装(Issue #188)でこの暫定ルール
+ * 自体を撤去したため、このコードは生成されなくなった。過去に保存・集計されたログにこの文字列が
+ * 残っている場合は「Phase 1の暫定ルールによる離脱」であったことを示す歴史的な値として読み替えること
+ * (このアプリはシミュレーション結果を永続化しないため、実データ上の互換対応は不要)。
  */
-export type ClusterDepartureReason = "provisionalStayDuration" | "clusterBelowMinimumSize";
+export type ClusterDepartureReason = ClusterDeparturePrimaryReason | "clusterBelowMinimumSize";
 
 /**
  * Issue #186 (Phase 2): 1回の`joined`〜離脱までの、ひとつながりの会話エピソードの状態。
@@ -539,6 +575,17 @@ export type SimulationEventMetadata = {
   episodeId?: string;
   /** Issue #186 (Phase 2): `clusterDepartureCompleted`/`clusterMemberReleased`用。エピソード終了理由 */
   episodeEndReason?: ConversationEpisodeEndReason;
+  /**
+   * Issue #188 (Phase 2): `clusterDepartureStarted`/`clusterDepartureCompleted`用。離脱評価時点の
+   * 会話満足度`[0,1]`(`ClusterDepartureContext.conversationSatisfaction`のスナップショット)
+   */
+  conversationSatisfactionAtDeparture?: number;
+  /** Issue #188: 同上。このagentの社交的回遊傾向`[0,1]`(`ClusterDepartureContext.socialCirculationTendency`) */
+  socialCirculationTendency?: number;
+  /** Issue #188: 離脱確率の内訳(寄与降順)。表示文言は含まない構造化データのみ */
+  departureFactors?: ClusterDepartureFactor[];
+  /** Issue #188: このtickの離脱評価で実際に`rng.chance`へ渡した最終確率`[0,1]` */
+  departureProbability?: number;
 };
 
 export type LogEntry = {

@@ -10,6 +10,12 @@ import type { Agent, GroupCandidate, SimParams, SimulationState } from "./types"
  * ADR(docs/interaction-cluster-model.md)の責務9(`evaluateClusterDeparture`)が
  * `engine.ts`へどう結線されているか(状態遷移・membership整合性・クールダウン・構造化イベント)を
  * 単体テスト(formationPolicy.test.ts)とは別に、engine全体の挙動として確認する。
+ *
+ * Issue #188 (Phase 2): 責務9の判定式自体は満足度・社交的回遊傾向モデル(`clusterDepartureDecision.ts`)へ
+ * 置き換わったが、本ファイルが検証するengine結線(状態遷移・membership整合性・クールダウン・
+ * 構造化イベント)自体は変わらない。この下のテストで手動構築する`Agent`は`currentEpisode`/
+ * `socialCirculationTendency`を設定しないため、engine.ts側のフォールバック(満足度1=不満なし、
+ * 回遊傾向0.5)が使われ、離脱は主に回遊由来(`socialCirculation`)になる。
  */
 
 const STANDING_PARTY_FORMATION: FormationRuntimeOptions = { scenarioId: "standingParty" };
@@ -116,7 +122,9 @@ describe("standingParty: クラスタ離脱 (責務9, Issue #176)", () => {
     const researchStarted = next.log.find((e) => e.eventType === "clusterResearchStarted");
     expect(started?.metadata?.agentId).toBe("member-0");
     expect(started?.metadata?.groupId).toBe("group-1");
-    expect(started?.metadata?.departureReason).toBe("provisionalStayDuration");
+    // Issue #188 (Phase 2): このagentはcurrentEpisode/socialCirculationTendencyを設定していないため、
+    // engine.tsのフォールバック(満足度1=不満なし、回遊傾向0.5)により回遊由来の離脱になる。
+    expect(started?.metadata?.departureReason).toBe("socialCirculation");
     expect(started?.tick).toBe(completed?.tick);
     expect(completed?.metadata?.agentId).toBe("member-0");
     expect(completed?.metadata?.groupId).toBe("group-1");
