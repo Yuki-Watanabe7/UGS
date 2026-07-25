@@ -960,6 +960,10 @@ function releaseMemberFromDissolvingCluster(
   const memberCountBefore = candidate.memberIds.length;
   // Issue #186: departFromClusterがcurrentEpisodeをクリアする前にepisodeIdを退避しておく。
   const episodeId = agent.currentEpisode?.episodeId;
+  // Issue #190: 強制release由来のepisodeも滞在tickを記録する(自発離脱の`clusterDepartureCompleted`と
+  // 同じ`ticksInCluster`フィールドを使い、「完了episodeの滞在tick」集計が離脱経路を問わず算出できるようにする)。
+  const ticksInCluster =
+    agent.currentEpisode?.joinedAtTick !== undefined ? tick - agent.currentEpisode.joinedAtTick : undefined;
   departFromCluster(agent, candidate, tick, rng);
 
   const tags: LogTag[] = agent.isObserverJoiner ? ["observerJoiner", "clusterDeparture"] : ["clusterDeparture"];
@@ -980,6 +984,7 @@ function releaseMemberFromDissolvingCluster(
       departureReason: "clusterBelowMinimumSize",
       episodeId,
       episodeEndReason: "memberReleased",
+      ticksInCluster,
     },
   );
 }
@@ -1687,7 +1692,24 @@ export function stepSimulation(
         candidate.everConfirmed = true;
         continue;
       }
-      if (!candidate.everConfirmed) continue;
+      if (!candidate.everConfirmed) {
+        // Issue #190: 責務3の近接ヒューリスティックにより成立最小人数未満でconfirmedへ遷移した
+        // (=まだeverConfirmedが立っていない)candidateが、その後の責務9離脱で0人になった場合、
+        // このまま`continue`すると誰も所属していない"confirmed"のcandidateが`groupCandidates`に
+        // 無期限に残留してしまう(空clusterの残留、issue #190 4節「長時間実行でも…空cluster残留…が
+        // ないこと」)。0人になった時点でこのcandidate自体を即座に消滅させる
+        // (`memberCountBefore === 0`の既存分岐と同じ表現・イベントを使う)。
+        if (candidate.memberIds.length === 0) {
+          candidate.status = "dissolved";
+          candidate.age = 0;
+          pushLog(log, tick, `会話の輪が誰もいなくなり消滅した`, ["groupLifecycle"], "activeClusterDissolved", {
+            groupId: candidate.id,
+            memberCountBefore: 0,
+            memberCount: 0,
+          });
+        }
+        continue;
+      }
 
       // 責務9由来の離脱(5b)は既にcandidate.memberIdsへ反映済みなので、現在の人数と
       // capacity.minGroupSizeを比較するだけでよい。

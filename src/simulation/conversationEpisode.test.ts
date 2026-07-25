@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { stepSimulation } from "./engine";
+import { createInitialState, stepSimulation } from "./engine";
 import { SeededRandom } from "./random";
-import { DEFAULT_PARAMS } from "./presets";
+import { DEFAULT_PARAMS, getPresetById } from "./presets";
 import type { FormationRuntimeOptions } from "./formationPolicy";
 import type { Agent, GroupCandidate, SimParams, SimulationState } from "./types";
 import { DEFAULT_CONVERSATION_SATISFACTION_CONFIG, initializeConversationSatisfaction } from "./conversationSatisfaction";
@@ -159,13 +159,33 @@ describe("会話エピソード: 開始 (Issue #186)", () => {
     expect(departed.state).toBe("undecided");
     expect(departed.currentEpisode).toBeUndefined();
 
-    // 元のclusterへ即座に再接近・再参加させる
+    // 元のclusterへ即座に再接近・再参加させる。責務9の離脱によりmember-0だけだった元clusterは
+    // 0人になった時点で消滅している(Issue #190: everConfirmedが立たないままconfirmedのcandidateが
+    // 空clusterとして無期限残留しないよう、離脱後の後始末で即dissolvedへ遷移する挙動が追加された)。
+    // このテストが検証したいのは「同一clusterIdへの再参加で新しいepisodeIdが発行されること」であり
+    // 元clusterの残存確率に依存させないため、成立最小人数を満たす別memberを持つ「実在するconfirmed
+    // クラスタ」として`group-1`を再構築してから再参加させる。
+    const fillerAgents = ["filler-1", "filler-2"].map((id) =>
+      makeAgent({ id, state: "joined", joinedGroupId: "group-1", x: 400, y: 260 }),
+    );
     state = {
       ...state,
-      agents: state.agents.map((a) =>
-        a.id === "member-0" ? { ...a, state: "approaching", joinedGroupId: "group-1", x: 400, y: 260 } : a,
-      ),
-      groupCandidates: state.groupCandidates.map((c) => (c.id === "group-1" ? { ...c, x: 400, y: 260 } : c)),
+      agents: [
+        ...state.agents.map((a) =>
+          a.id === "member-0" ? { ...a, state: "approaching" as const, joinedGroupId: "group-1", x: 400, y: 260 } : a,
+        ),
+        ...fillerAgents,
+      ],
+      groupCandidates: [
+        makeCandidate({
+          id: "group-1",
+          x: 400,
+          y: 260,
+          memberIds: ["filler-1", "filler-2"],
+          status: "confirmed",
+          everConfirmed: true,
+        }),
+      ],
     };
     state = step(state, DEFAULT_PARAMS, rng);
 
@@ -359,5 +379,55 @@ describe("会話エピソード: 不変条件 (Issue #186)", () => {
     }
     // 実際にconfirmed経路を通ったことを確認(そうでなければ上のループが空振りになる)
     expect(state.log.some((e) => e.eventType === "groupConfirmed")).toBe(true);
+  });
+});
+
+describe("会話エピソード: reset (Issue #190 2節)", () => {
+  it("前runでepisode・満足度・離脱回数が蓄積していても、resetに相当する新規createInitialStateには一切残らない", () => {
+    const preset = getPresetById("standing-party");
+    const rng = new SeededRandom(42);
+    let priorRun = createInitialState(
+      42,
+      preset.params,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      STANDING_PARTY_FORMATION,
+    );
+    for (let i = 0; i < 200; i++) {
+      priorRun = step(priorRun, preset.params, rng);
+    }
+    // 前runで実際にepisode/離脱/ログが蓄積したことを確認(そうでなければ以下の検証が空振りになる)
+    expect(priorRun.log.length).toBeGreaterThan(0);
+    expect(priorRun.agents.some((agent) => agent.currentEpisode !== undefined)).toBe(true);
+    expect(priorRun.agents.some((agent) => (agent.clusterDepartureCount ?? 0) > 0)).toBe(true);
+
+    // Reset相当: 同じpreset/同じseedで新たにcreateInitialStateを呼び直す(App.tsxのresetSimulationと同じ経路)
+    const resetState = createInitialState(
+      42,
+      preset.params,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      STANDING_PARTY_FORMATION,
+    );
+
+    expect(resetState.tick).toBe(0);
+    expect(resetState.log.length).toBeLessThan(priorRun.log.length);
+    // 前run由来のclusterDeparture系構造化イベントが新runのlogへ一切引き継がれない
+    const clusterEventTypes = ["clusterDepartureStarted", "clusterDepartureCompleted", "clusterResearchStarted", "clusterRejoined", "clusterMemberReleased"];
+    expect(resetState.log.some((entry) => entry.eventType !== undefined && clusterEventTypes.includes(entry.eventType))).toBe(false);
+    expect(resetState.log).not.toBe(priorRun.log);
+    for (const agent of resetState.agents) {
+      expect(agent.currentEpisode).toBeUndefined();
+      expect(agent.clusterJoinedAtTick).toBeUndefined();
+      expect(agent.clusterDepartureCount ?? 0).toBe(0);
+      expect(agent.lastDepartedClusterId).toBeUndefined();
+      expect(agent.state).toBe("undecided");
+    }
   });
 });

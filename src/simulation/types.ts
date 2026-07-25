@@ -1793,3 +1793,85 @@ export type QuantileMetrics = {
   /** run毎の`excessUnassignedCount`の分位点。対象run(`structuralUnassignedFloor`定義済み)が1件もなければundefined */
   excessUnassignedCount?: QuantileSummary;
 };
+
+/**
+ * Issue #190: standingParty専用の比較指標(agentあたりの自発cluster離脱・再参加・異なるcluster参加数)。
+ * `standingPartyComparison.ts`の`buildStandingPartyRunSummary`が`state.log`の構造化イベント
+ * (`eventType`/`metadata`)と`state.agents`のみから導出する(表示用`message`文言は参照しない)。
+ * afterParty/classroomPairのrunに対して呼び出しても該当イベントが一切発生しないため、
+ * 全フィールドが0/空になる(既存挙動への影響なし、`standingPartyDynamicCycle.test.ts`が
+ * 立証済みの「他シナリオへclusterDeparture系イベントが混入しない」という前提に乗る)。
+ */
+export type StandingPartyAgentMetric = {
+  agentId: string;
+  label: string;
+  finalState: AgentState;
+  /** 責務9による自発的なcluster離脱回数(`clusterDepartureCompleted`)。責務10の強制releaseは含まない */
+  voluntaryDepartureCount: number;
+  /**
+   * 責務10によるクラスタ解散に伴う強制release回数(`clusterMemberReleased`)。issue #190 6節
+   * 「cluster解散による強制releaseを自発的回遊として集計しない」の要求どおり、
+   * `voluntaryDepartureCount`とは別フィールドに分離する。
+   */
+  forcedReleaseCount: number;
+  /** 離脱後に別/同じclusterへ再参加した回数(`clusterRejoined`) */
+  rejoinCount: number;
+  /** このrunでこのagentが所属した、重複を除くcluster数(核形成/合流/再参加のいずれも含む) */
+  distinctClusterCount: number;
+};
+
+/** 完了(voluntary/forced問わず)した1つの会話エピソードの滞在tickサンプル */
+export type StandingPartyEpisodeDwellSample = {
+  agentId: string;
+  clusterId: string;
+  ticksInCluster: number;
+  endReason: "voluntaryDeparture" | "memberReleased";
+  /** `endReason === "voluntaryDeparture"`の場合のみ定義される主要因 */
+  primaryReason?: ClusterDeparturePrimaryReason;
+};
+
+/** `ClusterDeparturePrimaryReason`別の発生件数(自発離脱`clusterDepartureCompleted`のみを対象とする) */
+export type StandingPartyDepartureReasonCounts = Record<ClusterDeparturePrimaryReason, number>;
+
+/**
+ * Issue #190: standingPartyの単発run分の比較指標サマリー。既存の`SimulationSummary`/
+ * `PairFormationRunSummary`とは独立した集計軸で、issue #190 5節(プリセット間の定性的比較)の
+ * 最低限の集計項目(自発離脱回数・再参加回数・異なるcluster参加数・完了episodeの滞在tick・
+ * cluster解散回数・会場退出人数・離脱理由別件数)をカバーする。
+ */
+export type StandingPartyRunSummary = {
+  agentMetrics: StandingPartyAgentMetric[];
+  totalVoluntaryDepartureCount: number;
+  totalForcedReleaseCount: number;
+  totalRejoinCount: number;
+  averageDistinctClusterCountPerAgent: number;
+  /** 完了した会話エピソードそれぞれの滞在tick(voluntary/forced両方を含む) */
+  episodeDwellSamples: StandingPartyEpisodeDwellSample[];
+  /** `episodeDwellSamples`の平均滞在tick。1件もなければundefined */
+  meanCompletedEpisodeDwellTicks?: number;
+  /** `episodeDwellSamples`の中央値滞在tick。1件もなければundefined */
+  medianCompletedEpisodeDwellTicks?: number;
+  /** このrunで解散(`activeClusterDissolved`)に至った、重複を除くcluster数 */
+  clusterDissolutionCount: number;
+  /** run終了時点で会場を退出("left")した人数 */
+  venueExitCount: number;
+  /** 自発離脱(`clusterDepartureCompleted`)の主要因別件数 */
+  departureReasonCounts: StandingPartyDepartureReasonCounts;
+};
+
+/** 複数run分のstandingParty比較指標集計値(issue #190 5節: 固定seed列でのpaired比較用) */
+export type StandingPartyMonteCarloSummary = {
+  runs: number;
+  averageVoluntaryDepartureCountPerAgent: number;
+  averageForcedReleaseCountPerAgent: number;
+  averageRejoinCountPerAgent: number;
+  averageDistinctClusterCountPerAgent: number;
+  /** run毎の`meanCompletedEpisodeDwellTicks`(定義済みのrunのみ)の平均。対象runが1件もなければundefined */
+  averageMeanCompletedEpisodeDwellTicks?: number;
+  /** run毎の`medianCompletedEpisodeDwellTicks`(定義済みのrunのみ)の平均。対象runが1件もなければundefined */
+  averageMedianCompletedEpisodeDwellTicks?: number;
+  averageClusterDissolutionCount: number;
+  averageVenueExitCount: number;
+  /** 主要因別の1runあたり平均件数 */
+  departureReasonRateAverages: StandingPartyDepartureReasonCounts;
+};

@@ -942,6 +942,15 @@ Phase 2で実装した会話満足度・クラスタ離脱判定・社交的回�
   心理理由を作ってもいません。クラスタ解散によるrelease(`clusterMemberReleased`)は引き続き
   「解散した会話の輪から再探索状態に戻った」という別文言のままです。
 
+### 定性的検証・統合回帰テスト(#190)
+
+Phase 2(会話満足度・離脱decision)の個別の数式・境界値は`conversationSatisfaction.test.ts`/
+`clusterDepartureDecision.test.ts`/`conversationEpisode.test.ts`が単体で検証済みです。#190では、
+これらを実際に動くシミュレーションとして組み合わせたときの、プリセット間の定性的な差・複数seedでの
+再現性・cluster離脱と会場退出の相互作用・長時間実行での安定性を自動テストで固定しました。詳細・
+設計判断・本Issueで見つけて修正した既存バグ(空confirmedクラスタの無期限残留)は
+[`docs/standing-party-phase2-verification.md`](docs/standing-party-phase2-verification.md)を参照してください。
+
 ## シミュレーションルールの概要
 
 行動ルールは `src/simulation/engine.ts` に集約されています。主なルール:
@@ -967,6 +976,7 @@ src/
     model.ts               初期エージェント生成(seedから再現可能)
     presets.ts              二次会5つ+立食パーティー3つ+教室での班分け4つ、計12シナリオプリセットとデフォルトパラメータ
     standingPartyScenarioConfig.ts 立食パーティー専用のPhase 2設定(満足度・離脱判定・回遊傾向分布)束とその比較プリセット(#189)
+    standingPartyComparison.ts 立食パーティーのプリセット間比較指標(自発離脱・再参加・滞在tick等)の集計ロジック(#190)
     formationPolicy.ts       シナリオ別の班形成・成立・終了ルールを切り替えるFormationPolicyの定義
     groupPartition.ts        人口を定員ルール(固定/可変)で分割し構造的未割当人数を決定的に計算
     pairFormation.ts         教室ペア形成(classroom-pair)専用のMonte Carlo集計ロジック
