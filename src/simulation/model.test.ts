@@ -57,6 +57,28 @@ describe("createInitialAgents", () => {
     const agents = createInitialAgents(5, { ...DEFAULT_PARAMS, populationSize: 16, existingTieStrength: 0.1 });
     expect(agents.every((a) => a.cliqueId === undefined)).toBe(true);
   });
+
+  describe("socialCirculationTendency (Issue #188, Phase 2)", () => {
+    it("assigns every agent a value within [0,1], including observerJoiner", () => {
+      const agents = createInitialAgents(11, { ...DEFAULT_PARAMS, populationSize: 16 });
+      for (const agent of agents) {
+        expect(agent.socialCirculationTendency).toBeGreaterThanOrEqual(0);
+        expect(agent.socialCirculationTendency).toBeLessThanOrEqual(1);
+      }
+    });
+
+    it("is deterministic for the same seed", () => {
+      const a = createInitialAgents(21, DEFAULT_PARAMS);
+      const b = createInitialAgents(21, DEFAULT_PARAMS);
+      expect(a.map((agent) => agent.socialCirculationTendency)).toEqual(b.map((agent) => agent.socialCirculationTendency));
+    });
+
+    it("varies across agents within the same run (not a single constant value)", () => {
+      const agents = createInitialAgents(21, { ...DEFAULT_PARAMS, populationSize: 20 });
+      const distinctValues = new Set(agents.map((agent) => agent.socialCirculationTendency));
+      expect(distinctValues.size).toBeGreaterThan(1);
+    });
+  });
 });
 
 describe("presets", () => {

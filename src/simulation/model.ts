@@ -20,6 +20,33 @@ const NAME_POOL = [
 /** 内部用: 既存の人間関係クラスタ(仲良しグループ)の割り当て */
 type CliqueAssignment = Map<number, number | undefined>;
 
+/**
+ * Issue #188 (Phase 2): FNV-1a風の単純な文字列ハッシュ。`schoolInterventionRuntime.ts`/
+ * `divergenceTemplates.ts`が確立した「主rngとは独立した派生ストリームの種を作る」表現専用rng
+ * パターンをそのまま踏襲する。
+ */
+function hashString(key: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < key.length; i++) {
+    hash ^= key.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+/**
+ * Issue #188 (Phase 2): 社交的回遊傾向(`Agent.socialCirculationTendency`)を、この関数に渡された
+ * 主系列`rng`とは一切独立した派生ストリームから生成する(docs/conversation-satisfaction-model.md
+ * 5.3節)。`seed`と`agentId`から決定的に導出するため同一seedなら常に同じ値になり、
+ * `schoolInterventionRuntime.ts`の`createInterventionRandom`と同じ「主rngを一切消費しない
+ * 別ストリーム」パターンにより、afterParty/classroomPairの既存seed結果・PRNG消費順序を
+ * 一切変えない(この値を読むのはstandingPartyの責務9のみ)。分布はADR方針どおり`[0,1]`一様。
+ */
+function createSocialCirculationTendency(seed: number, agentId: string): number {
+  const traitRng = new SeededRandom(hashString(`${seed}:socialCirculationTendency:${agentId}`));
+  return traitRng.range(0, 1);
+}
+
 function assignCliques(
   populationSize: number,
   existingTieStrength: number,
@@ -119,9 +146,10 @@ export function createInitialAgents(seed: number, params: SimParams): Agent[] {
     }
 
     const label = NAME_POOL[i % NAME_POOL.length] + (i >= NAME_POOL.length ? String(Math.floor(i / NAME_POOL.length) + 1) : "");
+    const agentId = `agent-${i}`;
 
     agents.push({
-      id: `agent-${i}`,
+      id: agentId,
       label,
       x: clamp(center.x + rng.range(-30, 30), 10, WORLD_WIDTH - 10),
       y: clamp(center.y + rng.range(-30, 30), 10, WORLD_HEIGHT - 10),
@@ -137,6 +165,7 @@ export function createInitialAgents(seed: number, params: SimParams): Agent[] {
       state: "undecided",
       stress: 0,
       cliqueId,
+      socialCirculationTendency: createSocialCirculationTendency(seed, agentId),
     });
   }
 
