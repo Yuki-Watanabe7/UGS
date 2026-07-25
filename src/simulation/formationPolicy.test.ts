@@ -10,6 +10,8 @@ import { createInitialState, stepSimulation } from "./engine";
 import { SeededRandom } from "./random";
 import { DEFAULT_PARAMS, getPresetById } from "./presets";
 import { DEFAULT_CLUSTER_DEPARTURE_DECISION_CONFIG } from "./clusterDepartureDecision";
+import { DEFAULT_STANDING_PARTY_SCENARIO_CONFIG } from "./standingPartyScenarioConfig";
+import { createInitialAgents } from "./model";
 import type { Agent, GroupCandidate } from "./types";
 
 function makeAgent(overrides: Partial<Agent>): Agent {
@@ -563,5 +565,53 @@ describe("classroomPairPolicy (Issue #132, Phase 2)", () => {
       expect(classroomPolicy.computeJoinFailureStressIncrement(agent, "groupExpired")).toBe(0);
       expect(classroomPolicy.computeJoinFailureStressIncrement(agent, "groupMissing")).toBe(0);
     });
+  });
+});
+
+describe("standingPartyPolicy config override (Issue #189, Phase 2)", () => {
+  const candidate: GroupCandidate = { id: "group-1", x: 0, y: 0, memberIds: ["agent-x"], status: "confirmed", age: 0 };
+
+  it("getFormationPolicyById returns the default singleton when no override is given", () => {
+    expect(getFormationPolicyById("standingParty")).toBe(standingPartyPolicy);
+    expect(getFormationPolicyById("standingParty", undefined, undefined, undefined)).toBe(standingPartyPolicy);
+  });
+
+  it("getFormationPolicyById builds a distinct policy that uses the overridden clusterDeparture config", () => {
+    const customConfig = { ...DEFAULT_CLUSTER_DEPARTURE_DECISION_CONFIG, minStayTicks: 3 };
+    const customPolicy = getFormationPolicyById("standingParty", undefined, undefined, customConfig);
+    expect(customPolicy).not.toBe(standingPartyPolicy);
+    expect(customPolicy.id).toBe("standingParty");
+
+    const ctx = { ticksInCluster: 3, memberCount: 3, tick: 3, conversationSatisfaction: 1, socialCirculationTendency: 0 };
+    // 既定(minStayTicks: 15)ではまだ対象外だが、カスタム設定(minStayTicks: 3)では対象になる
+    expect(standingPartyPolicy.evaluateClusterDeparture(makeAgent({}), candidate, ctx).eligible).toBe(false);
+    expect(customPolicy.evaluateClusterDeparture(makeAgent({}), candidate, ctx).eligible).toBe(true);
+  });
+
+  it("resolveFormationPolicy threads FormationRuntimeOptions.standingPartyConfig.clusterDeparture through", () => {
+    const customConfig = { ...DEFAULT_CLUSTER_DEPARTURE_DECISION_CONFIG, minStayTicks: 1 };
+    const resolved = resolveFormationPolicy({
+      scenarioId: "standingParty",
+      standingPartyConfig: {
+        conversationSatisfaction: DEFAULT_STANDING_PARTY_SCENARIO_CONFIG.conversationSatisfaction,
+        clusterDeparture: customConfig,
+        circulationTendencyRange: DEFAULT_STANDING_PARTY_SCENARIO_CONFIG.circulationTendencyRange,
+      },
+    });
+    expect(resolved).not.toBe(standingPartyPolicy);
+    const ctx = { ticksInCluster: 1, memberCount: 3, tick: 1, conversationSatisfaction: 1, socialCirculationTendency: 0 };
+    expect(resolved.evaluateClusterDeparture(makeAgent({}), candidate, ctx).eligible).toBe(true);
+  });
+});
+
+describe("createInitialAgents circulationTendencyRange (Issue #189, Phase 2)", () => {
+  it("generates socialCirculationTendency within the configured range instead of the default [0,1]", () => {
+    const params = { ...DEFAULT_PARAMS, populationSize: 24 };
+    const agents = createInitialAgents(4242, params, { min: 0.6, max: 1 });
+    expect(agents.length).toBeGreaterThan(0);
+    for (const agent of agents) {
+      expect(agent.socialCirculationTendency).toBeGreaterThanOrEqual(0.6);
+      expect(agent.socialCirculationTendency).toBeLessThanOrEqual(1);
+    }
   });
 });

@@ -845,8 +845,10 @@ Phase Cの介入シナリオと介入あり/なし比較を使うと、次のよ
 ### 開始方法
 
 トップページから「立食パーティーの会話クラスタ形成」を選ぶか、`/simulate/standing-party` へ直接アクセスします。
-プリセットは「立食パーティー(標準)」の1種類のみです。Start/Pause/Step/Resetの操作方法自体は二次会・教室と
-共通ですが、後述のとおりこのシナリオには自然終了がないため、観察を区切りたいタイミングで一時停止してください。
+プリセットは「立食パーティー(標準)」「立食パーティー(幅広く交流するネットワーキング型)」
+「立食パーティー(少人数でじっくり話す懇親型)」の3種類です(比較プリセットは#189、後述)。
+Start/Pause/Step/Resetの操作方法自体は二次会・教室と共通ですが、後述のとおりこのシナリオには
+自然終了がないため、観察を区切りたいタイミングで一時停止してください。
 
 ### Phase 1で実装された動的ループ
 
@@ -909,6 +911,37 @@ Phase Cの介入シナリオと介入あり/なし比較を使うと、次のよ
 ください(接触ネットワーク図・会話相手履歴の本格的タイムライン・cluster間移動の統計ダッシュボード・
 他クラスタの魅力度比較・ObserverJoiner固有の遠慮や葛藤のモデル化は、いずれも本節の対象外です)。
 
+### 設定・比較プリセット・Inspector表示(#189、Phase 2の露出)
+
+Phase 2で実装した会話満足度・クラスタ離脱判定・社交的回遊傾向は、当初standingPartyの内部定数
+(`DEFAULT_CONVERSATION_SATISFACTION_CONFIG`/`DEFAULT_CLUSTER_DEPARTURE_DECISION_CONFIG`)に
+固定されていましたが、#189でstandingParty専用のUI・比較プリセット・Inspector表示へ露出しました。
+
+- **詳細設定パネル**: standingParty選択時のみ、操作パネル下に「詳細設定(立食パーティー)」が
+  折りたたみ表示されます。満足度の基礎初期値・時間減衰率・新規member参加による回復量・
+  居心地のよい会話人数とその補正上限・最低滞在tick・満足度低下/社交的回遊傾向それぞれの
+  離脱寄与係数・社交的回遊傾向の分布(範囲)を、有効範囲・step・単位を明示したsliderで調整できます。
+  いずれもagent生成・FormationPolicy構築時にのみ使われるためReset後に反映されます
+  (`SimParams`とは別の独立した設定で、既存の一般パラメータや二次会・学校のruntime optionsへは
+  一切混入しません)。不正な値(NaN・範囲外・`circulationTendencyRange.min > max`等)は
+  `standingPartyScenarioConfig.ts`の`validateStandingPartyScenarioConfig`がdomain layerで拒否します。
+- **比較プリセット**: 標準ケースに加え、社交的回遊傾向の高いagentが多く最低滞在時間経過後は
+  満足度が高くても移りやすい「ネットワーキング型」、回遊傾向が低く満足度減衰も遅い・最低滞在時間も
+  長めの「懇親型」を選べます。いずれもpopulationSize・既存関係性等の`SimParams`は標準ケースと揃え、
+  Phase 2パラメータの差だけが観察できる構成にしています。
+- **agentインスペクター**: standingPartyでは「表示するagent」ドロップダウンで任意のagent(observerJoiner
+  以外も含む)を選び、現在状態・現在cluster ID・会話episode ID・joinedAtTick・滞在tick・会話満足度・
+  社交的回遊傾向・今tickの離脱判定対象可否・離脱確率とその寄与要因・直近の自発的離脱理由を確認できます。
+  値が存在しない状態(会話中でない、まだ最低滞在tickに達していない等)は0を捏造せずその旨を表示します。
+  直前の輪離脱が自発的離脱(責務9)によるものか、クラスタ解散によるrelease(責務10)によるものかも
+  区別して表示します。observerJoinerも他のagentと同じdecisionを利用しており、Phase 3以降の
+  遠慮・葛藤値はまだ実装されていないため表示していません。
+- **状態ログ**: 自発的な輪離脱のログ文言は、構造化された`departureReason`から自然文言(「別の会話を
+  探すため、輪を離れ始めた」「さらに多くの参加者と話すため、輪を離れた」等)を生成するようになりました。
+  「飽きた」「つまらない人」のような人格・相手評価に見える断定表現は使わず、observerJoinerだけ異なる
+  心理理由を作ってもいません。クラスタ解散によるrelease(`clusterMemberReleased`)は引き続き
+  「解散した会話の輪から再探索状態に戻った」という別文言のままです。
+
 ## シミュレーションルールの概要
 
 行動ルールは `src/simulation/engine.ts` に集約されています。主なルール:
@@ -932,7 +965,8 @@ src/
     types.ts              Agent / GroupCandidate / SimParams などの型定義
     random.ts              seed固定の疑似乱数生成器
     model.ts               初期エージェント生成(seedから再現可能)
-    presets.ts              二次会5つ+教室での班分け4つ、計9シナリオプリセットとデフォルトパラメータ
+    presets.ts              二次会5つ+立食パーティー3つ+教室での班分け4つ、計12シナリオプリセットとデフォルトパラメータ
+    standingPartyScenarioConfig.ts 立食パーティー専用のPhase 2設定(満足度・離脱判定・回遊傾向分布)束とその比較プリセット(#189)
     formationPolicy.ts       シナリオ別の班形成・成立・終了ルールを切り替えるFormationPolicyの定義
     groupPartition.ts        人口を定員ルール(固定/可変)で分割し構造的未割当人数を決定的に計算
     pairFormation.ts         教室ペア形成(classroom-pair)専用のMonte Carlo集計ロジック
@@ -954,6 +988,7 @@ src/
   components/
     SimulationCanvas.tsx    SVGによる描画のみを担当
     ControlPanel.tsx        操作パネルとパラメータスライダー
+    StandingPartyAdvancedSettings.tsx 立食パーティー専用のPhase 2詳細設定パネル(#189、standingParty選択時のみ表示)
     EventLog.tsx            状態ログの表示(発言・発言効果・乖離・信頼・関係性フィルタを含む)
     AgentLegend.tsx         凡例
     SimulationSummaryPanel.tsx  終了サマリーの表示
@@ -961,7 +996,7 @@ src/
     InterventionSelector.tsx        介入シナリオの選択・説明表示
     InterventionComparisonPanel.tsx 介入あり/なしのMonte Carlo比較表示
     GroupFormationComparisonPanel.tsx 学校シナリオの班人数・教師介入paired Monte Carlo比較表示
-    ObserverJoinerInspector.tsx     observerJoinerインスペクター(発言効果・本心/建前・信頼の因果詳細を含む)
+    ObserverJoinerInspector.tsx     observerJoinerインスペクター/agentインスペクター(発言効果・本心/建前・信頼の因果詳細、standingPartyのagent選択・離脱判定要因を含む)
     SpeechEffectsComparisonPanel.tsx 発言効果ON/OFFのMonte Carlo比較表示(Phase 3)
 ```
 

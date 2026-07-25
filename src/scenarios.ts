@@ -74,13 +74,16 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
     homeTitle: "立食パーティーの会話クラスタ形成",
     homeDescription:
       "会場のあちこちで複数の会話の輪が並行して形成される立食パーティーで、誰がどの輪を見つけ、誰が輪を探し続けるかを観察します。",
-    observationTargets: "複数の輪の並行形成、輪への接近、様子見",
-    availableScenarios: "立食パーティー(標準)の1種類",
+    observationTargets: "複数の輪の並行形成、輪への接近、様子見、会話満足度・社交的回遊傾向による輪の離脱",
+    availableScenarios: "標準・ネットワーキング型・懇親型の3種類",
     introText:
       "立食パーティーの会場で、複数の会話の輪が同時並行に生まれていく過程を可視化します。オレンジ色のエージェントは「輪に入りたいが、自分の意思で場を動かしたくない人 (observerJoiner)」です。" +
-      "輪が成立した後も観察は終わらず、人はその輪から離脱して別の輪を再探索したり、別の輪へ再参加したりします。輪自体も人数が減れば縮小・解散します(Phase 1の暫定ルールによるもので、現実の性格診断ではありません)。" +
+      "輪が成立した後も観察は終わらず、人はその輪から離脱して別の輪を再探索したり、別の輪へ再参加したりします。輪自体も人数が減れば縮小・解散します。" +
+      "離脱には、今の会話への満足度が下がったため(会話満足度)と、不満がなくてもより多くの人と交流したいため(社交的回遊傾向)の2つの要因があります。" +
+      "満足度は現在の会話エピソードに対するシミュレーション内部の仮説的な値であり、回遊傾向の高低・観察される移動の多さは性格の良し悪しを意味しません。" +
+      "他の輪の魅力度の比較やobserverJoiner固有の遠慮・葛藤はまだ扱っていません(いずれもPhase 2の対象外)。" +
       "この動的な循環は決まった終了条件を持たないため、区切りたいタイミングで一時停止してください。",
-    presetIds: ["standing-party"],
+    presetIds: ["standing-party", "standing-party-networking", "standing-party-intimate"],
     initialPresetId: "standing-party",
     presentation: STANDING_PARTY_PRESENTATION,
   },

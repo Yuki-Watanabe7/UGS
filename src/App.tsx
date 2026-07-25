@@ -24,6 +24,9 @@ import {
   DEFAULT_SPEECH_BUBBLE_DISPLAY_SETTINGS,
   type SpeechBubbleDisplaySettingsState,
 } from "./components/speechBubbleDisplayFilter";
+import { StandingPartyAdvancedSettings } from "./components/StandingPartyAdvancedSettings";
+import { DEFAULT_STANDING_PARTY_SCENARIO_CONFIG } from "./simulation/standingPartyScenarioConfig";
+import type { StandingPartyScenarioConfig } from "./simulation/standingPartyScenarioConfig";
 import { createInitialState, stepSimulation } from "./simulation/engine";
 import { SeededRandom } from "./simulation/random";
 import { getPresetById } from "./simulation/presets";
@@ -46,13 +49,22 @@ import { normalizeInterventionForPresentation } from "./presentation/scenarioPre
 const TICK_INTERVAL_MS = 250;
 const INITIAL_SEED = 12345;
 
-/** Issue #132: 選択中のプリセットに紐づくFormationPolicyの実行時オプションを組み立てる */
-function formationOptionsForPreset(presetId: string): FormationRuntimeOptions {
+/**
+ * Issue #132: 選択中のプリセットに紐づくFormationPolicyの実行時オプションを組み立てる。
+ * Issue #189: `standingPartyConfig`はプリセットの既定値ではなく、呼び出し側(App.tsx)が管理する
+ * 現在適用中の値(ユーザー編集を含む)を明示的に受け取る ―― プリセット切替時はプリセットの既定値、
+ * Reset/Seed変更時は編集済みの値、と呼び出し側の意図によって使い分けるため。
+ */
+function formationOptionsForPreset(
+  presetId: string,
+  standingPartyConfig: StandingPartyScenarioConfig,
+): FormationRuntimeOptions {
   const preset = getPresetById(presetId);
   return {
     scenarioId: preset.formationScenarioId ?? "afterParty",
     formationDeadlineTick: preset.formationDeadlineTick,
     classroomGroupSize: preset.formationClassroomGroupSize,
+    standingPartyConfig,
   };
 }
 
@@ -66,6 +78,11 @@ function SimulationApp({ scenario }: Props) {
   const initialPreset = getPresetForScenario(scenario, scenario.initialPresetId);
   const [presetId, setPresetId] = useState(initialPreset.id);
   const [params, setParams] = useState<SimParams>(initialPreset.params);
+  // Issue #189 (Phase 2): standingParty専用のPhase 2設定。他シナリオではformationPolicy.ts側が
+  // 常に無視するため保持しても無害だが、プリセット切替時はプリセットの既定値へ戻す(下記handlePresetChange)。
+  const [standingPartyConfig, setStandingPartyConfig] = useState<StandingPartyScenarioConfig>(
+    initialPreset.formationStandingPartyConfig ?? DEFAULT_STANDING_PARTY_SCENARIO_CONFIG,
+  );
   const [seed, setSeed] = useState(INITIAL_SEED);
   const [interventionId, setInterventionId] = useState<InterventionScenarioId>("none");
   // Issue #155: プリセットごとの班人数設定(ペア/3人班/4人班/3〜4人班)に応じて、ペア/班の表示語彙・
@@ -93,12 +110,15 @@ function SimulationApp({ scenario }: Props) {
       { enabled: true },
       { enabled: true },
       { enabled: true },
-      formationOptionsForPreset(initialPreset.id),
+      formationOptionsForPreset(initialPreset.id, standingPartyConfig),
     ),
   );
   // 現在のsimStateの生成に実際に使われたparams。Reset必須パラメータが
   // これとparamsとで食い違っている間は、変更がまだ反映されていないとみなす。
   const [appliedParams, setAppliedParams] = useState<SimParams>(initialPreset.params);
+  // Issue #189: 同様に、現在のsimStateの生成に実際に使われたstandingPartyConfig。
+  const [appliedStandingPartyConfig, setAppliedStandingPartyConfig] =
+    useState<StandingPartyScenarioConfig>(standingPartyConfig);
   // Reset・プリセット変更・seed変更・再実行のたびにインクリメントする。useActiveExpressionsは
   // この値の変化を「新しい実行が始まった」シグナルとして扱い、古い心の声吹き出しを破棄する。
   const [runId, setRunId] = useState(0);
@@ -121,6 +141,7 @@ function SimulationApp({ scenario }: Props) {
       nextParams: SimParams,
       nextInterventionId: InterventionScenarioId,
       nextPresetId: string,
+      nextStandingPartyConfig: StandingPartyScenarioConfig,
     ) => {
       rngRef.current = new SeededRandom(nextSeed);
       const initialState = createInitialState(
@@ -131,10 +152,11 @@ function SimulationApp({ scenario }: Props) {
         { enabled: true },
         { enabled: true },
         { enabled: true },
-        formationOptionsForPreset(nextPresetId),
+        formationOptionsForPreset(nextPresetId, nextStandingPartyConfig),
       );
       setSimState(initialState);
       setAppliedParams(nextParams);
+      setAppliedStandingPartyConfig(nextStandingPartyConfig);
       setRunId((id) => id + 1);
       setRunning(false);
     },
@@ -156,13 +178,20 @@ function SimulationApp({ scenario }: Props) {
     scenarioId: presentation.id,
   });
 
-  const hasPendingResetChanges = RESET_REQUIRED_PARAM_KEYS.some(
-    (key) => params[key] !== appliedParams[key],
-  );
+  // Issue #189: standingPartyConfigは丸ごとresetRequired(agent生成・FormationPolicy構築時にのみ
+  // 使われるため)。ネストした値のためJSON比較で十分(数値のみの構造)。
+  const hasPendingResetChanges =
+    RESET_REQUIRED_PARAM_KEYS.some((key) => params[key] !== appliedParams[key]) ||
+    JSON.stringify(standingPartyConfig) !== JSON.stringify(appliedStandingPartyConfig);
 
-  // Issue #132: 現在選択中のプリセットに紐づくformationPolicyの実行時オプション。presetIdが変わらない
-  // 限り同一参照を保つ(useCallback/useEffectの依存配列に含めても不要な再生成を起こさないため)。
-  const formation = useMemo(() => formationOptionsForPreset(presetId), [presetId]);
+  // Issue #132: 現在選択中のプリセットに紐づくformationPolicyの実行時オプション。Issue #189:
+  // standingPartyConfigは「適用済み」の値を使う(resetRequiredのため、Reset前の編集中の値では
+  // 進行中のtickへ即座に反映しない)。presetId/appliedStandingPartyConfigが変わらない限り
+  // 同一参照を保つ(useCallback/useEffectの依存配列に含めても不要な再生成を起こさないため)。
+  const formation = useMemo(
+    () => formationOptionsForPreset(presetId, appliedStandingPartyConfig),
+    [presetId, appliedStandingPartyConfig],
+  );
 
   const handleStep = useCallback(() => {
     setSimState((prev) =>
@@ -214,23 +243,25 @@ function SimulationApp({ scenario }: Props) {
   }, []);
 
   const handleReset = useCallback(() => {
-    resetSimulation(seed, params, activeInterventionId, presetId);
-  }, [resetSimulation, seed, params, activeInterventionId, presetId]);
+    resetSimulation(seed, params, activeInterventionId, presetId, standingPartyConfig);
+  }, [resetSimulation, seed, params, activeInterventionId, presetId, standingPartyConfig]);
 
   const handleSeedChange = useCallback(
     (nextSeed: number) => {
       setSeed(nextSeed);
-      resetSimulation(nextSeed, params, activeInterventionId, presetId);
+      resetSimulation(nextSeed, params, activeInterventionId, presetId, standingPartyConfig);
     },
-    [resetSimulation, params, activeInterventionId, presetId],
+    [resetSimulation, params, activeInterventionId, presetId, standingPartyConfig],
   );
 
   const handlePresetChange = useCallback(
     (nextPresetId: string) => {
       const preset = getPresetForScenario(scenario, nextPresetId);
+      const nextStandingPartyConfig = preset.formationStandingPartyConfig ?? DEFAULT_STANDING_PARTY_SCENARIO_CONFIG;
       setPresetId(preset.id);
       setParams(preset.params);
-      resetSimulation(seed, preset.params, activeInterventionId, preset.id);
+      setStandingPartyConfig(nextStandingPartyConfig);
+      resetSimulation(seed, preset.params, activeInterventionId, preset.id, nextStandingPartyConfig);
     },
     [resetSimulation, scenario, seed, activeInterventionId],
   );
@@ -242,9 +273,9 @@ function SimulationApp({ scenario }: Props) {
         presentation,
       );
       setInterventionId(normalized);
-      resetSimulation(seed, params, normalized, presetId);
+      resetSimulation(seed, params, normalized, presetId, standingPartyConfig);
     },
-    [resetSimulation, seed, params, presetId, presentation],
+    [resetSimulation, seed, params, presetId, presentation, standingPartyConfig],
   );
 
   return (
@@ -294,6 +325,13 @@ function SimulationApp({ scenario }: Props) {
             presets={scenarioPresets}
             presentation={presentation}
           />
+          {presentation.id === "standingParty" && (
+            <StandingPartyAdvancedSettings
+              config={standingPartyConfig}
+              onConfigChange={setStandingPartyConfig}
+              hasPendingChanges={JSON.stringify(standingPartyConfig) !== JSON.stringify(appliedStandingPartyConfig)}
+            />
+          )}
           <ExpressionDisplaySettings
             settings={expressionDisplaySettings}
             onSettingsChange={setExpressionDisplaySettings}

@@ -1,6 +1,8 @@
 import type {
   Agent,
   AgentAssignmentStatus,
+  ClusterDepartureFactor,
+  ClusterDeparturePrimaryReason,
   ObserverActiveEffectStatus,
   ObserverJoinerInspection,
   ObserverSocialExpressionSnapshot,
@@ -20,6 +22,8 @@ import { correctionFromHistory } from "./relationshipTie";
 import { distance } from "./model";
 import { attractiveness, nearestCandidate } from "./engine";
 import { getFormationPolicyById } from "./formationPolicy";
+import { computeClusterDepartureDecision } from "./clusterDepartureDecision";
+import { DEFAULT_STANDING_PARTY_SCENARIO_CONFIG } from "./standingPartyScenarioConfig";
 
 /**
  * Issue #119: 全observerJoinerで共有するPhase 4(本心/対外表現)の導出結果。
@@ -276,6 +280,61 @@ function currentGroupIdFor(agent: Agent, state: SimulationState): string | undef
   return state.groupCandidates.find((candidate) => candidate.memberIds.includes(agent.id))?.id;
 }
 
+/**
+ * Issue #189 (Phase 2): 現在tickの離脱判定要因を、`engine.ts`(責務9呼び出し箇所)と全く同じ入力・
+ * 同じ純粋関数(`computeClusterDepartureDecision`)から再現する。SimulationStateへ新しいフィールドを
+ * 追加せず、既存の`agent.currentEpisode`/`agent.clusterJoinedAtTick`/`agent.socialCirculationTendency`/
+ * `state.standingPartyConfig`だけから導出するため、Inspector表示と実際のシミュレーション挙動が
+ * 常に一致する(受入条件: Inspector値がSimulationState/selectorと一致する)。standingParty以外、
+ * または`joined`していない場合は`undefined`(要件: 「まだ離脱判定前」を0で捏造しない)。
+ */
+function buildClusterDepartureDecisionSnapshot(
+  agent: Agent,
+  state: SimulationState,
+): {
+  eligible: boolean;
+  probability: number;
+  factors?: ClusterDepartureFactor[];
+  primaryReason?: ClusterDeparturePrimaryReason;
+} | undefined {
+  if (state.formationScenarioId !== "standingParty") return undefined;
+  if (agent.state !== "joined" || agent.clusterJoinedAtTick === undefined) return undefined;
+  const config = (state.standingPartyConfig ?? DEFAULT_STANDING_PARTY_SCENARIO_CONFIG).clusterDeparture;
+  return computeClusterDepartureDecision({
+    config,
+    ticksInCluster: state.tick - agent.clusterJoinedAtTick,
+    conversationSatisfaction: agent.currentEpisode?.conversationSatisfaction ?? 1,
+    socialCirculationTendency: agent.socialCirculationTendency ?? 0.5,
+  });
+}
+
+/**
+ * Issue #189 (Phase 2): `agent.lastDepartedClusterId`が記録された直近の輪離脱が、自発的離脱
+ * (`clusterDepartureCompleted`)によるものか、クラスタ解散によるrelease(`clusterMemberReleased`)に
+ * よるものかをログから区別する(要件: 自発的離脱とcluster解散によるreleaseを表示上区別する)。
+ * どちらの構造化イベントも`departFromCluster`経由でしか記録されないため、`lastDepartedClusterAtTick`
+ * と`groupId`が一致する最新の1件を特定すれば一意に決まる。
+ */
+function buildLastClusterExitSnapshot(
+  agent: Agent,
+  state: SimulationState,
+): { kind: "voluntaryDeparture" | "memberReleased"; reason?: ClusterDeparturePrimaryReason } | undefined {
+  if (agent.lastDepartedClusterId === undefined) return undefined;
+  const entry = [...state.log]
+    .reverse()
+    .find(
+      (candidate) =>
+        (candidate.eventType === "clusterDepartureCompleted" || candidate.eventType === "clusterMemberReleased") &&
+        candidate.metadata?.agentId === agent.id &&
+        candidate.metadata?.groupId === agent.lastDepartedClusterId &&
+        candidate.tick === agent.lastDepartedClusterAtTick,
+    );
+  if (!entry) return undefined;
+  if (entry.eventType === "clusterMemberReleased") return { kind: "memberReleased" };
+  const reason = entry.metadata?.departureReason;
+  return { kind: "voluntaryDeparture", reason: reason === "clusterBelowMinimumSize" ? undefined : reason };
+}
+
 function buildInspection(
   agent: Agent,
   state: SimulationState,
@@ -297,6 +356,8 @@ function buildInspection(
   const currentGroupPolicy = currentGroup
     ? getFormationPolicyById(state.formationScenarioId ?? "afterParty", state.formationDeadlineTick, state.formationClassroomGroupSize)
     : undefined;
+  const departureDecision = buildClusterDepartureDecisionSnapshot(agent, state);
+  const lastClusterExit = buildLastClusterExitSnapshot(agent, state);
 
   return {
     agentId: agent.id,
@@ -357,6 +418,13 @@ function buildInspection(
     lastDepartedClusterId: agent.lastDepartedClusterId,
     lastDepartedClusterAtTick: agent.lastDepartedClusterAtTick,
     clusterDepartureCount: agent.clusterDepartureCount ?? 0,
+    socialCirculationTendency: agent.socialCirculationTendency,
+    departureDecisionEligible: departureDecision?.eligible,
+    departureDecisionProbability: departureDecision?.probability,
+    departureDecisionFactors: departureDecision?.factors,
+    departureDecisionPrimaryReason: departureDecision?.primaryReason,
+    lastClusterExitKind: lastClusterExit?.kind,
+    lastClusterExitReason: lastClusterExit?.reason,
     joinFailureCount: failureEntries.length,
     lastFailureReason: lastFailure?.metadata?.reason,
     lastFailureTick: lastFailure?.tick,

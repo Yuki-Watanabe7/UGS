@@ -9,6 +9,8 @@ import type {
 } from "./types";
 import { clamp, distance } from "./model";
 import { computeClusterDepartureDecision, DEFAULT_CLUSTER_DEPARTURE_DECISION_CONFIG } from "./clusterDepartureDecision";
+import type { ClusterDepartureDecisionConfig } from "./clusterDepartureDecision";
+import type { StandingPartyScenarioConfig } from "./standingPartyScenarioConfig";
 
 /**
  * Issue #130 (Phase 1): シナリオごとに差し替え可能な「グループ形成・終了ルール」の集合。
@@ -120,6 +122,12 @@ export type FormationRuntimeOptions = {
    * 無視される。省略時は`DEFAULT_CLASSROOM_PAIR_GROUP_SIZE`(2人固定、既存プリセットとの後方互換)。
    */
   classroomGroupSize?: GroupSizeRule;
+  /**
+   * Issue #189 (Phase 2): `standingParty`固有の、会話満足度・クラスタ離脱判定・社交的回遊傾向分布の
+   * 上書き。`standingParty`以外では無視される。省略時は`DEFAULT_STANDING_PARTY_SCENARIO_CONFIG`
+   * (既存の挙動と一致、後方互換)。
+   */
+  standingPartyConfig?: StandingPartyScenarioConfig;
 };
 
 /** 責務1(候補作成)の入力コンテキスト */
@@ -505,78 +513,90 @@ function standingPartyFinishReason(_agents: Agent[], _tick: number): SimulationF
 // ここで撤去され、`clusterDepartureDecision.ts`の満足度・社交的回遊傾向モデルへ置き換わった
 // (最低滞在tickの値そのものは`DEFAULT_CLUSTER_DEPARTURE_DECISION_CONFIG.minStayTicks`(15)として
 // 引き継いでいる)。
+//
+// Issue #189 (Phase 2): `evaluateClusterDeparture`が参照する`ClusterDepartureDecisionConfig`を
+// UI/プリセットから安全に差し替えられるよう、シングルトンオブジェクトからfactory関数へ変更した
+// (`createClassroomGroupPolicy`と同じ形)。`clusterDepartureConfig`省略時は
+// `DEFAULT_CLUSTER_DEPARTURE_DECISION_CONFIG`(既存の挙動と完全に一致、後方互換)。
 
-export const standingPartyPolicy: FormationPolicy = {
-  id: "standingParty",
-  candidateMergeRadius: CANDIDATE_MERGE_RADIUS,
-  approachRateMultiplier: APPROACH_RATE_MULTIPLIER,
-  defaultWeakResponseAge: CANDIDATE_WEAK_RESPONSE_AGE,
-  defaultMaxAge: CANDIDATE_MAX_AGE,
+function createStandingPartyPolicy(
+  clusterDepartureConfig: ClusterDepartureDecisionConfig = DEFAULT_CLUSTER_DEPARTURE_DECISION_CONFIG,
+): FormationPolicy {
+  return {
+    id: "standingParty",
+    candidateMergeRadius: CANDIDATE_MERGE_RADIUS,
+    approachRateMultiplier: APPROACH_RATE_MULTIPLIER,
+    defaultWeakResponseAge: CANDIDATE_WEAK_RESPONSE_AGE,
+    defaultMaxAge: CANDIDATE_MAX_AGE,
 
-  evaluateCandidateInitiation(agent, ctx) {
-    return afterPartyPolicy.evaluateCandidateInitiation(agent, ctx);
-  },
+    evaluateCandidateInitiation(agent, ctx) {
+      return afterPartyPolicy.evaluateCandidateInitiation(agent, ctx);
+    },
 
-  shouldConfirmCandidate(nearbyCount, params) {
-    return afterPartyPolicy.shouldConfirmCandidate(nearbyCount, params);
-  },
+    shouldConfirmCandidate(nearbyCount, params) {
+      return afterPartyPolicy.shouldConfirmCandidate(nearbyCount, params);
+    },
 
-  evaluateUnconfirmedCandidateLifecycle(candidate, ctx) {
-    return afterPartyPolicy.evaluateUnconfirmedCandidateLifecycle(candidate, ctx);
-  },
+    evaluateUnconfirmedCandidateLifecycle(candidate, ctx) {
+      return afterPartyPolicy.evaluateUnconfirmedCandidateLifecycle(candidate, ctx);
+    },
 
-  computeStressIncrement(agent, ctx) {
-    return afterPartyPolicy.computeStressIncrement(agent, ctx);
-  },
+    computeStressIncrement(agent, ctx) {
+      return afterPartyPolicy.computeStressIncrement(agent, ctx);
+    },
 
-  canLeave(agent, stress, effectiveLeaveThreshold) {
-    return afterPartyPolicy.canLeave(agent, stress, effectiveLeaveThreshold);
-  },
+    canLeave(agent, stress, effectiveLeaveThreshold) {
+      return afterPartyPolicy.canLeave(agent, stress, effectiveLeaveThreshold);
+    },
 
-  isFinished(agents, tick) {
-    return standingPartyFinishReason(agents, tick) !== undefined;
-  },
+    isFinished(agents, tick) {
+      return standingPartyFinishReason(agents, tick) !== undefined;
+    },
 
-  finishReason(agents, tick) {
-    return standingPartyFinishReason(agents, tick);
-  },
+    finishReason(agents, tick) {
+      return standingPartyFinishReason(agents, tick);
+    },
 
-  resolveGroupCapacity(candidate, params) {
-    return afterPartyPolicy.resolveGroupCapacity(candidate, params);
-  },
+    resolveGroupCapacity(candidate, params) {
+      return afterPartyPolicy.resolveGroupCapacity(candidate, params);
+    },
 
-  computeConfirmationCount(candidate, agents) {
-    return afterPartyPolicy.computeConfirmationCount(candidate, agents);
-  },
+    computeConfirmationCount(candidate, agents) {
+      return afterPartyPolicy.computeConfirmationCount(candidate, agents);
+    },
 
-  computeJoinFailureStressIncrement(agent, reason) {
-    return afterPartyPolicy.computeJoinFailureStressIncrement(agent, reason);
-  },
+    computeJoinFailureStressIncrement(agent, reason) {
+      return afterPartyPolicy.computeJoinFailureStressIncrement(agent, reason);
+    },
 
-  /**
-   * 責務9(Issue #188, Phase 2)の本体。agent/candidateそのものは参照せず(observerJoinerの遠慮・
-   * 愛着等は対象外)、`ctx.conversationSatisfaction`/`ctx.socialCirculationTendency`/
-   * `ctx.ticksInCluster`のみから`clusterDepartureDecision.ts`の純粋関数で決定的に計算する。
-   * rngを直接消費せず、実際の確率判定(rng.chance)はengine.ts側が行う
-   * (責務1の`evaluateCandidateInitiation`と同じ「eligible + probability」の分離パターン)。
-   */
-  evaluateClusterDeparture(_agent, _candidate, ctx) {
-    return computeClusterDepartureDecision({
-      config: DEFAULT_CLUSTER_DEPARTURE_DECISION_CONFIG,
-      ticksInCluster: ctx.ticksInCluster,
-      conversationSatisfaction: ctx.conversationSatisfaction,
-      socialCirculationTendency: ctx.socialCirculationTendency,
-    });
-  },
+    /**
+     * 責務9(Issue #188, Phase 2)の本体。agent/candidateそのものは参照せず(observerJoinerの遠慮・
+     * 愛着等は対象外)、`ctx.conversationSatisfaction`/`ctx.socialCirculationTendency`/
+     * `ctx.ticksInCluster`のみから`clusterDepartureDecision.ts`の純粋関数で決定的に計算する。
+     * rngを直接消費せず、実際の確率判定(rng.chance)はengine.ts側が行う
+     * (責務1の`evaluateCandidateInitiation`と同じ「eligible + probability」の分離パターン)。
+     */
+    evaluateClusterDeparture(_agent, _candidate, ctx) {
+      return computeClusterDepartureDecision({
+        config: clusterDepartureConfig,
+        ticksInCluster: ctx.ticksInCluster,
+        conversationSatisfaction: ctx.conversationSatisfaction,
+        socialCirculationTendency: ctx.socialCirculationTendency,
+      });
+    },
 
-  // Issue #177(責務10): 会話クラスタは成立(confirmed)後も増減を続けるactiveな単位のため、
-  // ここだけafterPartyへ委譲せずtrueを返す。実際の縮小・解散判定はengine.tsの共通ロジックが担う。
-  confirmedClusterIsMutable: true,
+    // Issue #177(責務10): 会話クラスタは成立(confirmed)後も増減を続けるactiveな単位のため、
+    // ここだけafterPartyへ委譲せずtrueを返す。実際の縮小・解散判定はengine.tsの共通ロジックが担う。
+    confirmedClusterIsMutable: true,
 
-  evaluatePostConfirmationLifecycle(candidate, capacity) {
-    return candidate.memberIds.length < capacity.minGroupSize ? "dissolve" : "continue";
-  },
-};
+    evaluatePostConfirmationLifecycle(candidate, capacity) {
+      return candidate.memberIds.length < capacity.minGroupSize ? "dissolve" : "continue";
+    },
+  };
+}
+
+/** 既定設定のstandingPartyPolicy。既存の直接import(テスト等)との後方互換のため引き続きexportする。 */
+export const standingPartyPolicy: FormationPolicy = createStandingPartyPolicy();
 
 // --- classroomPair: Issue #132 (Phase 2) 教室で自由にペアを作るシナリオ ------------------------
 
@@ -735,24 +755,33 @@ const FORMATION_POLICIES: Partial<Record<FormationScenarioId, FormationPolicy>> 
 };
 
 /**
- * `formationDeadlineTick`/`classroomGroupSize`は`classroomPair`のみで参照される(他シナリオでは
- * 無視される)。`classroomPair`はこれらの組み合わせごとに異なる`FormationPolicy`が必要なため、
- * afterPartyのような固定シングルトンではなく毎回`createClassroomPairPolicy`で組み立てる。
+ * `formationDeadlineTick`/`classroomGroupSize`は`classroomPair`のみで、`standingPartyClusterDepartureConfig`は
+ * `standingParty`のみで参照される(他シナリオでは無視される)。いずれかが指定されている場合は
+ * afterPartyのような固定シングルトンではなく毎回policyを組み立てる(Issue #189)。
  */
 export function getFormationPolicyById(
   id: FormationScenarioId,
   formationDeadlineTick?: number,
   classroomGroupSize?: GroupSizeRule,
+  standingPartyClusterDepartureConfig?: ClusterDepartureDecisionConfig,
 ): FormationPolicy {
   if (id === "classroomPair") {
     return createClassroomPairPolicy(formationDeadlineTick ?? DEFAULT_CLASSROOM_PAIR_DEADLINE_TICK, classroomGroupSize);
+  }
+  if (id === "standingParty" && standingPartyClusterDepartureConfig !== undefined) {
+    return createStandingPartyPolicy(standingPartyClusterDepartureConfig);
   }
   return FORMATION_POLICIES[id] ?? afterPartyPolicy;
 }
 
 /** `options`(未指定なら後方互換として`afterParty`)に対応する`FormationPolicy`を解決する */
 export function resolveFormationPolicy(options?: FormationRuntimeOptions): FormationPolicy {
-  return getFormationPolicyById(options?.scenarioId ?? "afterParty", options?.formationDeadlineTick, options?.classroomGroupSize);
+  return getFormationPolicyById(
+    options?.scenarioId ?? "afterParty",
+    options?.formationDeadlineTick,
+    options?.classroomGroupSize,
+    options?.standingPartyConfig?.clusterDeparture,
+  );
 }
 
 /**

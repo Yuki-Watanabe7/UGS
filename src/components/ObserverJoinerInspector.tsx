@@ -1,8 +1,10 @@
 import { buildAgentInspection, buildObserverJoinerInspection } from "../simulation/inspection";
 import { getFormationPolicyById } from "../simulation/formationPolicy";
+import { useState } from "react";
 import type {
   AgentAssignmentStatus,
   ApproachFailureReason,
+  ClusterDeparturePrimaryReason,
   GroupCandidateStatus,
   ObserverJoinerInspection,
   ObserverSocialExpressionSnapshot,
@@ -57,6 +59,19 @@ const APPROACH_FAILURE_REASON_LABEL: Record<ApproachFailureReason, string> = {
   groupDissolved: "候補が解散",
   groupExpired: "候補が期限切れ",
   groupMissing: "候補が消失",
+};
+
+/** Issue #189 (Phase 2): 責務9の構造化理由の表示ラベル。人格・相手評価に見える断定表現は避ける */
+const CLUSTER_DEPARTURE_REASON_LABEL: Record<ClusterDeparturePrimaryReason, string> = {
+  lowConversationSatisfaction: "会話満足度の低下",
+  socialCirculation: "社交的回遊傾向",
+  mixedConversationAndSocialCirculation: "満足度低下+回遊傾向(複合)",
+};
+
+/** Issue #189: 自発的離脱(責務9)とクラスタ解散によるrelease(責務10)の表示上の区別 */
+const CLUSTER_EXIT_KIND_LABEL: Record<"voluntaryDeparture" | "memberReleased", string> = {
+  voluntaryDeparture: "自発的離脱",
+  memberReleased: "クラスタ解散によるrelease",
 };
 
 const GROUP_STATUS_LABEL: Record<GroupCandidateStatus, string> = {
@@ -546,6 +561,56 @@ function InspectionCard({
                 <span>この輪での滞在tick</span>
                 <span>{inspection.ticksInCurrentCluster ?? "-"}</span>
               </div>
+              <div className="observer-inspector-row">
+                <span>会話満足度</span>
+                <span>
+                  {inspection.conversationSatisfaction !== undefined
+                    ? formatRatio(inspection.conversationSatisfaction)
+                    : "会話中ではない"}
+                </span>
+              </div>
+            </>
+          )}
+          <div className="observer-inspector-row">
+            <span>社交的回遊傾向</span>
+            <span>
+              {inspection.socialCirculationTendency !== undefined
+                ? formatRatio(inspection.socialCirculationTendency)
+                : "-"}
+            </span>
+          </div>
+          <div className="observer-inspector-row">
+            <span>今tickの離脱判定対象</span>
+            <span>
+              {inspection.currentGroupId === undefined
+                ? "会話中ではない"
+                : inspection.departureDecisionEligible === undefined
+                  ? "会話中ではない"
+                  : inspection.departureDecisionEligible
+                    ? "対象"
+                    : "まだ最低滞在tickに達していない(対象外)"}
+            </span>
+          </div>
+          {inspection.departureDecisionEligible && (
+            <>
+              <div className="observer-inspector-row">
+                <span>離脱確率(今tick)</span>
+                <span>{formatRatio(inspection.departureDecisionProbability ?? 0)}</span>
+              </div>
+              {inspection.departureDecisionFactors && inspection.departureDecisionFactors.length > 0 ? (
+                <ul className="observer-inspector-factor-list">
+                  {inspection.departureDecisionFactors.map((factor) => (
+                    <li key={factor.kind}>
+                      {CLUSTER_DEPARTURE_REASON_LABEL[factor.kind]}: +{formatRatio(factor.contribution)}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="observer-inspector-row">
+                  <span>寄与要因</span>
+                  <span>なし(離脱確率0)</span>
+                </div>
+              )}
             </>
           )}
           <div className="observer-inspector-row">
@@ -556,6 +621,17 @@ function InspectionCard({
                 : "なし"}
             </span>
           </div>
+          {inspection.lastClusterExitKind !== undefined && (
+            <div className="observer-inspector-row">
+              <span>直前の離脱の種別</span>
+              <span>
+                {CLUSTER_EXIT_KIND_LABEL[inspection.lastClusterExitKind]}
+                {inspection.lastClusterExitKind === "voluntaryDeparture" && inspection.lastClusterExitReason
+                  ? `(${CLUSTER_DEPARTURE_REASON_LABEL[inspection.lastClusterExitReason]})`
+                  : ""}
+              </span>
+            </div>
+          )}
           <div className="observer-inspector-row">
             <span>離脱→再探索の累計回数</span>
             <span>{inspection.clusterDepartureCount}回</span>
@@ -727,7 +803,11 @@ function ClassroomInspectionCard({
 export function ObserverJoinerInspector({ state, params, seed, presetId }: Props) {
   const presentation = getScenarioPresentation(state.formationScenarioId, state.formationClassroomGroupSize);
   const isClassroomPair = presentation.id === "classroomPair";
-  const inspections = isClassroomPair
+  // Issue #189 (Phase 2): standingPartyではagentを選択して個別に確認できるようにする
+  // (要件: 「standingPartyでagentを選択した際」)。既存のobserverJoiner専用一覧表示はafterPartyのまま維持する。
+  const isStandingParty = presentation.id === "standingParty";
+  const [selectedAgentId, setSelectedAgentId] = useState<string | undefined>(undefined);
+  const inspections = isClassroomPair || isStandingParty
     ? buildAgentInspection(state, params)
     : buildObserverJoinerInspection(state, params);
   const labelById = buildAgentLabelMap(state.agents);
@@ -763,13 +843,51 @@ export function ObserverJoinerInspector({ state, params, seed, presetId }: Props
       : [],
   );
 
+  // Issue #189: 未選択、または選択済みagentが(シナリオ切替等で)もういない場合は
+  // observerJoinerを優先してデフォルト選択する(既存のobserverJoiner中心の観察という文脈を維持する)。
+  const selectedInspection = isStandingParty
+    ? (inspections.find((i) => i.agentId === selectedAgentId) ??
+        inspections.find((i) => agentById.get(i.agentId)?.isObserverJoiner) ??
+        inspections[0])
+    : undefined;
+
   return (
     <div className={`panel observer-inspector${isClassroomPair ? " classroom-agent-inspector" : ""}`}>
-      <h2>{isClassroomPair ? "エージェントインスペクター" : "observerJoinerインスペクター"}</h2>
+      <h2>
+        {isClassroomPair ? "エージェントインスペクター" : isStandingParty ? "agentインスペクター" : "observerJoinerインスペクター"}
+      </h2>
+      {isStandingParty && inspections.length > 0 && (
+        <label className="field observer-inspector-agent-select">
+          <span>表示するagent</span>
+          <select
+            value={selectedInspection?.agentId ?? ""}
+            onChange={(e) => setSelectedAgentId(e.target.value)}
+          >
+            {inspections.map((inspection) => (
+              <option key={inspection.agentId} value={inspection.agentId}>
+                {inspection.label}
+                {agentById.get(inspection.agentId)?.isObserverJoiner ? "(observerJoiner)" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       {inspections.length === 0 ? (
         <p className="observer-inspector-empty">
           {isClassroomPair ? "エージェントがいません。" : "observerJoinerがいません。"}
         </p>
+      ) : isStandingParty ? (
+        selectedInspection && (
+          <InspectionCard
+            key={selectedInspection.agentId}
+            inspection={selectedInspection}
+            labelById={labelById}
+            presentation={presentation}
+            seed={seed}
+            presetId={presetId}
+            agentById={agentById}
+          />
+        )
       ) : isClassroomPair ? (
         <div className="classroom-agent-inspector-grid">
           {inspections.map((inspection) => (

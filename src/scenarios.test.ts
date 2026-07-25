@@ -24,7 +24,11 @@ describe("scenario category configuration", () => {
       "classroom-group-4",
       "classroom-group-3-4",
     ]);
-    expect(getPresetsForScenario(standingParty).map((preset) => preset.id)).toEqual(["standing-party"]);
+    expect(getPresetsForScenario(standingParty).map((preset) => preset.id)).toEqual([
+      "standing-party",
+      "standing-party-networking",
+      "standing-party-intimate",
+    ]);
   });
 
   it("uses category-specific initial presets and rejects a contradictory preset", () => {
