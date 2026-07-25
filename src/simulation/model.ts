@@ -42,9 +42,17 @@ function hashString(key: string): number {
  * 別ストリーム」パターンにより、afterParty/classroomPairの既存seed結果・PRNG消費順序を
  * 一切変えない(この値を読むのはstandingPartyの責務9のみ)。分布はADR方針どおり`[0,1]`一様。
  */
-function createSocialCirculationTendency(seed: number, agentId: string): number {
+/**
+ * Issue #189 (Phase 2): `range`はstandingParty専用の比較プリセット(ネットワーキング型/懇親型)向けに
+ * 分布を差し替えられるようにする引数。省略時は`[0,1]`一様(既存の挙動と完全に一致、後方互換)。
+ */
+function createSocialCirculationTendency(
+  seed: number,
+  agentId: string,
+  range: { min: number; max: number } = { min: 0, max: 1 },
+): number {
   const traitRng = new SeededRandom(hashString(`${seed}:socialCirculationTendency:${agentId}`));
-  return traitRng.range(0, 1);
+  return traitRng.range(range.min, range.max);
 }
 
 function assignCliques(
@@ -79,7 +87,11 @@ function assignCliques(
   return assignment;
 }
 
-export function createInitialAgents(seed: number, params: SimParams): Agent[] {
+export function createInitialAgents(
+  seed: number,
+  params: SimParams,
+  circulationTendencyRange?: { min: number; max: number },
+): Agent[] {
   const rng = new SeededRandom(seed);
   const population = Math.max(3, Math.round(params.populationSize));
   const observerCount = population >= 20 ? 2 : 1;
@@ -165,7 +177,7 @@ export function createInitialAgents(seed: number, params: SimParams): Agent[] {
       state: "undecided",
       stress: 0,
       cliqueId,
-      socialCirculationTendency: createSocialCirculationTendency(seed, agentId),
+      socialCirculationTendency: createSocialCirculationTendency(seed, agentId, circulationTendencyRange),
     });
   }
 

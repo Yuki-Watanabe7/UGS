@@ -1,6 +1,7 @@
 import type {
   Agent,
   ApproachFailureReason,
+  ClusterDeparturePrimaryReason,
   ConversationEpisode,
   GroupCandidate,
   LogEntry,
@@ -62,6 +63,8 @@ import {
   initializeConversationSatisfaction,
   updateConversationSatisfaction,
 } from "./conversationSatisfaction";
+import type { ConversationSatisfactionConfig } from "./conversationSatisfaction";
+import { DEFAULT_STANDING_PARTY_SCENARIO_CONFIG } from "./standingPartyScenarioConfig";
 // Issue #115: 発言生成の後段調整(乖離を反映した対外発言の選択)のためだけの依存。
 // socialExpression.ts側もattractiveness等のためにengine.tsをimportする循環参照になるが、
 // どちらもモジュール初期化時には相手側の値を評価しない(関数呼び出し時のみ参照する)ため安全。
@@ -159,7 +162,9 @@ export function createInitialState(
   const speechTrustConfig = resolveSpeechTrustConfig(speechTrust);
   const relationshipTieConfig = resolveRelationshipTieConfig(relationshipTie);
   const effectiveParams = resolveEffectiveParams(params, intervention);
-  const agents = createInitialAgents(seed, effectiveParams);
+  // Issue #189 (Phase 2): standingParty以外では常にDEFAULT(既存の[0,1]一様分布と一致)。
+  const initialStandingPartyConfig = formation?.standingPartyConfig ?? DEFAULT_STANDING_PARTY_SCENARIO_CONFIG;
+  const agents = createInitialAgents(seed, effectiveParams, initialStandingPartyConfig.circulationTendencyRange);
   // Issue #132: 教室ペア形成シナリオの初期ログは、二次会シナリオ向けの文言(「二次会に行くか」)を
   // そのまま使うと文脈が合わないため、formationPolicy.idで出し分ける
   // Issue #174: 立食パーティーでも同様に、二次会固有の文言を避け会場で会話の輪を探す文脈にする
@@ -270,6 +275,7 @@ export function createInitialState(
     formationScenarioId: formationPolicy.id,
     formationDeadlineTick: formation?.formationDeadlineTick,
     formationClassroomGroupSize: formation?.classroomGroupSize,
+    standingPartyConfig: formation?.standingPartyConfig,
     observationHorizonTick,
     interventionRuntimeState,
     activeInterventionEffects: initialInterventionEffects,
@@ -411,6 +417,7 @@ function startConversationEpisode(
   agents: Agent[],
   params: SimParams,
   formationPolicy: FormationPolicy,
+  satisfactionConfig: ConversationSatisfactionConfig = DEFAULT_CONVERSATION_SATISFACTION_CONFIG,
 ): void {
   agent.clusterJoinedAtTick = tick;
   const episode: ConversationEpisode = {
@@ -423,7 +430,7 @@ function startConversationEpisode(
   };
   if (formationPolicy.id === "standingParty") {
     episode.conversationSatisfaction = initializeConversationSatisfaction({
-      config: DEFAULT_CONVERSATION_SATISFACTION_CONFIG,
+      config: satisfactionConfig,
       memberCountAtJoin: episode.memberCountAtJoin,
       cliqueRatio: computeCliqueMateRatio(agent.id, agent.cliqueId, candidate.memberIds, agents),
       existingTieStrength: params.existingTieStrength,
@@ -454,6 +461,7 @@ function updateConversationEpisode(
   params: SimParams,
   formationPolicy: FormationPolicy,
   priorCandidates: GroupCandidate[],
+  satisfactionConfig: ConversationSatisfactionConfig = DEFAULT_CONVERSATION_SATISFACTION_CONFIG,
 ): void {
   if (!agent.currentEpisode || agent.currentEpisode.clusterId !== candidate.id) return;
   const episode = agent.currentEpisode;
@@ -465,7 +473,7 @@ function updateConversationEpisode(
         priorCandidates.find((c) => c.id === candidate.id)?.memberIds.length ?? episode.lastObservedMemberCount;
       if (episode.conversationSatisfaction !== undefined) {
         const result = updateConversationSatisfaction({
-          config: DEFAULT_CONVERSATION_SATISFACTION_CONFIG,
+          config: satisfactionConfig,
           previousSatisfaction: episode.conversationSatisfaction,
           lastObservedMemberCount: episode.lastObservedMemberCount,
           observedMemberCount,
@@ -500,6 +508,7 @@ function settleIntoGroup(
   agents: Agent[],
   params: SimParams,
   formationPolicy: FormationPolicy,
+  satisfactionConfig: ConversationSatisfactionConfig = DEFAULT_CONVERSATION_SATISFACTION_CONFIG,
 ): void {
   agent.state = "joined";
   agent.joinedGroupId = candidate.id;
@@ -512,7 +521,7 @@ function settleIntoGroup(
   // Issue #176: 責務9(クラスタ離脱判定)の滞在tick計算に使う合流tick。classroomPair等
   // 離脱経路を持たないシナリオでは参照されないが、settleIntoGroup経由の全joinで一貫して設定する。
   // Issue #186: 会話エピソードの開始も同じタイミングで一括して行う。
-  startConversationEpisode(agent, candidate, tick, agents, params, formationPolicy);
+  startConversationEpisode(agent, candidate, tick, agents, params, formationPolicy, satisfactionConfig);
 }
 
 function applyInterventionActions(
@@ -884,6 +893,25 @@ function departFromCluster(agent: Agent, candidate: GroupCandidate, tick: number
 }
 
 /**
+ * Issue #189 (Phase 2, 要件5節): 責務9の構造化reason(`ClusterDeparturePrimaryReason`)から、
+ * 自発的離脱ログに埋め込む自然文言の断片を生成する。「飽きた」「つまらない人」等の人格・相手評価に
+ * 見える断定表現を避け、事実(何のために動いたか)だけを述べる。observerJoinerかどうかは一切
+ * 参照しない(受入条件: observerJoinerだけ異なる心理理由を捏造しない)。
+ */
+function describeClusterDepartureReasonPhrase(primaryReason: ClusterDeparturePrimaryReason | undefined): string {
+  switch (primaryReason) {
+    case "lowConversationSatisfaction":
+      return "別の会話を探すため、";
+    case "socialCirculation":
+      return "さらに多くの参加者と話すため、";
+    case "mixedConversationAndSocialCirculation":
+      return "別の会話や、より多くの参加者を求めて、";
+    default:
+      return "";
+  }
+}
+
+/**
  * Issue #176: 一度でもクラスタ離脱したことのある(`lastDepartedClusterId`を持つ)agentが、新たに
  * (同じクラスタ・別クラスタのいずれでも)合流したタイミングで`clusterRejoined`を記録する。
  * `lastDepartedClusterId`はstandingPartyの離脱経路以外では設定されないため、この呼び出し自体は
@@ -991,9 +1019,12 @@ export function stepSimulation(
           scenarioId: state.formationScenarioId,
           formationDeadlineTick: state.formationDeadlineTick,
           classroomGroupSize: state.formationClassroomGroupSize,
+          standingPartyConfig: state.standingPartyConfig,
         }
       : undefined);
   const formationPolicy = resolveFormationPolicy(resolvedFormation);
+  // Issue #189 (Phase 2): standingParty以外では常にDEFAULT(既存挙動と一致)。
+  const standingPartyConfig = resolvedFormation?.standingPartyConfig ?? DEFAULT_STANDING_PARTY_SCENARIO_CONFIG;
   // Phase 3効果も同様に、未指定時は直前のstateの設定を引き継ぐ(呼び出し側の渡し忘れで
   // 途中からOFFに戻ってしまわないようにする)。
   const speechEffectsConfig = resolveSpeechEffectsConfig(
@@ -1328,7 +1359,15 @@ export function stepSimulation(
       }
       agent.state = "joined";
       // Issue #186: 会話エピソードの開始(episodeId発行含む)もこの合流タイミングで一括して行う。
-      startConversationEpisode(agent, candidate, tick, agents, effectiveParams, formationPolicy);
+      startConversationEpisode(
+        agent,
+        candidate,
+        tick,
+        agents,
+        effectiveParams,
+        formationPolicy,
+        standingPartyConfig.conversationSatisfaction,
+      );
       if (agent.isObserverJoiner) {
         pushLog(
           log,
@@ -1419,7 +1458,16 @@ export function stepSimulation(
 
     // Issue #186 (Phase 2, step 5a): 離脱判定の直前に会話エピソードの滞在時間・member観測値を
     // 最新化する(docs/conversation-satisfaction-model.md 3.2節の順序)。rngは消費しない。
-    updateConversationEpisode(agent, candidate, tick, agents, effectiveParams, formationPolicy, state.groupCandidates);
+    updateConversationEpisode(
+      agent,
+      candidate,
+      tick,
+      agents,
+      effectiveParams,
+      formationPolicy,
+      state.groupCandidates,
+      standingPartyConfig.conversationSatisfaction,
+    );
 
     const ticksInCluster = agent.clusterJoinedAtTick !== undefined ? tick - agent.clusterJoinedAtTick : 0;
     // Issue #188 (Phase 2): 満足度モデル対象外のシナリオ・合流直後で未初期化の場合は、不満由来の
@@ -1438,6 +1486,10 @@ export function stepSimulation(
 
     const clusterId = candidate.id;
     const departureTags: LogTag[] = agent.isObserverJoiner ? ["observerJoiner", "clusterDeparture"] : ["clusterDeparture"];
+    // Issue #189 (Phase 2, 要件5節): 構造化reason(departure.primaryReason)から自然文言を生成する。
+    // 「飽きた」「つまらない人」等の人格・相手評価に見える断定表現は避け、observerJoinerだけ
+    // 異なる心理理由を捏造しない(reasonPhraseはisObserverJoinerを一切参照しない、主語のみ出し分ける)。
+    const departureReasonPhrase = describeClusterDepartureReasonPhrase(departure.primaryReason);
     const departureMetadataBase: SimulationEventMetadata = {
       agentId: agent.id,
       agentLabel: agent.label,
@@ -1456,8 +1508,8 @@ export function stepSimulation(
       log,
       tick,
       agent.isObserverJoiner
-        ? `observerJoinerが会話の輪を離れ始めた`
-        : `${agent.label}さんが会話の輪を離れ始めた`,
+        ? `observerJoinerが${departureReasonPhrase}会話の輪を離れ始めた`
+        : `${agent.label}さんが${departureReasonPhrase}会話の輪を離れ始めた`,
       departureTags,
       "clusterDepartureStarted",
       { ...departureMetadataBase, memberCount: candidate.memberIds.length },
@@ -1469,7 +1521,9 @@ export function stepSimulation(
     pushLog(
       log,
       tick,
-      agent.isObserverJoiner ? `observerJoinerが会話の輪から離れた` : `${agent.label}さんが会話の輪から離れた`,
+      agent.isObserverJoiner
+        ? `observerJoinerが${departureReasonPhrase}会話の輪から離れた`
+        : `${agent.label}さんが${departureReasonPhrase}会話の輪から離れた`,
       departureTags,
       "clusterDepartureCompleted",
       { ...departureMetadataBase, memberCount: candidate.memberIds.length },
@@ -1478,8 +1532,8 @@ export function stepSimulation(
       log,
       tick,
       agent.isObserverJoiner
-        ? `observerJoinerが新しい会話の輪を探し始めた`
-        : `${agent.label}さんが新しい会話の輪を探し始めた`,
+        ? `observerJoinerが${departureReasonPhrase}新しい会話の輪を探し始めた`
+        : `${agent.label}さんが${departureReasonPhrase}新しい会話の輪を探し始めた`,
       departureTags,
       "clusterResearchStarted",
       { agentId: agent.id, agentLabel: agent.label, groupId: clusterId },
@@ -1712,7 +1766,15 @@ export function stepSimulation(
           agent.state = "joined";
           agent.joinedGroupId = candidate.id;
           // Issue #186: 会話エピソードの開始もこの合流タイミングで一括して行う。
-          startConversationEpisode(agent, candidate, tick, agents, effectiveParams, formationPolicy);
+          startConversationEpisode(
+            agent,
+            candidate,
+            tick,
+            agents,
+            effectiveParams,
+            formationPolicy,
+            standingPartyConfig.conversationSatisfaction,
+          );
           // Issue #176: 過去に離脱経験があるagentのみ対象(standingParty以外では常にno-op)
           logClusterRejoinIfApplicable(agent, candidate, tick, log);
         }
@@ -1880,6 +1942,7 @@ export function stepSimulation(
     formationScenarioId: formationPolicy.id,
     formationDeadlineTick: resolvedFormation?.formationDeadlineTick,
     formationClassroomGroupSize: resolvedFormation?.classroomGroupSize,
+    standingPartyConfig: resolvedFormation?.standingPartyConfig,
     observationHorizonTick: resolvedObservationHorizonTick,
     interventionRuntimeState,
     activeInterventionEffects: [...activeInterventionEffects, ...newInterventionEffects],

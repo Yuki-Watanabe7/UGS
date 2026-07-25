@@ -413,7 +413,9 @@ describe("standingParty: membership不変条件を跨tickで維持する (Issue 
 
 describe("既存シナリオへの回帰なし (Issue #176 受入条件)", () => {
   it("afterParty/classroomPairの既存プリセットではクラスタ離脱イベントが一度も発生しない", () => {
-    const nonStandingPartyPresetIds = PRESETS.filter((p) => p.id !== "standing-party").map((p) => p.id);
+    const nonStandingPartyPresetIds = PRESETS.filter((p) => p.formationScenarioId !== "standingParty").map(
+      (p) => p.id,
+    );
     expect(nonStandingPartyPresetIds.length).toBeGreaterThan(0);
 
     for (const presetId of nonStandingPartyPresetIds) {

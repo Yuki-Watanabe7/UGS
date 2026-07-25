@@ -1,6 +1,8 @@
 import type { SimParams } from "./types";
 import { DEFAULT_CLASSROOM_PAIR_DEADLINE_TICK, DEFAULT_CLASSROOM_PAIR_GROUP_SIZE } from "./formationPolicy";
 import type { FormationScenarioId, GroupSizeRule } from "./formationPolicy";
+import { NETWORKING_STANDING_PARTY_CONFIG, INTIMATE_STANDING_PARTY_CONFIG } from "./standingPartyScenarioConfig";
+import type { StandingPartyScenarioConfig } from "./standingPartyScenarioConfig";
 
 export const DEFAULT_PARAMS: SimParams = {
   populationSize: 14,
@@ -35,6 +37,12 @@ export type ScenarioPreset = {
    * 単に人数違いのプリセットとして追加できる。
    */
   formationClassroomGroupSize?: GroupSizeRule;
+  /**
+   * Issue #189 (Phase 2): `formationScenarioId: "standingParty"`のプリセットでのみ参照される、
+   * 会話満足度・クラスタ離脱判定・社交的回遊傾向分布の上書き。省略時は
+   * `DEFAULT_STANDING_PARTY_SCENARIO_CONFIG`(既存の`standing-party`との後方互換)。
+   */
+  formationStandingPartyConfig?: StandingPartyScenarioConfig;
 };
 
 export const PRESETS: ScenarioPreset[] = [
@@ -121,6 +129,44 @@ export const PRESETS: ScenarioPreset[] = [
       existingTieStrength: 0.25,
     },
     formationScenarioId: "standingParty",
+  },
+  {
+    id: "standing-party-networking",
+    name: "立食パーティー(幅広く交流するネットワーキング型)",
+    description:
+      "標準ケースと同じ会場規模・既存の関係性の強さのまま、社交的回遊傾向の高い参加者が多い場。" +
+      "最低限の滞在時間を過ぎると、今の会話に満足していてもさらに多くの人と話すため次の輪へ移りやすく、" +
+      "1つの会話への滞在は比較的短くなりやすい。回遊傾向・良し悪しを表すものではない(Phase 2は仮説段階)。",
+    params: {
+      ...DEFAULT_PARAMS,
+      populationSize: 24,
+      groupConfirmSize: 3,
+      numLeaders: 4,
+      overallWillingness: 0.65,
+      lateJoinEase: 0.5,
+      existingTieStrength: 0.25,
+    },
+    formationScenarioId: "standingParty",
+    formationStandingPartyConfig: NETWORKING_STANDING_PARTY_CONFIG,
+  },
+  {
+    id: "standing-party-intimate",
+    name: "立食パーティー(少人数でじっくり話す懇親型)",
+    description:
+      "標準ケースと同じ会場規模・既存の関係性の強さのまま、社交的回遊傾向の低い参加者が多い場。" +
+      "会話への満足度が下がりにくく、最低限の滞在時間も標準ケースより長めのため、" +
+      "同じ会話の輪が比較的長く維持されやすい。回遊傾向・良し悪しを表すものではない(Phase 2は仮説段階)。",
+    params: {
+      ...DEFAULT_PARAMS,
+      populationSize: 24,
+      groupConfirmSize: 3,
+      numLeaders: 4,
+      overallWillingness: 0.65,
+      lateJoinEase: 0.5,
+      existingTieStrength: 0.25,
+    },
+    formationScenarioId: "standingParty",
+    formationStandingPartyConfig: INTIMATE_STANDING_PARTY_CONFIG,
   },
   {
     id: "classroom-pair",

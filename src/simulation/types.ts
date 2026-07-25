@@ -1,5 +1,6 @@
 import type { InterventionAudience, InterventionRuntimeOptions, InterventionScenarioId } from "./interventions";
 import type { FormationRuntimeOptions, FormationScenarioId, GroupSizeRule } from "./formationPolicy";
+import type { StandingPartyScenarioConfig } from "./standingPartyScenarioConfig";
 import type { InterventionEffect, InterventionRuntimeState } from "./schoolInterventionRuntime";
 import type { SpeechEvent } from "./speech";
 import type {
@@ -669,6 +670,14 @@ export type SimulationState = {
    */
   formationClassroomGroupSize?: GroupSizeRule;
   /**
+   * Issue #189 (Phase 2): `formationScenarioId`が`standingParty`の場合に使われる、会話満足度・
+   * クラスタ離脱判定・社交的回遊傾向分布の上書き。`formationScenarioId`/`formationDeadlineTick`と
+   * 同じfall backパターン(呼び出し側が引き継ぎ忘れても直前の設定を維持する)で扱う。
+   * `standingParty`以外では無視され、未指定時は`DEFAULT_STANDING_PARTY_SCENARIO_CONFIG`
+   * (`standingPartyScenarioConfig.ts`)が使われる。
+   */
+  standingPartyConfig?: StandingPartyScenarioConfig;
+  /**
    * Issue #175: 意味論的な自然終了(semantic finish)を持たないシナリオ(`standingParty`)向けに、
    * バッチ実行・テスト・Monte Carlo等の非対話実行が有限tickで必ず停止できるようにする観測期間の
    * 上限tick(observation horizon)。`formationPolicy.finishReason`が一度も自然終了を返さないまま
@@ -946,6 +955,34 @@ export type ObserverJoinerInspection = {
   lastDepartedClusterAtTick?: number;
   /** Issue #178: 合流→離脱→再探索の累計回数(`Agent.clusterDepartureCount`、未発生なら0) */
   clusterDepartureCount: number;
+  /**
+   * Issue #189 (Phase 2): 社交的回遊傾向(`Agent.socialCirculationTendency`)。standingParty以外でも
+   * 値自体は存在するが(`createInitialAgents`が全agentに生成するため)、標準の観察対象は
+   * standingPartyのみ(受入条件: Phase 2で他シナリオへの表示混入を作らない、はUI側で担保する)。
+   */
+  socialCirculationTendency?: number;
+  /**
+   * Issue #189 (Phase 2): 現在tickの離脱判定要因(`clusterDepartureDecision.ts`と同じ計算式を、
+   * `state.standingPartyConfig`の設定でInspectorから再現した結果)。`joined`かつstandingPartyの
+   * agentでのみ意味を持つ。まだ最低滞在tickに達していない場合は`eligible: false`(要件:
+   * 「まだ離脱判定前」を0で捏造しない)。
+   */
+  departureDecisionEligible?: boolean;
+  /** Issue #189: `departureDecisionEligible`な場合の現在の離脱確率 */
+  departureDecisionProbability?: number;
+  /** Issue #189: 現在の離脱確率の寄与内訳(寄与が正のものだけ、contribution降順) */
+  departureDecisionFactors?: ClusterDepartureFactor[];
+  /** Issue #189: 現在最も寄与の大きい離脱要因 */
+  departureDecisionPrimaryReason?: ClusterDeparturePrimaryReason;
+  /**
+   * Issue #189 (Phase 2): `lastDepartedClusterId`が記録された直近の輪離脱が、自発的離脱
+   * (`clusterDepartureCompleted`)によるものか、クラスタ解散によるrelease(`clusterMemberReleased`)
+   * によるものかの区別(要件: 自発的離脱とcluster解散によるreleaseを表示上区別する)。
+   * `lastDepartedClusterId`が未設定なら常にundefined。
+   */
+  lastClusterExitKind?: "voluntaryDeparture" | "memberReleased";
+  /** Issue #189: `lastClusterExitKind`が"voluntaryDeparture"の場合の主要因。releaseの場合はundefined */
+  lastClusterExitReason?: ClusterDeparturePrimaryReason;
   /** Issue #135: `approachTargetInvalidated`/`joinFailedCapacity`の発生回数 */
   joinFailureCount: number;
   /** Issue #135: 最新の参加失敗理由と発生tick。未発生ならundefined */
