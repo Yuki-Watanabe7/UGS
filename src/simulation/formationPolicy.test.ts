@@ -593,9 +593,8 @@ describe("standingPartyPolicy config override (Issue #189, Phase 2)", () => {
     const resolved = resolveFormationPolicy({
       scenarioId: "standingParty",
       standingPartyConfig: {
-        conversationSatisfaction: DEFAULT_STANDING_PARTY_SCENARIO_CONFIG.conversationSatisfaction,
+        ...DEFAULT_STANDING_PARTY_SCENARIO_CONFIG,
         clusterDeparture: customConfig,
-        circulationTendencyRange: DEFAULT_STANDING_PARTY_SCENARIO_CONFIG.circulationTendencyRange,
       },
     });
     expect(resolved).not.toBe(standingPartyPolicy);
