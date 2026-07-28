@@ -4,6 +4,8 @@ import { useState } from "react";
 import type {
   AgentAssignmentStatus,
   ApproachFailureReason,
+  ClusterTransitionAction,
+  ClusterTransitionInvalidationReason,
   ClusterTransitionPrimaryReason,
   GroupCandidateStatus,
   ObserverJoinerInspection,
@@ -35,6 +37,13 @@ type Props = {
   params: SimParams;
   seed?: number;
   presetId?: string;
+  /**
+   * Issue #202 (Phase 3): Canvasで選択中agentのpending transition targetを表示できるよう、
+   * 選択状態をApp.tsxへ引き上げるための制御propsの組(いずれも省略可)。両方省略時はこれまでどおり
+   * このコンポーネント内部だけで選択状態を保持する(既存の呼び出し元・テストへの後方互換)。
+   */
+  selectedAgentId?: string;
+  onSelectedAgentIdChange?: (agentId: string) => void;
 };
 
 const SPEECH_RELATION_LABEL: Record<SpeechRelation, string> = {
@@ -81,6 +90,24 @@ const CLUSTER_DEPARTURE_REASON_LABEL: Record<ClusterTransitionPrimaryReason, str
 const CLUSTER_EXIT_KIND_LABEL: Record<"voluntaryDeparture" | "memberReleased", string> = {
   voluntaryDeparture: "自発的離脱",
   memberReleased: "クラスタ解散によるrelease",
+};
+
+/** Issue #202 (Phase 3): 遷移decisionの3action。人格・優劣を示唆しない中立的な表記 */
+const CLUSTER_TRANSITION_ACTION_LABEL: Record<ClusterTransitionAction, string> = {
+  stay: "留まる(stay)",
+  departAndExplore: "目的地を決めずに離脱して再探索(departAndExplore)",
+  switchToTargetCluster: "目的地を決めて移動(switchToTargetCluster)",
+};
+
+/** Issue #202 (Phase 3, ADR 3.3節): pendingClusterTransitionの無効化理由の表示ラベル */
+const CLUSTER_TRANSITION_INVALIDATION_REASON_LABEL: Record<ClusterTransitionInvalidationReason, string> = {
+  currentClusterLost: "出発元の輪が既に消滅していた",
+  targetMissing: "向かっていた輪が見当たらなくなった",
+  targetDissolved: "向かっていた輪が解散した",
+  targetExpired: "向かっていた輪が期限切れになった",
+  targetFull: "向かっていた輪が満員になった",
+  focusAgentLeft: "関心の対象だった人がその輪からいなくなった",
+  intentExpired: "移動意図の有効tickを過ぎた",
 };
 
 const GROUP_STATUS_LABEL: Record<GroupCandidateStatus, string> = {
@@ -645,6 +672,144 @@ function InspectionCard({
             <span>離脱→再探索の累計回数</span>
             <span>{inspection.clusterDepartureCount}回</span>
           </div>
+
+          <div className="observer-inspector-divider" />
+
+          <div className="observer-inspector-row observer-inspector-row--header">
+            <span>他クラスタ関心・葛藤decision(Phase 3)</span>
+          </div>
+          {inspection.currentGroupId === undefined ? (
+            <div className="observer-inspector-row">
+              <span>他クラスタ関心</span>
+              <span>会話中ではない</span>
+            </div>
+          ) : inspection.transitionEligible === undefined ? (
+            <div className="observer-inspector-row">
+              <span>他クラスタ関心</span>
+              <span>この場では詳細設定によりまだ計算されない</span>
+            </div>
+          ) : (
+            <>
+              <div className="observer-inspector-row">
+                <span>最良target候補</span>
+                <span title={inspection.transitionSelectedTargetClusterId}>
+                  {inspection.transitionSelectedTargetClusterId ??
+                    (inspection.transitionAlternativeInterestScore !== undefined
+                      ? "target候補なし(閾値未満)"
+                      : "観察可能な別の輪がない")}
+                </span>
+              </div>
+              {inspection.transitionAlternativeInterestScore !== undefined && (
+                <div className="observer-inspector-row">
+                  <span>関心score</span>
+                  <span>{formatRatio(inspection.transitionAlternativeInterestScore)}</span>
+                </div>
+              )}
+              {inspection.transitionFocusAgentId !== undefined && (
+                <div className="observer-inspector-row">
+                  <span>関心を主に駆動したagent</span>
+                  <span>{labelById.get(inspection.transitionFocusAgentId) ?? inspection.transitionFocusAgentId}</span>
+                </div>
+              )}
+              <div className="observer-inspector-row">
+                <span>現在クラスタ愛着</span>
+                <span>
+                  {inspection.transitionAttachmentValue !== undefined
+                    ? formatRatio(inspection.transitionAttachmentValue)
+                    : "-"}
+                </span>
+              </div>
+              <div className="observer-inspector-row">
+                <span>離脱による影響への配慮</span>
+                <span>
+                  {inspection.transitionDepartureConcern !== undefined
+                    ? formatRatio(inspection.transitionDepartureConcern)
+                    : "-"}
+                </span>
+              </div>
+              <div className="observer-inspector-row">
+                <span>葛藤強度(観察専用)</span>
+                <span>
+                  {inspection.transitionConflictIntensity !== undefined
+                    ? formatRatio(inspection.transitionConflictIntensity)
+                    : "-"}
+                </span>
+              </div>
+              {inspection.transitionActionProbabilities && (
+                <ul className="observer-inspector-factor-list">
+                  {(Object.keys(inspection.transitionActionProbabilities) as ClusterTransitionAction[]).map((action) => (
+                    <li key={action}>
+                      {CLUSTER_TRANSITION_ACTION_LABEL[action]}:{" "}
+                      {formatRatio(inspection.transitionActionProbabilities![action])}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {inspection.transitionPrimaryReason && (
+                <div className="observer-inspector-row">
+                  <span>主要因</span>
+                  <span>{CLUSTER_DEPARTURE_REASON_LABEL[inspection.transitionPrimaryReason]}</span>
+                </div>
+              )}
+            </>
+          )}
+
+          <div className="observer-inspector-divider" />
+
+          <div className="observer-inspector-row observer-inspector-row--header">
+            <span>移動意図(pending transition)</span>
+          </div>
+          {inspection.pendingTransition ? (
+            <>
+              <div className="observer-inspector-row">
+                <span>出発元 → target</span>
+                <span>
+                  {inspection.pendingTransition.sourceClusterId} → {inspection.pendingTransition.targetClusterId}
+                </span>
+              </div>
+              {inspection.pendingTransition.focusAgentId !== undefined && (
+                <div className="observer-inspector-row">
+                  <span>focus agent</span>
+                  <span>
+                    {labelById.get(inspection.pendingTransition.focusAgentId) ?? inspection.pendingTransition.focusAgentId}
+                  </span>
+                </div>
+              )}
+              <div className="observer-inspector-row">
+                <span>決定tick(経過)</span>
+                <span>
+                  tick {inspection.pendingTransition.decidedAtTick}(経過{inspection.pendingTransition.elapsedTicks}tick)
+                </span>
+              </div>
+              <div className="observer-inspector-row">
+                <span>有効期限</span>
+                <span>tick {inspection.pendingTransition.expiresAtTick}</span>
+              </div>
+              <div className="observer-inspector-row">
+                <span>決定時点の関心score</span>
+                <span>{formatRatio(inspection.pendingTransition.interestScore)}</span>
+              </div>
+              <div className="observer-inspector-row">
+                <span>現在の接近状態</span>
+                <span>{ASSIGNMENT_STATUS_LABEL[inspection.assignmentStatus]}</span>
+              </div>
+            </>
+          ) : (
+            <div className="observer-inspector-row">
+              <span>移動意図</span>
+              <span>なし</span>
+            </div>
+          )}
+          {inspection.lastTransitionInvalidation && (
+            <div className="observer-inspector-row">
+              <span>直近の移動意図の無効化</span>
+              <span>
+                {CLUSTER_TRANSITION_INVALIDATION_REASON_LABEL[inspection.lastTransitionInvalidation.reason]}
+                (tick {inspection.lastTransitionInvalidation.tick})
+                {inspection.lastTransitionInvalidation.fallbackStarted ? "・通常の再探索へ切替済み" : ""}
+              </span>
+            </div>
+          )}
         </>
       )}
 
@@ -809,13 +974,24 @@ function ClassroomInspectionCard({
   );
 }
 
-export function ObserverJoinerInspector({ state, params, seed, presetId }: Props) {
+export function ObserverJoinerInspector({
+  state,
+  params,
+  seed,
+  presetId,
+  selectedAgentId: controlledSelectedAgentId,
+  onSelectedAgentIdChange,
+}: Props) {
   const presentation = getScenarioPresentation(state.formationScenarioId, state.formationClassroomGroupSize);
   const isClassroomPair = presentation.id === "classroomPair";
   // Issue #189 (Phase 2): standingPartyではagentを選択して個別に確認できるようにする
   // (要件: 「standingPartyでagentを選択した際」)。既存のobserverJoiner専用一覧表示はafterPartyのまま維持する。
   const isStandingParty = presentation.id === "standingParty";
-  const [selectedAgentId, setSelectedAgentId] = useState<string | undefined>(undefined);
+  // Issue #202 (Phase 3): 呼び出し側が制御props(selectedAgentId/onSelectedAgentIdChange)を渡した場合は
+  // それに従い(App.tsx経由でCanvasと選択を共有するため)、渡さない場合はこれまでどおり内部stateのみで完結する。
+  const [internalSelectedAgentId, setInternalSelectedAgentId] = useState<string | undefined>(undefined);
+  const selectedAgentId = controlledSelectedAgentId ?? internalSelectedAgentId;
+  const setSelectedAgentId = onSelectedAgentIdChange ?? setInternalSelectedAgentId;
   const inspections = isClassroomPair || isStandingParty
     ? buildAgentInspection(state, params)
     : buildObserverJoinerInspection(state, params);

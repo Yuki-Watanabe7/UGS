@@ -272,3 +272,81 @@ describe("ObserverJoinerInspector classroom assignment history", () => {
     expect(html).not.toContain("エージェントインスペクター");
   });
 });
+
+describe("ObserverJoinerInspector standingParty Phase 3 sections (Issue #202)", () => {
+  const groupSource = { id: "group-source", x: 400, y: 260, memberIds: ["agent-x"], status: "confirmed" as const, age: 5 };
+
+  it("shows a non-fabricated empty state when the agent holds no pending transition", () => {
+    const agent = makeAgent({
+      id: "agent-x",
+      label: "X",
+      state: "joined",
+      joinedGroupId: "group-source",
+      clusterJoinedAtTick: 0,
+    });
+    const html = render(
+      makeState({ formationScenarioId: "standingParty", agents: [agent], groupCandidates: [groupSource] }),
+    );
+
+    expect(html).toContain("移動意図(pending transition)");
+    expect(html).toContain("なし");
+  });
+
+  it("renders the pending transition's source/target/focus/expiry when the agent holds one", () => {
+    const agent = makeAgent({
+      id: "agent-x",
+      label: "X",
+      state: "approaching",
+      joinedGroupId: "group-target",
+      clusterJoinedAtTick: 0,
+      pendingClusterTransition: {
+        sourceClusterId: "group-source",
+        targetClusterId: "group-target",
+        focusAgentId: "agent-x",
+        decidedAtTick: 3,
+        expiresAtTick: 33,
+        interestScore: 0.5,
+        primaryReason: "alternativeClusterInterest",
+      },
+    });
+    const html = render(
+      makeState({ formationScenarioId: "standingParty", tick: 5, agents: [agent], groupCandidates: [groupSource] }),
+    );
+
+    expect(html).toContain("group-source");
+    expect(html).toContain("group-target");
+    expect(html).toContain("tick 3");
+    expect(html).toContain("tick 33");
+  });
+
+  it("shows the last transition invalidation reason from the structured log", () => {
+    const agent = makeAgent({ id: "agent-x", label: "X", state: "undecided" });
+    const html = render(
+      makeState({
+        formationScenarioId: "standingParty",
+        tick: 20,
+        agents: [agent],
+        groupCandidates: [],
+        log: [
+          {
+            tick: 18,
+            message: "target invalidated",
+            tags: [],
+            eventType: "clusterTransitionTargetInvalidated",
+            metadata: { agentId: "agent-x", groupId: "group-source", invalidationReason: "targetFull" },
+          },
+          {
+            tick: 18,
+            message: "fell back to normal search",
+            tags: [],
+            eventType: "clusterTransitionAbandoned",
+            metadata: { agentId: "agent-x", groupId: "group-target" },
+          },
+        ],
+      }),
+    );
+
+    expect(html).toContain("向かっていた輪が満員になった");
+    expect(html).toContain("通常の再探索へ切替済み");
+  });
+});

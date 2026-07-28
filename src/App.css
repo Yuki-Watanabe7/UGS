@@ -294,6 +294,17 @@
   margin-bottom: 4px;
 }
 
+.standing-party-advanced-settings .checkbox-field {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.standing-party-advanced-settings .checkbox-field .slider-description {
+  flex-basis: 100%;
+}
+
 .speech-bubble-display-settings {
   flex-shrink: 0;
 }
@@ -645,6 +656,42 @@
   stroke-dasharray: 5 4;
   opacity: 0.85;
   pointer-events: none;
+}
+
+/*
+ * Issue #202 (Phase 3): 選択中agentの移動意図(pending transition)専用の表示。既存の`approach-link`
+ * (二次会・学校の接近全般、amber・破線5-4)とは色・線種の両方を変え、混同しないようにする。
+ */
+.transition-target-link {
+  stroke: #38bdf8;
+  stroke-width: 2;
+  stroke-dasharray: 1 3;
+  stroke-linecap: round;
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+/* target候補: 実線に近い短い点線・水色。source候補(移動元)とは線種・色の両方で区別する */
+.candidate-ring.candidate-ring--transition-target {
+  stroke: #38bdf8;
+  stroke-width: 2.5;
+  stroke-dasharray: 1 3;
+}
+
+/* source候補(移動元): 長め破線・ピンク */
+.candidate-ring.candidate-ring--transition-source {
+  stroke: #f472b6;
+  stroke-width: 2;
+  stroke-dasharray: 9 3;
+}
+
+/* 関心を主に駆動したfocus agentへの控えめなmarker。1つのagentにつき最大1つのみ追加する */
+.transition-focus-agent-marker {
+  fill: none;
+  stroke: #f472b6;
+  stroke-width: 1.5;
+  stroke-dasharray: 3 2;
+  opacity: 0.9;
 }
 
 .agent-dot {

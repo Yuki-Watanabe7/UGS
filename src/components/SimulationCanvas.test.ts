@@ -482,3 +482,119 @@ describe("SimulationCanvas variable-capacity classroom groups (Issue #155)", () 
     expect(html).toContain('data-evacuated="true"');
   });
 });
+
+describe("SimulationCanvas Phase 3 pending transition visualization (Issue #202)", () => {
+  const source: GroupCandidate = { id: "group-source", x: 100, y: 100, memberIds: ["agent-a"], status: "confirmed", age: 5 };
+  const target: GroupCandidate = { id: "group-target", x: 600, y: 400, memberIds: ["ghost-1"], status: "confirmed", age: 5 };
+
+  function withPendingTransition(overrides: Partial<Agent> = {}): Agent {
+    return makeAgent({
+      id: "agent-a",
+      x: 100,
+      y: 100,
+      state: "approaching",
+      joinedGroupId: "group-target",
+      pendingClusterTransition: {
+        sourceClusterId: "group-source",
+        targetClusterId: "group-target",
+        focusAgentId: "ghost-1",
+        decidedAtTick: 0,
+        expiresAtTick: 30,
+        interestScore: 0.5,
+        primaryReason: "alternativeClusterInterest",
+      },
+      ...overrides,
+    });
+  }
+
+  it("renders no transition markers when no agent is selected", () => {
+    const agent = withPendingTransition();
+    const ghost = makeAgent({ id: "ghost-1", x: 600, y: 400, state: "joined", joinedGroupId: "group-target" });
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        groupCandidates: [source, target],
+        width: 800,
+        height: 520,
+        formationScenarioId: "standingParty",
+        agents: [agent, ghost],
+      }),
+    );
+
+    expect(html).not.toContain("transition-target-link");
+    expect(html).not.toContain("transition-focus-agent-marker");
+    expect(html).not.toContain("candidate-ring--transition-target");
+    expect(html).not.toContain("candidate-ring--transition-source");
+  });
+
+  it("renders the target link, source/target highlight, and focus agent marker for the selected agent's pending transition", () => {
+    const agent = withPendingTransition();
+    const ghost = makeAgent({ id: "ghost-1", x: 600, y: 400, state: "joined", joinedGroupId: "group-target" });
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        groupCandidates: [source, target],
+        width: 800,
+        height: 520,
+        formationScenarioId: "standingParty",
+        agents: [agent, ghost],
+        selectedAgentId: "agent-a",
+      }),
+    );
+
+    expect(html).toContain("transition-target-link");
+    expect(html).toContain("candidate-ring--transition-target");
+    expect(html).toContain("candidate-ring--transition-source");
+    expect(html).toContain("transition-focus-agent-marker");
+  });
+
+  it("shows nothing when the selected agent holds no pending transition", () => {
+    const agent = makeAgent({ id: "agent-a", x: 100, y: 100, state: "undecided" });
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        groupCandidates: [source, target],
+        width: 800,
+        height: 520,
+        formationScenarioId: "standingParty",
+        agents: [agent],
+        selectedAgentId: "agent-a",
+      }),
+    );
+
+    expect(html).not.toContain("transition-target-link");
+    expect(html).not.toContain("candidate-ring--transition-target");
+  });
+
+  it("clears immediately once the pending transition is gone (e.g. invalidated), with no separate display state to reset", () => {
+    const invalidatedAgent = makeAgent({ id: "agent-a", x: 100, y: 100, state: "undecided", pendingClusterTransition: undefined });
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        groupCandidates: [source, target],
+        width: 800,
+        height: 520,
+        formationScenarioId: "standingParty",
+        agents: [invalidatedAgent],
+        selectedAgentId: "agent-a",
+      }),
+    );
+
+    expect(html).not.toContain("transition-target-link");
+    expect(html).not.toContain("candidate-ring--transition-target");
+    expect(html).not.toContain("candidate-ring--transition-source");
+  });
+
+  it("does not render transition markers outside standingParty even if selectedAgentId is provided", () => {
+    const agent = withPendingTransition();
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        groupCandidates: [source, target],
+        width: 800,
+        height: 520,
+        formationScenarioId: "afterParty",
+        agents: [agent],
+        selectedAgentId: "agent-a",
+      }),
+    );
+
+    expect(html).not.toContain("transition-target-link");
+    expect(html).not.toContain("candidate-ring--transition-target");
+  });
+});

@@ -1,7 +1,12 @@
 import type { SimParams } from "./types";
 import { DEFAULT_CLASSROOM_PAIR_DEADLINE_TICK, DEFAULT_CLASSROOM_PAIR_GROUP_SIZE } from "./formationPolicy";
 import type { FormationScenarioId, GroupSizeRule } from "./formationPolicy";
-import { NETWORKING_STANDING_PARTY_CONFIG, INTIMATE_STANDING_PARTY_CONFIG } from "./standingPartyScenarioConfig";
+import {
+  NETWORKING_STANDING_PARTY_CONFIG,
+  INTIMATE_STANDING_PARTY_CONFIG,
+  OUTWARD_INTEREST_STANDING_PARTY_CONFIG,
+  CURRENT_CIRCLE_ATTACHMENT_STANDING_PARTY_CONFIG,
+} from "./standingPartyScenarioConfig";
 import type { StandingPartyScenarioConfig } from "./standingPartyScenarioConfig";
 
 export const DEFAULT_PARAMS: SimParams = {
@@ -167,6 +172,46 @@ export const PRESETS: ScenarioPreset[] = [
     },
     formationScenarioId: "standingParty",
     formationStandingPartyConfig: INTIMATE_STANDING_PARTY_CONFIG,
+  },
+  {
+    id: "standing-party-outward-interest",
+    name: "立食パーティー(交流先へ移りやすい場)",
+    description:
+      "標準ケースと同じ会場規模・既存の関係性の強さ・Phase 2パラメータのまま、他クラスタへの関心が" +
+      "targetになりやすく、愛着・解散配慮による抑制も比較的弱い場(Phase 3)。他の会話の輪が気になった人は、" +
+      "目的地を決めてそこへ向かう移動が観察しやすい。会場からの退出人数自体が増える設定ではない。" +
+      "「良い/悪い」「社交的/非社交的」を意味する名称ではなく、集団ダイナミクス比較のための仮説的な設定。",
+    params: {
+      ...DEFAULT_PARAMS,
+      populationSize: 24,
+      groupConfirmSize: 3,
+      numLeaders: 4,
+      overallWillingness: 0.65,
+      lateJoinEase: 0.5,
+      existingTieStrength: 0.25,
+    },
+    formationScenarioId: "standingParty",
+    formationStandingPartyConfig: OUTWARD_INTEREST_STANDING_PARTY_CONFIG,
+  },
+  {
+    id: "standing-party-current-circle",
+    name: "立食パーティー(今の輪への配慮が強い場)",
+    description:
+      "標準ケースと同じ会場規模・既存の関係性の強さ・Phase 2パラメータのまま、今のクラスタへの愛着が" +
+      "速く強く形成され、自分の離脱による解散見込みへの配慮も働きやすい場(Phase 3)。他クラスタへの関心自体は" +
+      "普通に生じるが、留まる(stay)decisionが選ばれやすい。永久に移動しなくなるほどの極端な設定ではない。" +
+      "「良い/悪い」「社交的/非社交的」を意味する名称ではなく、集団ダイナミクス比較のための仮説的な設定。",
+    params: {
+      ...DEFAULT_PARAMS,
+      populationSize: 24,
+      groupConfirmSize: 3,
+      numLeaders: 4,
+      overallWillingness: 0.65,
+      lateJoinEase: 0.5,
+      existingTieStrength: 0.25,
+    },
+    formationScenarioId: "standingParty",
+    formationStandingPartyConfig: CURRENT_CIRCLE_ATTACHMENT_STANDING_PARTY_CONFIG,
   },
   {
     id: "classroom-pair",

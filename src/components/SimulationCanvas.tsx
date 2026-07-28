@@ -70,6 +70,15 @@ type Props = {
    * 既存呼び出し元は影響を受けない)。
    */
   tick?: number;
+  /**
+   * Issue #202 (Phase 3): Inspectorで選択中のagent。standingPartyかつこのagentが
+   * `pendingClusterTransition`を持つ場合のみ、target候補への線・target/source候補のhighlight・
+   * focus agentのmarkerを追加表示する。全agentの関心線・過去軌跡は描画しない(対象外節)。
+   * 未指定、または対象agentがpendingClusterTransitionを持たない場合はこれらの表示を一切行わない
+   * (target無効化・失効でagent.pendingClusterTransitionがundefinedになった時点で、次の描画で
+   * 自動的に消える ―― 表示専用のstateを別途持たない)。
+   */
+  selectedAgentId?: string;
 };
 
 function stateColor(agent: Agent, showClassroomAssignmentState: boolean): string {
@@ -399,6 +408,12 @@ type CandidateGlyphProps = {
   /** Issue #178: standingPartyでのみ、成立済み輪の人数変動可能な見た目・注記を有効にする */
   isStandingParty?: boolean;
   presentation: ScenarioPresentation;
+  /**
+   * Issue #202 (Phase 3): 選択中agentの移動意図(pending transition)における、この候補の役割。
+   * "source"/"target"それぞれ独立したCSSクラス(色だけでなく形・線種相当の視覚差)とaria-label補足を付ける。
+   * 通常(役割なし)はundefined。
+   */
+  transitionRole?: "source" | "target";
 };
 
 function CandidateGlyph({
@@ -408,6 +423,7 @@ function CandidateGlyph({
   isClassroomPair,
   isStandingParty = false,
   presentation,
+  transitionRole,
 }: CandidateGlyphProps) {
   const fading =
     candidate.status === "dissolving" ||
@@ -425,6 +441,12 @@ function CandidateGlyph({
   const capacityY = visual.isEvacuated
     ? visual.center.y - visual.displayRadius + 7
     : visual.center.y - 44;
+  const transitionRoleLabel =
+    transitionRole === "target"
+      ? "選択中agentの移動先target"
+      : transitionRole === "source"
+        ? "選択中agentの移動元"
+        : undefined;
 
   return (
     <g
@@ -432,11 +454,12 @@ function CandidateGlyph({
       data-candidate-state={classroomState}
       data-evacuated={visual.isEvacuated || undefined}
       data-visual-slot={visual.slotIndex === undefined ? undefined : visual.slotIndex + 1}
+      data-transition-role={transitionRole}
       aria-label={
         classroomState
           ? `${unitWord}候補 ${candidate.id}: ${classroomCandidateStateLabel(classroomState, unitWord)}、${candidate.memberIds.length}/${maxSize}、空き${openSlots}${visual.slotIndex === undefined ? "" : `、成立済み表示 ${visual.slotIndex + 1}`}`
           : standingPartyActive
-            ? `会話の輪 ${candidate.id}: 現在${candidate.memberIds.length}人、人数は今後も変動します`
+            ? `会話の輪 ${candidate.id}: 現在${candidate.memberIds.length}人、人数は今後も変動します${transitionRoleLabel ? `、${transitionRoleLabel}` : ""}`
             : undefined
       }
     >
@@ -445,9 +468,10 @@ function CandidateGlyph({
         cy={visual.center.y}
         r={visual.displayRadius}
         className={
-          classroomState
+          (classroomState
             ? `candidate-ring classroom-${classroomState}`
-            : candidateRingClass(candidate, standingPartyActive)
+            : candidateRingClass(candidate, standingPartyActive)) +
+          (transitionRole ? ` candidate-ring--transition-${transitionRole}` : "")
         }
       />
 
@@ -477,11 +501,17 @@ function AgentGlyph({
   isClassroomPair,
   isPostClusterDeparture: postClusterDeparture = false,
   candidateId,
+  isTransitionFocusAgent = false,
 }: {
   agent: Agent;
   isClassroomPair: boolean;
   isPostClusterDeparture?: boolean;
   candidateId?: string;
+  /**
+   * Issue #202 (Phase 3): 選択中agentの移動意図(pending transition)の関心を主に駆動したmemberか。
+   * 控えめな追加marker(点線リング)を1つ足すだけで、他の見た目(色・状態表示)は変えない。
+   */
+  isTransitionFocusAgent?: boolean;
 }) {
   const radius = radiusFor(agent);
   const opacity = agent.state === "left" ? 0.3 : 1;
@@ -492,7 +522,17 @@ function AgentGlyph({
       opacity={opacity}
       data-agent-state={stateClass}
       data-visual-candidate={candidateId}
+      data-transition-focus-agent={isTransitionFocusAgent || undefined}
     >
+      {isTransitionFocusAgent && (
+        <circle
+          cx={agent.x}
+          cy={agent.y}
+          r={radius + 5}
+          className="transition-focus-agent-marker"
+          aria-label={`${agent.label}は選択中agentの関心を主に駆動した相手`}
+        />
+      )}
       <circle
         cx={agent.x}
         cy={agent.y}
@@ -523,6 +563,7 @@ export function SimulationCanvas({
   thoughts = [],
   speeches = [],
   tick,
+  selectedAgentId,
 }: Props) {
   const presentation = getScenarioPresentation(formationScenarioId, formationClassroomGroupSize);
   const isClassroomPair = presentation.id === "classroomPair";
@@ -593,6 +634,15 @@ export function SimulationCanvas({
   const simulationAgents = visualAgents.filter(
     (agent) => !visualLayout.agents.get(agent.id)?.isEvacuated,
   );
+  // Issue #202 (Phase 3): 選択中agentが保持するpending transitionだけを、過密化しない最小表示として拾う。
+  // standingParty以外・未選択・選択agentがそもそも意図を持たない場合は全てundefinedのまま(=表示なし)。
+  const selectedTransitionAgent = isStandingParty
+    ? simulationAgents.find((agent) => agent.id === selectedAgentId)
+    : undefined;
+  const selectedPendingTransition = selectedTransitionAgent?.pendingClusterTransition;
+  const transitionTargetVisual = selectedPendingTransition
+    ? visualLayout.candidates.get(selectedPendingTransition.targetClusterId)
+    : undefined;
   const resolvedCanvasHeight = visualLayout.resolvedRegion?.height ?? height;
   const resolvedBubbles = buildBubbleCanvasLayout(
     resolvedAgents,
@@ -645,6 +695,21 @@ export function SimulationCanvas({
                 );
               })}
 
+            {isStandingParty &&
+              selectedTransitionAgent &&
+              selectedPendingTransition &&
+              transitionTargetVisual?.isVisible &&
+              !transitionTargetVisual.isEvacuated && (
+                <line
+                  x1={selectedTransitionAgent.x}
+                  y1={selectedTransitionAgent.y}
+                  x2={transitionTargetVisual.center.x}
+                  y2={transitionTargetVisual.center.y}
+                  className="transition-target-link"
+                  aria-label={`${selectedTransitionAgent.label}が向かっている輪 ${selectedPendingTransition.targetClusterId} への移動意図`}
+                />
+              )}
+
             {simulationCandidates.map((candidate) => (
               <CandidateGlyph
                 key={candidate.id}
@@ -654,6 +719,13 @@ export function SimulationCanvas({
                 isClassroomPair={isClassroomPair}
                 isStandingParty={isStandingParty}
                 presentation={presentation}
+                transitionRole={
+                  selectedPendingTransition?.targetClusterId === candidate.id
+                    ? "target"
+                    : selectedPendingTransition?.sourceClusterId === candidate.id
+                      ? "source"
+                      : undefined
+                }
               />
             ))}
             {simulationAgents.map((agent) => (
@@ -663,6 +735,9 @@ export function SimulationCanvas({
                 isClassroomPair={isClassroomPair}
                 isPostClusterDeparture={isPostClusterDeparture(agent, tick, isStandingParty)}
                 candidateId={visualLayout.agents.get(agent.id)?.candidateId}
+                isTransitionFocusAgent={
+                  selectedPendingTransition !== undefined && selectedPendingTransition.focusAgentId === agent.id
+                }
               />
             ))}
             <BubbleLayer canvas={simulationBubbles} />

@@ -160,3 +160,83 @@ export const INTIMATE_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = {
 
 validateStandingPartyScenarioConfig(NETWORKING_STANDING_PARTY_CONFIG);
 validateStandingPartyScenarioConfig(INTIMATE_STANDING_PARTY_CONFIG);
+
+/**
+ * Issue #202 (Phase 3): 比較プリセット「交流先へ移りやすい場」。standard-partyと同じ`SimParams`/
+ * Phase 2設定(会話満足度・離脱判定・回遊傾向分布)のまま、Phase 3の3configだけを差し替える
+ * (要件: 比較時はPhase 2基本パラメータを可能な限り揃え、Phase 3設定差だけを観察できるようにする)。
+ * - `alternativeInterest`: 観察半径・各weightを広め/高めにし、`minTargetInterestScore`を下げることで、
+ *   他クラスタがtarget候補になりやすくする(要件: 観察半径または外部関心寄与が比較的高い、
+ *   switch thresholdが低め)。
+ * - `attachment`: 愛着の飽和値・形成速度と、解散配慮・influenceAvoidance寄与を下げることで、
+ *   愛着・解散配慮による抑制が働きにくくする(要件: 愛着・解散配慮の抑制が比較的弱い)。
+ *   `maxInhibition`も下げ、抑制が効いた場合の上限自体も低くする。
+ * - `transition`: `enabled: true`にしてPhase 3decisionを有効化し、関心のswitch寄与と
+ *   目的地ありの配分を高める(要件: 目的地付き移動が観察しやすい)。
+ * 会場からの退出(`SimulationFinishReason`等)には一切触れない ―― Phase 2の離脱判定・会話満足度は
+ * 標準ケースと同一のため、単に会場退出人数が増える設定にはならない(要件)。
+ */
+export const OUTWARD_INTEREST_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = {
+  conversationSatisfaction: DEFAULT_CONVERSATION_SATISFACTION_CONFIG,
+  clusterDeparture: DEFAULT_CLUSTER_DEPARTURE_DECISION_CONFIG,
+  circulationTendencyRange: DEFAULT_CIRCULATION_TENDENCY_RANGE,
+  alternativeInterest: {
+    ...DEFAULT_ALTERNATIVE_CLUSTER_INTEREST_CONFIG,
+    observationRadius: 260,
+    distanceWeight: 0.35,
+    knownParticipantWeight: 0.3,
+    cliqueCompatibilityWeight: 0.25,
+    outsiderBarrierPenaltyCap: 0.12,
+    capacityPressurePenaltyCap: 0.1,
+    minTargetInterestScore: 0.22,
+  },
+  attachment: {
+    ...DEFAULT_CURRENT_CLUSTER_ATTACHMENT_CONFIG,
+    attachmentGrowthPerTick: 0.006,
+    maxAttachment: 0.55,
+    clusterWouldDissolveConcern: 0.1,
+    influenceAvoidanceGain: 0.5,
+    maxInhibition: 0.35,
+  },
+  transition: {
+    ...DEFAULT_CLUSTER_TRANSITION_CONFIG,
+    enabled: true,
+    interestToDepartureGain: 0.8,
+    targetShareBase: 0.6,
+    targetShareGain: 0.35,
+  },
+};
+
+/**
+ * Issue #202 (Phase 3): 比較プリセット「今の輪への配慮が強い場」。上記と同じく`SimParams`/Phase 2設定は
+ * standard-partyと揃え、Phase 3の3configだけを差し替える。
+ * - `alternativeInterest`: 既定のまま ―― 他クラスタへの関心自体は普通に生じる(要件: 外部関心があっても
+ *   stay decisionが観察しやすい。関心そのものを消してしまう極端な設定にはしない)。
+ * - `attachment`: 愛着の形成速度・飽和値を上げ、解散配慮・influenceAvoidance寄与・抑制上限を高めることで、
+ *   愛着・解散見込みによる抑制が強く効くようにする(要件: attachment形成が速い/上限が高い、
+ *   解散見込み・influenceAvoidanceの抑制寄与が高い)。`maxInhibition`は1未満(0.75)に留め、
+ *   離脱が完全にブロックされる(=永久に移動しない)極端な設定にはしない(要件)。
+ * - `transition`: `enabled: true`で他の4プリセットと同じdecision経路を通しつつ、関心→離脱寄与や
+ *   target配分は既定値のままとし、「抑制が強く効いてstayが選ばれやすい」という差だけを観察できるようにする。
+ */
+export const CURRENT_CIRCLE_ATTACHMENT_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = {
+  conversationSatisfaction: DEFAULT_CONVERSATION_SATISFACTION_CONFIG,
+  clusterDeparture: DEFAULT_CLUSTER_DEPARTURE_DECISION_CONFIG,
+  circulationTendencyRange: DEFAULT_CIRCULATION_TENDENCY_RANGE,
+  alternativeInterest: DEFAULT_ALTERNATIVE_CLUSTER_INTEREST_CONFIG,
+  attachment: {
+    ...DEFAULT_CURRENT_CLUSTER_ATTACHMENT_CONFIG,
+    attachmentGrowthPerTick: 0.02,
+    maxAttachment: 0.95,
+    clusterWouldDissolveConcern: 0.35,
+    influenceAvoidanceGain: 2,
+    maxInhibition: 0.75,
+  },
+  transition: {
+    ...DEFAULT_CLUSTER_TRANSITION_CONFIG,
+    enabled: true,
+  },
+};
+
+validateStandingPartyScenarioConfig(OUTWARD_INTEREST_STANDING_PARTY_CONFIG);
+validateStandingPartyScenarioConfig(CURRENT_CIRCLE_ATTACHMENT_STANDING_PARTY_CONFIG);

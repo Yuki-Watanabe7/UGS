@@ -562,3 +562,102 @@ describe("buildObserverJoinerInspection: Phase 3 speechEffectDetails/activeEffec
     expect(inspection.attractivenessScore).not.toBe(inspection.attractivenessScoreBeforeEffects);
   });
 });
+
+describe("buildAgentInspection: pendingTransition / lastTransitionInvalidation (Issue #202)", () => {
+  const groupSource: GroupCandidate = {
+    id: "group-source",
+    x: 400,
+    y: 260,
+    memberIds: ["agent-x"],
+    status: "confirmed",
+    age: 5,
+  };
+
+  it("returns undefined for pendingTransition/lastTransitionInvalidation when the agent holds no transition intent", () => {
+    const agent = makeAgent({ state: "joined", joinedGroupId: "group-source", clusterJoinedAtTick: 0 });
+    const state = makeState({
+      agents: [agent],
+      groupCandidates: [groupSource],
+      formationScenarioId: "standingParty",
+      tick: 10,
+    });
+
+    const [inspection] = buildAgentInspection(state, DEFAULT_PARAMS);
+
+    expect(inspection.pendingTransition).toBeUndefined();
+    expect(inspection.lastTransitionInvalidation).toBeUndefined();
+  });
+
+  it("snapshots agent.pendingClusterTransition verbatim without fabricating values", () => {
+    const agent = makeAgent({
+      state: "approaching",
+      joinedGroupId: "group-target",
+      clusterJoinedAtTick: 0,
+      pendingClusterTransition: {
+        sourceClusterId: "group-source",
+        targetClusterId: "group-target",
+        focusAgentId: "ghost-1",
+        decidedAtTick: 5,
+        expiresAtTick: 35,
+        interestScore: 0.42,
+        primaryReason: "alternativeClusterInterest",
+      },
+    });
+    const state = makeState({
+      agents: [agent],
+      groupCandidates: [groupSource],
+      formationScenarioId: "standingParty",
+      tick: 12,
+    });
+
+    const [inspection] = buildAgentInspection(state, DEFAULT_PARAMS);
+
+    expect(inspection.pendingTransition).toEqual({
+      sourceClusterId: "group-source",
+      targetClusterId: "group-target",
+      focusAgentId: "ghost-1",
+      decidedAtTick: 5,
+      expiresAtTick: 35,
+      elapsedTicks: 7,
+      interestScore: 0.42,
+      primaryReason: "alternativeClusterInterest",
+    });
+  });
+
+  it("derives the last invalidation reason and fallback status from the structured log, not from agent state", () => {
+    const agent = makeAgent({ state: "undecided" });
+    const state = makeState({
+      agents: [agent],
+      groupCandidates: [],
+      formationScenarioId: "standingParty",
+      tick: 20,
+      log: [
+        {
+          tick: 15,
+          message: "moved toward a target",
+          tags: [],
+          eventType: "clusterTransitionTargetSelected",
+          metadata: { agentId: "agent-x", targetClusterId: "group-target" },
+        },
+        {
+          tick: 18,
+          message: "target invalidated",
+          tags: [],
+          eventType: "clusterTransitionTargetInvalidated",
+          metadata: { agentId: "agent-x", groupId: "group-source", invalidationReason: "targetFull" },
+        },
+        {
+          tick: 18,
+          message: "fell back to normal search",
+          tags: [],
+          eventType: "clusterTransitionAbandoned",
+          metadata: { agentId: "agent-x", groupId: "group-target" },
+        },
+      ],
+    });
+
+    const [inspection] = buildAgentInspection(state, DEFAULT_PARAMS);
+
+    expect(inspection.lastTransitionInvalidation).toEqual({ reason: "targetFull", tick: 18, fallbackStarted: true });
+  });
+});
