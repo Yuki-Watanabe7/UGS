@@ -28,6 +28,8 @@ describe("scenario category configuration", () => {
       "standing-party",
       "standing-party-networking",
       "standing-party-intimate",
+      "standing-party-outward-interest",
+      "standing-party-current-circle",
     ]);
   });
 

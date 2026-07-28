@@ -409,6 +409,52 @@ function buildClusterTransitionDecisionSnapshot(
   });
 }
 
+/**
+ * Issue #202 (Phase 3): `agent.pendingClusterTransition`をInspector向けにそのままスナップショット化する。
+ * `Agent`へ新しいフィールドを追加せず、既存の状態を読むだけ(受入条件: 値undefined時に0を捏造しない ――
+ * 保持していなければ関数自体がundefinedを返す)。
+ */
+function buildPendingTransitionSnapshot(
+  agent: Agent,
+  state: SimulationState,
+): ObserverJoinerInspection["pendingTransition"] {
+  const transition = agent.pendingClusterTransition;
+  if (!transition) return undefined;
+  return {
+    sourceClusterId: transition.sourceClusterId,
+    targetClusterId: transition.targetClusterId,
+    focusAgentId: transition.focusAgentId,
+    decidedAtTick: transition.decidedAtTick,
+    expiresAtTick: transition.expiresAtTick,
+    elapsedTicks: state.tick - transition.decidedAtTick,
+    interestScore: transition.interestScore,
+    primaryReason: transition.primaryReason,
+  };
+}
+
+/**
+ * Issue #202 (Phase 3): 直近の`clusterTransitionTargetInvalidated`(engine.tsの
+ * `invalidatePendingClusterTransition`が記録)を`state.log`から探し、同一tickに続けて記録される
+ * `clusterTransitionAbandoned`(通常探索へのfallback)の有無と合わせてスナップショット化する。
+ * 一度も無効化が発生していなければundefined(0件を捏造しない)。
+ */
+function buildLastTransitionInvalidationSnapshot(
+  agent: Agent,
+  state: SimulationState,
+): ObserverJoinerInspection["lastTransitionInvalidation"] {
+  const invalidatedEntry = [...state.log]
+    .reverse()
+    .find((entry) => entry.eventType === "clusterTransitionTargetInvalidated" && entry.metadata?.agentId === agent.id);
+  if (!invalidatedEntry || invalidatedEntry.metadata?.invalidationReason === undefined) return undefined;
+  const fallbackStarted = state.log.some(
+    (entry) =>
+      entry.eventType === "clusterTransitionAbandoned" &&
+      entry.metadata?.agentId === agent.id &&
+      entry.tick === invalidatedEntry.tick,
+  );
+  return { reason: invalidatedEntry.metadata.invalidationReason, tick: invalidatedEntry.tick, fallbackStarted };
+}
+
 function buildInspection(
   agent: Agent,
   state: SimulationState,
@@ -512,6 +558,8 @@ function buildInspection(
     joinFailureCount: failureEntries.length,
     lastFailureReason: lastFailure?.metadata?.reason,
     lastFailureTick: lastFailure?.tick,
+    pendingTransition: buildPendingTransitionSnapshot(agent, state),
+    lastTransitionInvalidation: buildLastTransitionInvalidationSnapshot(agent, state),
   };
 }
 

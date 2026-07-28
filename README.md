@@ -942,6 +942,53 @@ Phase 2で実装した会話満足度・クラスタ離脱判定・社交的回�
   心理理由を作ってもいません。クラスタ解散によるrelease(`clusterMemberReleased`)は引き続き
   「解散した会話の輪から再探索状態に戻った」という別文言のままです。
 
+### 設定・比較プリセット・Inspector・Canvas表示(#202、Phase 3の露出)
+
+他クラスタへの関心・現在クラスタへの愛着と離脱配慮・目的地付きの移動意図(`docs/cluster-transition-phase3-model.md`)は、
+#198〜#201でシミュレーション本体(`alternativeClusterInterest.ts`/`currentClusterAttachment.ts`/
+`clusterTransitionDecision.ts`/`PendingClusterTransition`)として実装されましたが、既定では
+`standingPartyConfig.transition.enabled: false`のためPhase 2までと完全に同じ挙動のままです。#202で、
+これらをstandingParty専用UIから安全に有効化・調整し、確認できるようにしました。
+
+- **詳細設定パネル**: 「詳細設定(立食パーティー)」に、Phase 2セクションとは別に「他クラスタ関心」
+  「現在クラスタ愛着・離脱配慮」「遷移decision・移動意図」の3セクションが折りたたみで追加されます。
+  観察半径・距離寄与/減衰・既知participant/clique compatibilityの寄与・outsider barrier/capacity
+  pressureの減点・target候補となる最低関心score(他クラスタ関心)、愛着の初期値・形成速度・飽和値・
+  member入れ替わり/新規参加の寄与・解散配慮係数・`influenceAvoidance`寄与係数・抑制の合計上限(愛着・
+  離脱配慮)、他クラスタ関心のswitch寄与・departAndExplore/switchToTargetClusterの配分・移動意図の
+  有効tick(遷移decision)を調整できます。「他クラスタ関心・愛着配慮をdecisionへ反映する」という
+  チェックボックス(`transition.enabled`)がオフの間は、これらを一切変更してもPhase 2の離脱判定だけが
+  使われます(既存挙動とbyte-identical)。いずれもagent生成時にのみ使われるためReset後に反映され、
+  不正な値は`standingPartyScenarioConfig.ts`のvalidate関数群がdomain layerで拒否します。
+- **比較プリセット**: 標準・ネットワーキング型・懇親型に加え、他クラスタ観察半径・関心寄与を広め/高めに
+  し最低関心scoreを下げた「交流先へ移りやすい場」、愛着の形成速度・飽和値と解散配慮・
+  `influenceAvoidance`寄与を高めた「今の輪への配慮が強い場」を選べます。いずれも`transition.enabled: true`
+  にしたうえで、populationSize・既存関係性・Phase 2パラメータは標準ケースと揃え、Phase 3設定差だけが
+  観察できる構成です。「今の輪への配慮が強い場」でも目的地付き移動が完全にゼロになる極端な設定にはして
+  いません(`standingPartyPhase3PresetComparison.test.ts`で両プリセットの定性的な差を固定seed列で確認)。
+- **agentインスペクター**: 選択中agentについて、他クラスタ関心(最良target候補・関心score・関心を
+  主に駆動したagent)、現在クラスタ愛着・離脱による影響への配慮・観察専用の葛藤強度、`stay`/
+  `departAndExplore`/`switchToTargetCluster`の3action確率と主要因、保持中の移動意図(pending
+  transition、出発元/target/focus agent/決定tick・経過・有効期限・決定時点の関心score・現在の接近状態)、
+  直近の移動意図無効化理由(満員化・解散・期限切れ等)とfallback探索へ切り替わったかを確認できます。
+  `transition.enabled`がオフのプリセットでは「この場では詳細設定によりまだ計算されない」と表示し、
+  移動意図を保持していない場合は0を捏造せず「なし」と表示します。
+- **Canvas表示**: 選択中agentが移動意図を保持している場合のみ、その輪から目的地の輪への薄い点線
+  (`transition-target-link`)と、target候補(水色・短い点線のリング)・source候補(ピンク・長めの
+  破線のリング)の強調表示、関心を主に駆動したfocus agentへの控えめなmarker(点線リング)を追加表示
+  します。色だけでなく線種・aria-labelでも区別しており、全agentの関心線・過去の移動軌跡は表示しません。
+  意図が無効化・失効した(`agent.pendingClusterTransition`がundefinedになった)時点で、表示専用の別
+  stateを持たないため次の描画で即座に消えます。表示のON/OFFやCanvas表示の有無自体はSimulationState・
+  PRNG系列・構造化イベント列を一切変えません。
+
+**重要な注意(観察可能なモデル仮説であり、断定的な心理診断ではない)**: 他クラスタ関心は観察できる
+距離・構成・既存関係だけから導かれるシミュレーション内部の値です。愛着は現在の会話episodeに限る一時的な
+状態であり、人物間の長期的な好感度を表すものではありません。`influenceAvoidance`(自分の離脱が周囲へ
+与える影響への配慮の寄与係数)は人格の良し悪しを示すものではなく、observerJoinerも他のagentと同じ連続値
+のdecisionを利用しており、boolean的な特別扱いは一切ありません。プリセット間の差は集団ダイナミクス比較の
+ための仮説的な設定であり、「良い/悪い」「社交的/非社交的」を意味する名称ではありません。接触履歴・接触
+network・話題の一致や伝播は引き続き対象外です(将来のPhaseで扱う可能性があります)。
+
 ### 定性的検証・統合回帰テスト(#190)
 
 Phase 2(会話満足度・離脱decision)の個別の数式・境界値は`conversationSatisfaction.test.ts`/
@@ -974,8 +1021,8 @@ src/
     types.ts              Agent / GroupCandidate / SimParams などの型定義
     random.ts              seed固定の疑似乱数生成器
     model.ts               初期エージェント生成(seedから再現可能)
-    presets.ts              二次会5つ+立食パーティー3つ+教室での班分け4つ、計12シナリオプリセットとデフォルトパラメータ
-    standingPartyScenarioConfig.ts 立食パーティー専用のPhase 2設定(満足度・離脱判定・回遊傾向分布)束とその比較プリセット(#189)
+    presets.ts              二次会5つ+立食パーティー5つ+教室での班分け4つ、計14シナリオプリセットとデフォルトパラメータ
+    standingPartyScenarioConfig.ts 立食パーティー専用のPhase 2設定(満足度・離脱判定・回遊傾向分布)+Phase 3設定(他クラスタ関心・愛着離脱配慮・遷移decision)束とその比較プリセット(#189、#202)
     standingPartyComparison.ts 立食パーティーのプリセット間比較指標(自発離脱・再参加・滞在tick等)の集計ロジック(#190)
     formationPolicy.ts       シナリオ別の班形成・成立・終了ルールを切り替えるFormationPolicyの定義
     groupPartition.ts        人口を定員ルール(固定/可変)で分割し構造的未割当人数を決定的に計算
@@ -998,7 +1045,7 @@ src/
   components/
     SimulationCanvas.tsx    SVGによる描画のみを担当
     ControlPanel.tsx        操作パネルとパラメータスライダー
-    StandingPartyAdvancedSettings.tsx 立食パーティー専用のPhase 2詳細設定パネル(#189、standingParty選択時のみ表示)
+    StandingPartyAdvancedSettings.tsx 立食パーティー専用のPhase 2+Phase 3詳細設定パネル(#189、#202、standingParty選択時のみ表示)
     EventLog.tsx            状態ログの表示(発言・発言効果・乖離・信頼・関係性フィルタを含む)
     AgentLegend.tsx         凡例
     SimulationSummaryPanel.tsx  終了サマリーの表示
@@ -1006,7 +1053,7 @@ src/
     InterventionSelector.tsx        介入シナリオの選択・説明表示
     InterventionComparisonPanel.tsx 介入あり/なしのMonte Carlo比較表示
     GroupFormationComparisonPanel.tsx 学校シナリオの班人数・教師介入paired Monte Carlo比較表示
-    ObserverJoinerInspector.tsx     observerJoinerインスペクター/agentインスペクター(発言効果・本心/建前・信頼の因果詳細、standingPartyのagent選択・離脱判定要因を含む)
+    ObserverJoinerInspector.tsx     observerJoinerインスペクター/agentインスペクター(発言効果・本心/建前・信頼の因果詳細、standingPartyのagent選択・離脱判定要因・他クラスタ関心/愛着/遷移decision/pending transitionを含む)
     SpeechEffectsComparisonPanel.tsx 発言効果ON/OFFのMonte Carlo比較表示(Phase 3)
 ```
 

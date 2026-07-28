@@ -150,6 +150,9 @@ function SimulationApp({ scenario }: Props) {
   const [speechBubbleDisplaySettings, setSpeechBubbleDisplaySettings] = useState<SpeechBubbleDisplaySettingsState>(
     DEFAULT_SPEECH_BUBBLE_DISPLAY_SETTINGS,
   );
+  // Issue #202 (Phase 3): Inspectorで選択中のagentをCanvasと共有し、選択中agentのpending transition
+  // targetだけをCanvas上に表示できるようにする(全agentの関心線は表示しない)。
+  const [selectedAgentId, setSelectedAgentId] = useState<string | undefined>(undefined);
 
   const rngRef = useRef(new SeededRandom(seed));
 
@@ -421,11 +424,19 @@ function SimulationApp({ scenario }: Props) {
             thoughts={visibleThoughts}
             speeches={visibleSpeeches}
             tick={simState.tick}
+            selectedAgentId={selectedAgentId}
           />
         </section>
 
         <aside className="sidebar-right">
-          <ObserverJoinerInspector state={simState} params={params} seed={seed} presetId={presetId} />
+          <ObserverJoinerInspector
+            state={simState}
+            params={params}
+            seed={seed}
+            presetId={presetId}
+            selectedAgentId={selectedAgentId}
+            onSelectedAgentIdChange={setSelectedAgentId}
+          />
           <SimulationSummaryPanel state={simState} params={params} />
           <EventLog
             state={simState}

@@ -1158,6 +1158,40 @@ export type ObserverJoinerInspection = {
   /** Issue #135: 最新の参加失敗理由と発生tick。未発生ならundefined */
   lastFailureReason?: ApproachFailureReason;
   lastFailureTick?: number;
+  /**
+   * Issue #202 (Phase 3): 現在保持している移動意図(`Agent.pendingClusterTransition`)のスナップショット。
+   * 意図を持っていない場合は常にundefined(0やダミー値で「意図なし」を捏造しない)。
+   */
+  pendingTransition?: ObserverPendingTransitionSnapshot;
+  /**
+   * Issue #202 (Phase 3): 直近で移動意図が無効化された理由(`clusterTransitionTargetInvalidated`)と、
+   * 通常の再探索へfallbackしたか(直後の`clusterTransitionAbandoned`の有無)。無効化が一度も
+   * 発生していない場合、または現在別のpending transitionを新たに保持している場合はundefined。
+   */
+  lastTransitionInvalidation?: ObserverTransitionInvalidationSnapshot;
+};
+
+/** Issue #202 (Phase 3): `ObserverJoinerInspection.pendingTransition`の内訳 */
+export type ObserverPendingTransitionSnapshot = {
+  sourceClusterId: string;
+  targetClusterId: string;
+  /** 関心を主に駆動したmember。距離・入りやすさだけで選ばれた場合はundefined */
+  focusAgentId?: string;
+  decidedAtTick: number;
+  expiresAtTick: number;
+  /** 現tick時点での経過tick数(`state.tick - decidedAtTick`) */
+  elapsedTicks: number;
+  /** 決定時点の他クラスタ関心score`[0,1]`(以後再評価しない) */
+  interestScore: number;
+  primaryReason: ClusterTransitionPrimaryReason;
+};
+
+/** Issue #202 (Phase 3): `ObserverJoinerInspection.lastTransitionInvalidation`の内訳 */
+export type ObserverTransitionInvalidationSnapshot = {
+  reason: ClusterTransitionInvalidationReason;
+  tick: number;
+  /** 無効化直後、通常の再探索(`clusterTransitionAbandoned`)へ切り替わったか */
+  fallbackStarted: boolean;
 };
 
 /**
