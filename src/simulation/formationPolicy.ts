@@ -2,7 +2,7 @@ import type {
   ApproachFailureReason,
   Agent,
   ClusterDepartureFactor,
-  ClusterDeparturePrimaryReason,
+  ClusterTransitionPrimaryReason,
   GroupCandidate,
   SimParams,
   SimulationFinishReason,
@@ -11,6 +11,10 @@ import { clamp, distance } from "./model";
 import { computeClusterDepartureDecision, DEFAULT_CLUSTER_DEPARTURE_DECISION_CONFIG } from "./clusterDepartureDecision";
 import type { ClusterDepartureDecisionConfig } from "./clusterDepartureDecision";
 import type { StandingPartyScenarioConfig } from "./standingPartyScenarioConfig";
+import { computeClusterTransitionDecision } from "./clusterTransitionDecision";
+import type { ClusterTransitionConfig, ClusterTransitionDecision } from "./clusterTransitionDecision";
+import type { AlternativeClusterInterest } from "./alternativeClusterInterest";
+import type { DepartureInhibition } from "./currentClusterAttachment";
 
 /**
  * Issue #130 (Phase 1): シナリオごとに差し替え可能な「グループ形成・終了ルール」の集合。
@@ -188,6 +192,24 @@ export type ClusterDepartureContext = {
   conversationSatisfaction: number;
   /** Issue #188 (Phase 2): このagentの社交的回遊傾向`[0,1]`(trait、run中不変)。未設定時は0.5 */
   socialCirculationTendency: number;
+  /**
+   * Issue #200 (Phase 3): `standingPartyConfig.transition.enabled === true`のときのみ`engine.ts`が
+   * 設定する。`afterParty`/`classroomPair`は常にこのフィールドを無視し、`{ eligible: false,
+   * probability: 0 }`を返す(既存挙動に一切影響しない)。未設定(`undefined`)ならPhase 3を一切
+   * 計算せず、Phase 2の`computeClusterDepartureDecision`の結果のみを返す(ADR 4.3節1、後方互換)。
+   * `bestAlternativeInterest`/`inhibition`は#198/#199の純粋関数から`engine.ts`が事前に導出した
+   * 一時的な評価結果であり(`SimulationState`に保存されない、ADR 1.1節・1.3節)、ここでは
+   * その導出には一切関与せず`clusterTransitionDecision.ts`の合成式へそのまま渡すだけである。
+   */
+  transition?: {
+    config: ClusterTransitionConfig;
+    /** #198の観察半径内の最良他クラスタ関心(生の最良値。`minTargetInterestScore`未満でもよい) */
+    bestAlternativeInterest?: AlternativeClusterInterest;
+    /** `AlternativeClusterInterestConfig.minTargetInterestScore`(`switchToTargetCluster`候補判定用) */
+    minTargetInterestScore: number;
+    /** #199の愛着・離脱配慮の合成結果 */
+    inhibition: DepartureInhibition;
+  };
 };
 
 /**
@@ -202,8 +224,18 @@ export type ClusterDepartureDecision = {
   probability: number;
   /** Issue #188: 寄与要因の内訳(probability > 0のとき)。contribution降順 */
   factors?: ClusterDepartureFactor[];
-  /** Issue #188: 最も寄与の大きい要因(離脱が起きた際に構造化イベントへ記録する主要理由) */
-  primaryReason?: ClusterDeparturePrimaryReason;
+  /**
+   * Issue #188: 最も寄与の大きい要因(離脱が起きた際に構造化イベントへ記録する主要理由)。
+   * Issue #200 (Phase 3): `ctx.transition`が設定されていた場合、`ClusterTransitionPrimaryReason`
+   * (Phase 2の3値を包含する拡張)の値を取り得る。
+   */
+  primaryReason?: ClusterTransitionPrimaryReason;
+  /**
+   * Issue #200 (Phase 3): `ctx.transition`が設定されていた場合のみ設定する。設定時、`probability`は
+   * `transition.actionProbabilities.departAndExplore + transition.actionProbabilities.switchToTargetCluster`
+   * (= `pDepart`)と一致する ―― 既存の`probability`(「離脱する総確率」)の意味を変えない(ADR 4節)。
+   */
+  transition?: ClusterTransitionDecision;
 };
 
 /**
@@ -577,12 +609,32 @@ function createStandingPartyPolicy(
      * (責務1の`evaluateCandidateInitiation`と同じ「eligible + probability」の分離パターン)。
      */
     evaluateClusterDeparture(_agent, _candidate, ctx) {
-      return computeClusterDepartureDecision({
+      const departure = computeClusterDepartureDecision({
         config: clusterDepartureConfig,
         ticksInCluster: ctx.ticksInCluster,
         conversationSatisfaction: ctx.conversationSatisfaction,
         socialCirculationTendency: ctx.socialCirculationTendency,
       });
+      // Issue #200 (Phase 3): `ctx.transition`未設定(Phase 3無効、またはstandingParty以外)なら
+      // Phase 2の結果をそのまま返す(ADR 4.3節1、byte-identical)。
+      if (!ctx.transition) return departure;
+
+      const transition = computeClusterTransitionDecision({
+        config: ctx.transition.config,
+        tick: ctx.tick,
+        departure,
+        bestAlternativeInterest: ctx.transition.bestAlternativeInterest,
+        minTargetInterestScore: ctx.transition.minTargetInterestScore,
+        inhibition: ctx.transition.inhibition,
+      });
+
+      return {
+        eligible: transition.eligible,
+        probability: transition.actionProbabilities.departAndExplore + transition.actionProbabilities.switchToTargetCluster,
+        factors: departure.factors,
+        primaryReason: transition.primaryReason ?? departure.primaryReason,
+        transition,
+      };
     },
 
     // Issue #177(責務10): 会話クラスタは成立(confirmed)後も増減を続けるactiveな単位のため、

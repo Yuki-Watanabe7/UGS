@@ -4,7 +4,7 @@ import { useState } from "react";
 import type {
   AgentAssignmentStatus,
   ApproachFailureReason,
-  ClusterDeparturePrimaryReason,
+  ClusterTransitionPrimaryReason,
   GroupCandidateStatus,
   ObserverJoinerInspection,
   ObserverSocialExpressionSnapshot,
@@ -61,11 +61,20 @@ const APPROACH_FAILURE_REASON_LABEL: Record<ApproachFailureReason, string> = {
   groupMissing: "候補が消失",
 };
 
-/** Issue #189 (Phase 2): 責務9の構造化理由の表示ラベル。人格・相手評価に見える断定表現は避ける */
-const CLUSTER_DEPARTURE_REASON_LABEL: Record<ClusterDeparturePrimaryReason, string> = {
+/**
+ * Issue #189 (Phase 2)・Issue #200 (Phase 3): 責務9の構造化理由の表示ラベル。人格・相手評価に見える
+ * 断定表現は避ける。`ClusterTransitionPrimaryReason`はPhase 2の3値を包含するため、このラベルも
+ * 同じ型で全値をカバーする(未対応の値が紛れ込んでも型エラーで検知できるようにする)。
+ */
+const CLUSTER_DEPARTURE_REASON_LABEL: Record<ClusterTransitionPrimaryReason, string> = {
   lowConversationSatisfaction: "会話満足度の低下",
   socialCirculation: "社交的回遊傾向",
   mixedConversationAndSocialCirculation: "満足度低下+回遊傾向(複合)",
+  alternativeClusterInterest: "他クラスタへの関心",
+  mixedDepartureAndAlternativeInterest: "離脱圧力+他クラスタ関心(複合)",
+  stayedByAttachment: "今の輪への愛着",
+  stayedByDepartureConcern: "離脱による影響への配慮",
+  stayedByMixedInhibition: "愛着+配慮(複合)",
 };
 
 /** Issue #189: 自発的離脱(責務9)とクラスタ解散によるrelease(責務10)の表示上の区別 */

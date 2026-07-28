@@ -25,7 +25,8 @@ import type {
   TieObservationCommitment,
 } from "./relationshipTie";
 import type { ExpressedStance, PublicExpressionDivergence } from "./socialExpression";
-import type { CurrentClusterAttachmentState } from "./currentClusterAttachment";
+import type { CurrentClusterAttachmentState, DepartureConcernFactor } from "./currentClusterAttachment";
+import type { AlternativeClusterInterestFactor } from "./alternativeClusterInterest";
 
 /**
  * エージェントの行動状態。Phase 4の三層モデル(`socialExpression.ts`)では、この状態遷移・移動
@@ -170,6 +171,28 @@ export type ClusterDepartureFactor = {
 export type ClusterDeparturePrimaryReason = ClusterDepartureFactorKind | "mixedConversationAndSocialCirculation";
 
 /**
+ * Issue #200 (Phase 3): 責務9のクラスタ遷移decisionが選べる3action。`docs/cluster-transition-phase3-model.md`
+ * (Issue #197 ADR)4節の型契約どおり。`stay`はmembership・stateを変更しない。`departAndExplore`は
+ * 目的地を持たない既存の自発離脱・再探索経路(Phase 2と同一)。`switchToTargetCluster`は目的地付きの
+ * 離脱で、実際の目的地への接近・無効化・fallbackは#201の対象(本Issueでは決定・記録のみ)。
+ */
+export type ClusterTransitionAction = "stay" | "departAndExplore" | "switchToTargetCluster";
+
+/**
+ * Issue #200 (Phase 3): `ClusterTransitionDecision.primaryReason`。Phase 2の3値
+ * (`ClusterDeparturePrimaryReason`)をそのまま包含し(後方互換)、離脱側が他クラスタ関心由来で
+ * 支配的な場合(`alternativeClusterInterest`/`mixedDepartureAndAlternativeInterest`)と、
+ * 抑制(愛着・配慮)が効いて`stay`が支配的な場合(`stayedBy*`)を追加する(ADR 4.3節の状況表)。
+ */
+export type ClusterTransitionPrimaryReason =
+  | ClusterDeparturePrimaryReason
+  | "alternativeClusterInterest"
+  | "mixedDepartureAndAlternativeInterest"
+  | "stayedByAttachment"
+  | "stayedByDepartureConcern"
+  | "stayedByMixedInhibition";
+
+/**
  * Issue #176: `clusterDepartureStarted`/`clusterDepartureCompleted`の`metadata.departureReason`に
  * 保持する、離脱理由の構造化コード。表示文言の文字列解析に依存せず後続の集計ができるようにする。
  * - "clusterBelowMinimumSize": Issue #177(責務10)。自発的な離脱ではなく、他memberの離脱で
@@ -177,6 +200,9 @@ export type ClusterDeparturePrimaryReason = ClusterDepartureFactorKind | "mixedC
  *   (`clusterMemberReleased`イベントで使う)
  * - `ClusterDeparturePrimaryReason`(Issue #188, Phase 2): 責務9の自発的離脱(`clusterDepartureStarted`/
  *   `Completed`)の主要因。
+ * - `ClusterTransitionPrimaryReason`(Issue #200, Phase 3)がPhase 2の3値を包含する形で拡張したため、
+ *   Phase 3有効時はこのフィールドへ追加の値(`alternativeClusterInterest`等)が入ることがある
+ *   (既存の3値だけを扱う消費者を壊さない、ADR 4.3節)。
  *
  * 移行メモ: Phase 1では"provisionalStayDuration"(一定滞在tick超過後の、agent特性に依存しない
  * 固定確率抽選による離脱)という第3のコードが存在したが、Phase 2実装(Issue #188)でこの暫定ルール
@@ -184,7 +210,7 @@ export type ClusterDeparturePrimaryReason = ClusterDepartureFactorKind | "mixedC
  * 残っている場合は「Phase 1の暫定ルールによる離脱」であったことを示す歴史的な値として読み替えること
  * (このアプリはシミュレーション結果を永続化しないため、実データ上の互換対応は不要)。
  */
-export type ClusterDepartureReason = ClusterDeparturePrimaryReason | "clusterBelowMinimumSize";
+export type ClusterDepartureReason = ClusterTransitionPrimaryReason | "clusterBelowMinimumSize";
 
 /**
  * Issue #186 (Phase 2): 1回の`joined`〜離脱までの、ひとつながりの会話エピソードの状態。
@@ -215,6 +241,12 @@ export type ConversationEpisode = {
   lastObservedMemberCount: number;
   conversationSatisfaction?: number;
   attachment?: CurrentClusterAttachmentState;
+  /**
+   * Issue #200 (Phase 3): `clusterTransitionInhibited`をこのエピソード内で既に記録したか
+   * (ADR 8.1節: 「関心はあったがなぜ留まったのか」を1エピソードにつき最初の1回だけ記録する)。
+   * episode終了で(この型ごと)自動的に破棄されるため、新しいエピソードでは常に未記録から始まる。
+   */
+  transitionInhibitedLogged?: boolean;
 };
 
 /**
@@ -447,7 +479,13 @@ export type SimulationEventType =
    * だった残存memberが自発的な離脱ではなく強制的にundecidedへ戻され、再探索を始めたことを表す
    * (`clusterDepartureStarted`/`Completed`は責務9由来の自発的離脱専用であり、この経路では発生しない)。
    */
-  | "clusterMemberReleased";
+  | "clusterMemberReleased"
+  /**
+   * Issue #200 (Phase 3): クラスタ遷移decisionが`stay`を選び、かつ愛着・離脱配慮由来の抑制
+   * (`inhibition.total > 0`)が効いていたことを、1エピソードにつき最初の1回だけ記録する
+   * (ADR 8.1節)。`standingPartyConfig.transition.enabled`が`false`の間は発生しない。
+   */
+  | "clusterTransitionInhibited";
 
 /**
  * Issue #156: `schoolInterventionTriggered`の`metadata.outcome`。表示文言の解析に依存しない結果分類。
@@ -595,6 +633,30 @@ export type SimulationEventMetadata = {
   departureFactors?: ClusterDepartureFactor[];
   /** Issue #188: このtickの離脱評価で実際に`rng.chance`へ渡した最終確率`[0,1]` */
   departureProbability?: number;
+  /**
+   * Issue #200 (Phase 3): `clusterDepartureStarted`/`clusterDepartureCompleted`/
+   * `clusterTransitionInhibited`用。このtickのクラスタ遷移decisionが選んだaction
+   * (`standingPartyConfig.transition.enabled`が`false`の間は常にundefined)。
+   */
+  transitionAction?: ClusterTransitionAction;
+  /** Issue #200: `switchToTargetCluster`が選ばれた場合の目的地クラスタID(#201が実際の接近へ使う) */
+  targetClusterId?: string;
+  /** Issue #200: 目的地関心を主に駆動したmember(ADR 1.1.1節)。特定の相手が理由でない場合はundefined */
+  focusAgentId?: string;
+  /** Issue #200: 決定時点の最良他クラスタ関心score`[0,1]`(#198) */
+  alternativeInterestScore?: number;
+  /** Issue #200: 上記の寄与内訳(contribution降順) */
+  alternativeInterestFactors?: AlternativeClusterInterestFactor[];
+  /** Issue #200: 決定時点の現在クラスタ愛着`[0,1]`(#199) */
+  attachmentValue?: number;
+  /** Issue #200: 決定時点の構造的配慮の合計`[0,1]`(#199の`DepartureInhibition.concern`) */
+  departureConcern?: number;
+  /** Issue #200: 抑制の寄与内訳(contribution降順) */
+  inhibitionFactors?: DepartureConcernFactor[];
+  /** Issue #200: 観察専用の葛藤強度`[0,1]`(ADR 1.4節、`min(interestDrive, inhibition)`) */
+  conflictIntensity?: number;
+  /** Issue #200: 決定時点の3action確率(合計は常に1) */
+  transitionActionProbabilities?: Record<ClusterTransitionAction, number>;
 };
 
 export type LogEntry = {
@@ -983,6 +1045,28 @@ export type ObserverJoinerInspection = {
   /** Issue #189: 現在最も寄与の大きい離脱要因 */
   departureDecisionPrimaryReason?: ClusterDeparturePrimaryReason;
   /**
+   * Issue #200 (Phase 3): 現在tickのクラスタ遷移decision(`clusterTransitionDecision.ts`と同じ計算式を
+   * Inspectorから再現した結果)。`standingPartyConfig.transition.enabled`が`false`の場合、
+   * standingParty以外、または`joined`していない場合は全てundefined。
+   */
+  transitionEligible?: boolean;
+  /** Issue #200: 現在tickの3action確率(合計は常に1) */
+  transitionActionProbabilities?: Record<ClusterTransitionAction, number>;
+  /** Issue #200: `switchToTargetCluster`確率が0より大きい場合の目的地クラスタID */
+  transitionSelectedTargetClusterId?: string;
+  /** Issue #200: 上記の目的地関心を主に駆動したmember */
+  transitionFocusAgentId?: string;
+  /** Issue #200: 決定時点の最良他クラスタ関心score`[0,1]` */
+  transitionAlternativeInterestScore?: number;
+  /** Issue #200: 決定時点の現在クラスタ愛着`[0,1]` */
+  transitionAttachmentValue?: number;
+  /** Issue #200: 決定時点の構造的配慮の合計`[0,1]` */
+  transitionDepartureConcern?: number;
+  /** Issue #200: 観察専用の葛藤強度`[0,1]`(ADR 1.4節) */
+  transitionConflictIntensity?: number;
+  /** Issue #200: 現在の主要因(Phase 2の3値、Phase 3の関心/抑制由来の値のいずれか) */
+  transitionPrimaryReason?: ClusterTransitionPrimaryReason;
+  /**
    * Issue #189 (Phase 2): `lastDepartedClusterId`が記録された直近の輪離脱が、自発的離脱
    * (`clusterDepartureCompleted`)によるものか、クラスタ解散によるrelease(`clusterMemberReleased`)
    * によるものかの区別(要件: 自発的離脱とcluster解散によるreleaseを表示上区別する)。
@@ -990,7 +1074,7 @@ export type ObserverJoinerInspection = {
    */
   lastClusterExitKind?: "voluntaryDeparture" | "memberReleased";
   /** Issue #189: `lastClusterExitKind`が"voluntaryDeparture"の場合の主要因。releaseの場合はundefined */
-  lastClusterExitReason?: ClusterDeparturePrimaryReason;
+  lastClusterExitReason?: ClusterTransitionPrimaryReason;
   /** Issue #135: `approachTargetInvalidated`/`joinFailedCapacity`の発生回数 */
   joinFailureCount: number;
   /** Issue #135: 最新の参加失敗理由と発生tick。未発生ならundefined */
