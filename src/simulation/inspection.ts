@@ -3,6 +3,8 @@ import type {
   AgentAssignmentStatus,
   ClusterDepartureFactor,
   ClusterDeparturePrimaryReason,
+  ClusterTransitionPrimaryReason,
+  GroupCandidate,
   ObserverActiveEffectStatus,
   ObserverJoinerInspection,
   ObserverSocialExpressionSnapshot,
@@ -18,12 +20,18 @@ import type { AggregatedActiveEffect, SpeechActiveEffect, SpeechEffectDimension,
 import { aggregateActiveEffects } from "./speechEffects";
 import type { PublicExpression } from "./socialExpression";
 import { derivePrivateEvaluations, derivePublicExpressions } from "./socialExpression";
-import { correctionFromHistory } from "./relationshipTie";
+import { correctionFromHistory, deriveTieCorrections } from "./relationshipTie";
 import { distance } from "./model";
 import { attractiveness, nearestCandidate } from "./engine";
 import { getFormationPolicyById } from "./formationPolicy";
+import type { FormationPolicy } from "./formationPolicy";
 import { computeClusterDepartureDecision } from "./clusterDepartureDecision";
 import { DEFAULT_STANDING_PARTY_SCENARIO_CONFIG } from "./standingPartyScenarioConfig";
+import { deriveAlternativeClusterInterests, selectBestAlternativeCluster } from "./alternativeClusterInterest";
+import type { AlternativeClusterInterestContext } from "./alternativeClusterInterest";
+import { computeDepartureInhibition, evaluateClusterDissolutionImpact } from "./currentClusterAttachment";
+import { computeClusterTransitionDecision } from "./clusterTransitionDecision";
+import type { ClusterTransitionDecision } from "./clusterTransitionDecision";
 
 /**
  * Issue #119: 全observerJoinerで共有するPhase 4(本心/対外表現)の導出結果。
@@ -318,7 +326,7 @@ function buildClusterDepartureDecisionSnapshot(
 function buildLastClusterExitSnapshot(
   agent: Agent,
   state: SimulationState,
-): { kind: "voluntaryDeparture" | "memberReleased"; reason?: ClusterDeparturePrimaryReason } | undefined {
+): { kind: "voluntaryDeparture" | "memberReleased"; reason?: ClusterTransitionPrimaryReason } | undefined {
   if (agent.lastDepartedClusterId === undefined) return undefined;
   const entry = [...state.log]
     .reverse()
@@ -333,6 +341,72 @@ function buildLastClusterExitSnapshot(
   if (entry.eventType === "clusterMemberReleased") return { kind: "memberReleased" };
   const reason = entry.metadata?.departureReason;
   return { kind: "voluntaryDeparture", reason: reason === "clusterBelowMinimumSize" ? undefined : reason };
+}
+
+/**
+ * Issue #200 (Phase 3): 現在tickのクラスタ遷移decisionを、`engine.ts`(責務9呼び出し箇所)と全く同じ
+ * 入力・同じ純粋関数群(`deriveAlternativeClusterInterests`/`computeDepartureInhibition`/
+ * `computeClusterTransitionDecision`)から再現する。`state.groupCandidates`/`state.agents`は
+ * Inspectorが読む時点で既に確定済みの状態であり、これは次tickのstep 5a3が読む「tick開始時点の
+ * スナップショット」と同じ値である(`buildClusterDepartureDecisionSnapshot`と同じ再現方針)。
+ * `standingPartyConfig.transition.enabled`が`false`(既定)、standingParty以外、または`joined`
+ * していない場合は`undefined`。rngを一切消費しない(受入条件: presentation層の非干渉)。
+ */
+function buildClusterTransitionDecisionSnapshot(
+  agent: Agent,
+  state: SimulationState,
+  params: SimParams,
+  candidate: GroupCandidate | undefined,
+  formationPolicy: FormationPolicy | undefined,
+): ClusterTransitionDecision | undefined {
+  if (state.formationScenarioId !== "standingParty") return undefined;
+  if (agent.state !== "joined" || agent.clusterJoinedAtTick === undefined || !candidate || !formationPolicy) return undefined;
+  const standingPartyConfig = state.standingPartyConfig ?? DEFAULT_STANDING_PARTY_SCENARIO_CONFIG;
+  if (!standingPartyConfig.transition.enabled) return undefined;
+
+  const departure = computeClusterDepartureDecision({
+    config: standingPartyConfig.clusterDeparture,
+    ticksInCluster: state.tick - agent.clusterJoinedAtTick,
+    conversationSatisfaction: agent.currentEpisode?.conversationSatisfaction ?? 1,
+    socialCirculationTendency: agent.socialCirculationTendency ?? 0.5,
+  });
+
+  const tieCorrections = state.relationshipTieEnabled ? deriveTieCorrections(state.tieHistory ?? {}) : {};
+  const interestCtx: AlternativeClusterInterestContext = {
+    config: standingPartyConfig.alternativeInterest,
+    tick: state.tick,
+    agents: state.agents,
+    existingTieStrength: params.existingTieStrength,
+    resolveCapacity: (c) => formationPolicy.resolveGroupCapacity(c, params),
+    tieCorrections,
+  };
+  const interests = deriveAlternativeClusterInterests(agent, state.groupCandidates, interestCtx);
+  const bestAlternativeInterest = selectBestAlternativeCluster(interests, 0);
+
+  const capacity = formationPolicy.resolveGroupCapacity(candidate, params);
+  const dissolutionImpact = evaluateClusterDissolutionImpact({
+    memberIds: candidate.memberIds,
+    minGroupSize: capacity.minGroupSize,
+    confirmedClusterIsMutable: formationPolicy.confirmedClusterIsMutable,
+    candidateStatus: candidate.status,
+    everConfirmed: candidate.everConfirmed ?? false,
+  });
+  const inhibition = computeDepartureInhibition({
+    config: standingPartyConfig.attachment,
+    attachment: agent.currentEpisode?.attachment,
+    tick: state.tick,
+    dissolutionImpact,
+    influenceAvoidance: agent.influenceAvoidance,
+  });
+
+  return computeClusterTransitionDecision({
+    config: standingPartyConfig.transition,
+    tick: state.tick,
+    departure,
+    bestAlternativeInterest,
+    minTargetInterestScore: standingPartyConfig.alternativeInterest.minTargetInterestScore,
+    inhibition,
+  });
 }
 
 function buildInspection(
@@ -358,6 +432,7 @@ function buildInspection(
     : undefined;
   const departureDecision = buildClusterDepartureDecisionSnapshot(agent, state);
   const lastClusterExit = buildLastClusterExitSnapshot(agent, state);
+  const transitionDecision = buildClusterTransitionDecisionSnapshot(agent, state, params, currentGroup, currentGroupPolicy);
 
   return {
     agentId: agent.id,
@@ -423,6 +498,15 @@ function buildInspection(
     departureDecisionProbability: departureDecision?.probability,
     departureDecisionFactors: departureDecision?.factors,
     departureDecisionPrimaryReason: departureDecision?.primaryReason,
+    transitionEligible: transitionDecision?.eligible,
+    transitionActionProbabilities: transitionDecision?.actionProbabilities,
+    transitionSelectedTargetClusterId: transitionDecision?.selectedTargetClusterId,
+    transitionFocusAgentId: transitionDecision?.focusAgentId,
+    transitionAlternativeInterestScore: transitionDecision?.alternativeInterest?.score,
+    transitionAttachmentValue: transitionDecision?.inhibition.attachment,
+    transitionDepartureConcern: transitionDecision?.inhibition.concern,
+    transitionConflictIntensity: transitionDecision?.conflictIntensity,
+    transitionPrimaryReason: transitionDecision?.primaryReason,
     lastClusterExitKind: lastClusterExit?.kind,
     lastClusterExitReason: lastClusterExit?.reason,
     joinFailureCount: failureEntries.length,

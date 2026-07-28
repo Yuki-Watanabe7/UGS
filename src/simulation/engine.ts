@@ -1,7 +1,8 @@
 import type {
   Agent,
   ApproachFailureReason,
-  ClusterDeparturePrimaryReason,
+  ClusterTransitionAction,
+  ClusterTransitionPrimaryReason,
   ConversationEpisode,
   GroupCandidate,
   LogEntry,
@@ -64,8 +65,16 @@ import {
   updateConversationSatisfaction,
 } from "./conversationSatisfaction";
 import type { ConversationSatisfactionConfig } from "./conversationSatisfaction";
-import { DEFAULT_CURRENT_CLUSTER_ATTACHMENT_CONFIG, initializeAttachment, updateAttachment } from "./currentClusterAttachment";
+import {
+  computeDepartureInhibition,
+  DEFAULT_CURRENT_CLUSTER_ATTACHMENT_CONFIG,
+  evaluateClusterDissolutionImpact,
+  initializeAttachment,
+  updateAttachment,
+} from "./currentClusterAttachment";
 import type { CurrentClusterAttachmentConfig } from "./currentClusterAttachment";
+import { deriveAlternativeClusterInterests, selectBestAlternativeCluster } from "./alternativeClusterInterest";
+import type { AlternativeClusterInterestContext } from "./alternativeClusterInterest";
 import { DEFAULT_STANDING_PARTY_SCENARIO_CONFIG } from "./standingPartyScenarioConfig";
 // Issue #115: 発言生成の後段調整(乖離を反映した対外発言の選択)のためだけの依存。
 // socialExpression.ts側もattractiveness等のためにengine.tsをimportする循環参照になるが、
@@ -920,12 +929,13 @@ function departFromCluster(agent: Agent, candidate: GroupCandidate, tick: number
 }
 
 /**
- * Issue #189 (Phase 2, 要件5節): 責務9の構造化reason(`ClusterDeparturePrimaryReason`)から、
- * 自発的離脱ログに埋め込む自然文言の断片を生成する。「飽きた」「つまらない人」等の人格・相手評価に
- * 見える断定表現を避け、事実(何のために動いたか)だけを述べる。observerJoinerかどうかは一切
+ * Issue #189 (Phase 2, 要件5節): 責務9の構造化reason(`ClusterDeparturePrimaryReason`。Issue #200で
+ * `ClusterTransitionPrimaryReason`へ拡張)から、自発的離脱ログに埋め込む自然文言の断片を生成する。
+ * 「飽きた」「つまらない人」等の人格・相手評価に見える断定表現を避け、事実(何のために動いたか)
+ * だけを述べる。observerJoinerかどうかは一切
  * 参照しない(受入条件: observerJoinerだけ異なる心理理由を捏造しない)。
  */
-function describeClusterDepartureReasonPhrase(primaryReason: ClusterDeparturePrimaryReason | undefined): string {
+function describeClusterDepartureReasonPhrase(primaryReason: ClusterTransitionPrimaryReason | undefined): string {
   switch (primaryReason) {
     case "lowConversationSatisfaction":
       return "別の会話を探すため、";
@@ -933,6 +943,29 @@ function describeClusterDepartureReasonPhrase(primaryReason: ClusterDeparturePri
       return "さらに多くの参加者と話すため、";
     case "mixedConversationAndSocialCirculation":
       return "別の会話や、より多くの参加者を求めて、";
+    // Issue #200 (Phase 3): 他クラスタ関心が主因の離脱。相手評価に見える断定表現を避け、
+    // 「気になる輪へ」という事実だけを述べる(observerJoinerかどうかは参照しない)。
+    case "alternativeClusterInterest":
+      return "気になる別の輪へ向かうため、";
+    case "mixedDepartureAndAlternativeInterest":
+      return "今の会話への物足りなさと、気になる別の輪の両方から、";
+    default:
+      return "";
+  }
+}
+
+/**
+ * Issue #200 (Phase 3): `clusterTransitionInhibited`(stayが抑制由来だったことの記録)用の文言。
+ * `describeClusterDepartureReasonPhrase`と同じ「断定表現を避け、事実だけを述べる」方針を踏襲する。
+ */
+function describeTransitionInhibitionReasonPhrase(primaryReason: ClusterTransitionPrimaryReason | undefined): string {
+  switch (primaryReason) {
+    case "stayedByAttachment":
+      return "今の輪への愛着から、";
+    case "stayedByDepartureConcern":
+      return "自分が抜けると輪に与える影響を考えて、";
+    case "stayedByMixedInhibition":
+      return "今の輪への愛着と、抜けることへの配慮の両方から、";
     default:
       return "";
   }
@@ -1509,14 +1542,111 @@ export function stepSimulation(
     // (`Agent.socialCirculationTendency`のコメント参照、テストが直接Agentを構築するケースを含む)。
     const conversationSatisfactionForDeparture = agent.currentEpisode?.conversationSatisfaction ?? 1;
     const socialCirculationTendencyForDeparture = agent.socialCirculationTendency ?? 0.5;
+
+    // Issue #200 (Phase 3, step 5a3/5b前段): `standingPartyConfig.transition.enabled`のときのみ、
+    // 他クラスタ関心(#198)・愛着由来の離脱配慮(#199)を導出してformationPolicyへ渡す。無効時
+    // (既定)は`transitionCtx`を一切構築せず、Phase 2の結果のみを返す(ADR 4.3節1、byte-identical)。
+    // ここまでの計算はすべて純粋関数でrngを消費しない(ADR 4.2節、7節)。
+    const transitionCtx =
+      formationPolicy.id === "standingParty" && standingPartyConfig.transition.enabled
+        ? (() => {
+            // ADR 3.2節: 他クラスタの観察は`state.groupCandidates`(tick開始時点のスナップショット)
+            // のみを対象にする。自分自身の位置(agent.x/y)はこのtickで既に移動済みの値を使ってよい。
+            const interestCtx: AlternativeClusterInterestContext = {
+              config: standingPartyConfig.alternativeInterest,
+              tick,
+              agents,
+              existingTieStrength: effectiveParams.existingTieStrength,
+              resolveCapacity: (c) => formationPolicy.resolveGroupCapacity(c, effectiveParams),
+              tieCorrections: incomingTieCorrections,
+            };
+            const interests = deriveAlternativeClusterInterests(agent, state.groupCandidates, interestCtx);
+            // 生の最良値(閾値未満でも渡す)。`switchToTargetCluster`候補判定の閾値適用は
+            // `clusterTransitionDecision.ts`側(ADR 4.1節)が`minTargetInterestScore`を見て行う。
+            const bestAlternativeInterest = selectBestAlternativeCluster(interests, 0);
+
+            const capacity = formationPolicy.resolveGroupCapacity(candidate, effectiveParams);
+            const dissolutionImpact = evaluateClusterDissolutionImpact({
+              memberIds: candidate.memberIds,
+              minGroupSize: capacity.minGroupSize,
+              confirmedClusterIsMutable: formationPolicy.confirmedClusterIsMutable,
+              candidateStatus: candidate.status,
+              everConfirmed: candidate.everConfirmed ?? false,
+            });
+            const inhibition = computeDepartureInhibition({
+              config: standingPartyConfig.attachment,
+              attachment: agent.currentEpisode?.attachment,
+              tick,
+              dissolutionImpact,
+              influenceAvoidance: agent.influenceAvoidance,
+            });
+
+            return {
+              config: standingPartyConfig.transition,
+              bestAlternativeInterest,
+              minTargetInterestScore: standingPartyConfig.alternativeInterest.minTargetInterestScore,
+              inhibition,
+            };
+          })()
+        : undefined;
+
     const departure = formationPolicy.evaluateClusterDeparture(agent, candidate, {
       ticksInCluster,
       memberCount: candidate.memberIds.length,
       tick,
       conversationSatisfaction: conversationSatisfactionForDeparture,
       socialCirculationTendency: socialCirculationTendencyForDeparture,
+      transition: transitionCtx,
     });
-    if (!departure.eligible || !rng.chance(departure.probability)) continue;
+    if (!departure.eligible) continue;
+
+    // Issue #200 (ADR 4.2節): Phase 3有効時(`departure.transition`が設定されている)は、3actionの
+    // どれかを1 drawで決める。無効時はPhase 2と完全に等価な`rng.chance(departure.probability)`
+    // (`pSwitch === 0`のときの上記drawと同じ規則、いずれも1 drawのみ消費する)。
+    let transitionAction: ClusterTransitionAction;
+    if (departure.transition) {
+      const { switchToTargetCluster: pSwitch, departAndExplore: pExplore } = departure.transition.actionProbabilities;
+      const u = rng.next();
+      transitionAction = u < pSwitch ? "switchToTargetCluster" : u < pSwitch + pExplore ? "departAndExplore" : "stay";
+    } else {
+      transitionAction = rng.chance(departure.probability) ? "departAndExplore" : "stay";
+    }
+
+    if (transitionAction === "stay") {
+      // Issue #200 (ADR 8.1節): 抑制(愛着・配慮)が効いてstayになったことを、1エピソードにつき
+      // 最初の1回だけ記録する(毎tickのstayを通常ログへ大量出力しない)。
+      const transition = departure.transition;
+      if (transition && transition.inhibition.total > 0 && agent.currentEpisode && !agent.currentEpisode.transitionInhibitedLogged) {
+        agent.currentEpisode.transitionInhibitedLogged = true;
+        const inhibitionReasonPhrase = describeTransitionInhibitionReasonPhrase(transition.primaryReason);
+        pushLog(
+          log,
+          tick,
+          agent.isObserverJoiner
+            ? `observerJoinerが${inhibitionReasonPhrase}会話の輪に留まった`
+            : `${agent.label}さんが${inhibitionReasonPhrase}会話の輪に留まった`,
+          agent.isObserverJoiner ? ["observerJoiner", "clusterDeparture"] : ["clusterDeparture"],
+          "clusterTransitionInhibited",
+          {
+            agentId: agent.id,
+            agentLabel: agent.label,
+            groupId: candidate.id,
+            ticksInCluster,
+            transitionAction,
+            departureReason: transition.primaryReason,
+            attachmentValue: transition.inhibition.attachment,
+            departureConcern: transition.inhibition.concern,
+            inhibitionFactors: transition.inhibition.factors,
+            conflictIntensity: transition.conflictIntensity,
+            alternativeInterestScore: transition.alternativeInterest?.score,
+            alternativeInterestFactors: transition.alternativeInterest?.factors,
+            transitionActionProbabilities: transition.actionProbabilities,
+            episodeId: agent.currentEpisode.episodeId,
+          },
+        );
+      }
+      continue;
+    }
 
     const clusterId = candidate.id;
     const departureTags: LogTag[] = agent.isObserverJoiner ? ["observerJoiner", "clusterDeparture"] : ["clusterDeparture"];
@@ -1537,6 +1667,23 @@ export function stepSimulation(
       // Issue #186: departFromCluster呼び出し前のepisodeIdを退避しておく(呼び出し後はクリアされる)。
       episodeId: agent.currentEpisode?.episodeId,
       episodeEndReason: "voluntaryDeparture",
+      // Issue #200 (Phase 3): `departure.transition`未設定(Phase 2のみ)ならこれらのフィールドは
+      // 一切追加しない(既存consumer向けのmetadata形を変えない)。
+      ...(departure.transition
+        ? {
+            transitionAction,
+            targetClusterId:
+              transitionAction === "switchToTargetCluster" ? departure.transition.selectedTargetClusterId : undefined,
+            focusAgentId: transitionAction === "switchToTargetCluster" ? departure.transition.focusAgentId : undefined,
+            alternativeInterestScore: departure.transition.alternativeInterest?.score,
+            alternativeInterestFactors: departure.transition.alternativeInterest?.factors,
+            attachmentValue: departure.transition.inhibition.attachment,
+            departureConcern: departure.transition.inhibition.concern,
+            inhibitionFactors: departure.transition.inhibition.factors,
+            conflictIntensity: departure.transition.conflictIntensity,
+            transitionActionProbabilities: departure.transition.actionProbabilities,
+          }
+        : {}),
     };
     pushLog(
       log,
