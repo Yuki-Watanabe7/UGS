@@ -11,6 +11,11 @@
  * 他クラスタ関心(`AlternativeClusterInterestConfig`)をこの器へ追加する。engine.tsからはまだ
  * どこからも参照されない(ADR 9節P3-Aの区切り) ―― 追加自体はafterParty/classroomPair/既存の
  * standingParty挙動へ一切影響しない。
+ *
+ * Issue #199 (Phase 3, ステップP3-B): 同じ6.1節どおり、現在クラスタ愛着・離脱配慮
+ * (`CurrentClusterAttachmentConfig`)をこの器へ追加する。`engine.ts`のstep 5a2で
+ * `ConversationEpisode.attachment`の初期化・更新にのみ使われ、離脱確率の式へはまだ入力しない
+ * (#200で結線)。
  */
 import {
   DEFAULT_CONVERSATION_SATISFACTION_CONFIG,
@@ -27,6 +32,11 @@ import {
   validateAlternativeClusterInterestConfig,
   type AlternativeClusterInterestConfig,
 } from "./alternativeClusterInterest";
+import {
+  DEFAULT_CURRENT_CLUSTER_ATTACHMENT_CONFIG,
+  validateCurrentClusterAttachmentConfig,
+  type CurrentClusterAttachmentConfig,
+} from "./currentClusterAttachment";
 
 /** 社交的回遊傾向(`Agent.socialCirculationTendency`)を一様分布で生成する範囲 `[0,1]` */
 export type SocialCirculationTendencyRange = {
@@ -40,6 +50,8 @@ export type StandingPartyScenarioConfig = {
   circulationTendencyRange: SocialCirculationTendencyRange;
   /** Issue #198 (Phase 3): 他クラスタ関心。engine.tsからはまだ参照されない(観察専用の純粋関数群) */
   alternativeInterest: AlternativeClusterInterestConfig;
+  /** Issue #199 (Phase 3): 現在クラスタ愛着・離脱配慮。engine.tsのstep 5a2が初期化・更新にのみ使う */
+  attachment: CurrentClusterAttachmentConfig;
 };
 
 export const DEFAULT_CIRCULATION_TENDENCY_RANGE: SocialCirculationTendencyRange = { min: 0, max: 1 };
@@ -49,6 +61,7 @@ export const DEFAULT_STANDING_PARTY_SCENARIO_CONFIG: StandingPartyScenarioConfig
   clusterDeparture: DEFAULT_CLUSTER_DEPARTURE_DECISION_CONFIG,
   circulationTendencyRange: DEFAULT_CIRCULATION_TENDENCY_RANGE,
   alternativeInterest: DEFAULT_ALTERNATIVE_CLUSTER_INTEREST_CONFIG,
+  attachment: DEFAULT_CURRENT_CLUSTER_ATTACHMENT_CONFIG,
 };
 
 function assertRange01(name: string, value: number): void {
@@ -66,6 +79,7 @@ export function validateStandingPartyScenarioConfig(config: StandingPartyScenari
   validateConversationSatisfactionConfig(config.conversationSatisfaction);
   validateClusterDepartureDecisionConfig(config.clusterDeparture);
   validateAlternativeClusterInterestConfig(config.alternativeInterest);
+  validateCurrentClusterAttachmentConfig(config.attachment);
   assertRange01("circulationTendencyRange.min", config.circulationTendencyRange.min);
   assertRange01("circulationTendencyRange.max", config.circulationTendencyRange.max);
   if (config.circulationTendencyRange.min > config.circulationTendencyRange.max) {
@@ -100,6 +114,7 @@ export const NETWORKING_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = {
   },
   circulationTendencyRange: { min: 0.6, max: 1 },
   alternativeInterest: DEFAULT_ALTERNATIVE_CLUSTER_INTEREST_CONFIG,
+  attachment: DEFAULT_CURRENT_CLUSTER_ATTACHMENT_CONFIG,
 };
 
 /**
@@ -125,6 +140,7 @@ export const INTIMATE_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = {
   },
   circulationTendencyRange: { min: 0, max: 0.3 },
   alternativeInterest: DEFAULT_ALTERNATIVE_CLUSTER_INTEREST_CONFIG,
+  attachment: DEFAULT_CURRENT_CLUSTER_ATTACHMENT_CONFIG,
 };
 
 validateStandingPartyScenarioConfig(NETWORKING_STANDING_PARTY_CONFIG);

@@ -25,6 +25,7 @@ import type {
   TieObservationCommitment,
 } from "./relationshipTie";
 import type { ExpressedStance, PublicExpressionDivergence } from "./socialExpression";
+import type { CurrentClusterAttachmentState } from "./currentClusterAttachment";
 
 /**
  * エージェントの行動状態。Phase 4の三層モデル(`socialExpression.ts`)では、この状態遷移・移動
@@ -198,6 +199,12 @@ export type ClusterDepartureReason = ClusterDeparturePrimaryReason | "clusterBel
  *   `docs/conversation-satisfaction-model.md` 3.3節、実装はPhase 2の対象外)。
  * - `conversationSatisfaction`: 後続Issueが初期化・更新式を実装するための器。Phase 2では一切
  *   書き込まれない(常にundefined)。
+ * - `attachment`: Issue #199 (Phase 3): 今の会話エピソードから離れにくい度合いを表す、
+ *   満足度とは独立の状態(`docs/cluster-transition-phase3-model.md` 1.2節)。
+ *   `currentClusterAttachment.ts`の`initializeAttachment`/`updateAttachment`が
+ *   同じjoin境界・同じtick順序で初期化・更新する。standingParty以外、または合流直後の一部の
+ *   経路では常にundefined。episodeが終了すれば(この型ごと)自動的に破棄され、前episodeの愛着を
+ *   継承しない(前episodeを別のepisodeIdで再作成するだけで新しいクリア処理は不要)。
  */
 export type ConversationEpisode = {
   episodeId: string;
@@ -207,6 +214,7 @@ export type ConversationEpisode = {
   memberCountAtJoin: number;
   lastObservedMemberCount: number;
   conversationSatisfaction?: number;
+  attachment?: CurrentClusterAttachmentState;
 };
 
 /**
