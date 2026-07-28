@@ -2,11 +2,13 @@ import type {
   Agent,
   ApproachFailureReason,
   ClusterTransitionAction,
+  ClusterTransitionInvalidationReason,
   ClusterTransitionPrimaryReason,
   ConversationEpisode,
   GroupCandidate,
   LogEntry,
   LogTag,
+  PendingClusterTransition,
   SimParams,
   SimulationEventMetadata,
   SimulationEventType,
@@ -791,6 +793,95 @@ const APPROACH_FAILURE_REASON_TEXT: Record<ApproachFailureReason, string> = {
 };
 
 /**
+ * Issue #201 (Phase 3, ADR 3.3節): 責務8の既存参加失敗理由(`ApproachFailureReason`)を、
+ * pendingClusterTransitionの無効化理由へ対応付ける。既存の`recordApproachFailure`経路が検出する
+ * 4理由(candidate missing/dissolved/expired/capacity full)は、目的地付き移動意図の文脈では
+ * それぞれtargetMissing/targetDissolved/targetExpired/targetFullに読み替える(責務5)。
+ */
+const APPROACH_FAILURE_TO_INVALIDATION_REASON: Record<ApproachFailureReason, ClusterTransitionInvalidationReason> = {
+  groupMissing: "targetMissing",
+  groupDissolved: "targetDissolved",
+  groupExpired: "targetExpired",
+  capacityFull: "targetFull",
+};
+
+/**
+ * Issue #201 (Phase 3): pendingClusterTransitionを持つagentの意図がADR 3.3節の理由で無効化された時、
+ * `clusterTransitionTargetInvalidated`(理由)と`clusterTransitionAbandoned`(直後に通常探索へ
+ * fallbackしたこと)を記録し、意図そのものを破棄する。`agent.state`/`joinedGroupId`の巻き戻しは
+ * 呼び出し側の責務(既存の`recordApproachFailure`、またはstep 2/3の各呼び出し元)のままここでは
+ * 変更しない。
+ */
+function invalidatePendingClusterTransition(
+  agent: Agent,
+  reason: ClusterTransitionInvalidationReason,
+  tick: number,
+  log: LogEntry[],
+): void {
+  const transition = agent.pendingClusterTransition;
+  if (!transition) return;
+
+  const tags: LogTag[] = agent.isObserverJoiner ? ["observerJoiner", "clusterDeparture"] : ["clusterDeparture"];
+  const sharedMetadata: SimulationEventMetadata = {
+    agentId: agent.id,
+    agentLabel: agent.label,
+    targetClusterId: transition.targetClusterId,
+    focusAgentId: transition.focusAgentId,
+    alternativeInterestScore: transition.interestScore,
+    transitionPrimaryReason: transition.primaryReason,
+  };
+
+  pushLog(
+    log,
+    tick,
+    agent.isObserverJoiner
+      ? `observerJoinerが向かっていた輪への移動意図が失われた`
+      : `${agent.label}さんが向かっていた輪への移動意図が失われた`,
+    tags,
+    "clusterTransitionTargetInvalidated",
+    { ...sharedMetadata, groupId: transition.sourceClusterId, invalidationReason: reason },
+  );
+  pushLog(
+    log,
+    tick,
+    agent.isObserverJoiner
+      ? `observerJoinerが通常の再探索に切り替えた`
+      : `${agent.label}さんが通常の再探索に切り替えた`,
+    tags,
+    "clusterTransitionAbandoned",
+    { ...sharedMetadata, groupId: transition.targetClusterId },
+  );
+
+  agent.pendingClusterTransition = undefined;
+}
+
+/**
+ * Issue #201 (Phase 3, ADR 3.3節): pendingClusterTransitionの有効性を、優先順位どおりに検証する
+ * (最初に成立した1つだけを理由として返す)。`undefined`は有効(無効化不要)を意味する。
+ * 純粋関数でrngを消費せず、引数をmutationしない。
+ */
+function findClusterTransitionInvalidationReason(
+  transition: PendingClusterTransition,
+  candidates: GroupCandidate[],
+  capacityOf: (candidate: GroupCandidate) => GroupCapacity,
+  tick: number,
+): ClusterTransitionInvalidationReason | undefined {
+  const source = candidates.find((c) => c.id === transition.sourceClusterId);
+  if (!source) return "currentClusterLost";
+
+  const target = candidates.find((c) => c.id === transition.targetClusterId);
+  if (!target) return "targetMissing";
+  if (target.status === "dissolving" || target.status === "dissolved") return "targetDissolved";
+  if (target.status === "expired") return "targetExpired";
+  if (isCandidateFull(target, capacityOf(target))) return "targetFull";
+  if (transition.focusAgentId !== undefined && !target.memberIds.includes(transition.focusAgentId)) {
+    return "focusAgentLeft";
+  }
+  if (tick >= transition.expiresAtTick) return "intentExpired";
+  return undefined;
+}
+
+/**
  * Issue #133: approaching中のagentが参加失敗した(target無効化、または到着時点の容量競合)ことを
  * 記録する共通処理。state遷移(`approaching -> undecided`、`approaching -> searchingAgain`相当)、
  * 再探索クールダウン用フィールドの更新、参加失敗stress、構造化ログ(失敗理由イベント+`searchRestarted`)
@@ -879,6 +970,12 @@ function recordApproachFailure(
     "searchRestarted",
     { agentId: agent.id, agentLabel: agent.label, groupId: failedCandidateId, reason },
   );
+
+  // Issue #201 (Phase 3, ADR 3.3節): pendingClusterTransitionを持つagentの参加失敗は、
+  // 同時に移動意図も破棄する(既存の参加失敗・再探索・cooldown契約は変更しない)。
+  if (agent.pendingClusterTransition && agent.pendingClusterTransition.targetClusterId === failedCandidateId) {
+    invalidatePendingClusterTransition(agent, APPROACH_FAILURE_TO_INVALIDATION_REASON[reason], tick, log);
+  }
 }
 
 function stepAgentMotion(agent: Agent, target?: { x: number; y: number }, speed = APPROACH_SPEED): void {
@@ -1299,13 +1396,35 @@ export function stepSimulation(
     ) {
       cooldownExcludeIds.add(agent.lastDepartedClusterId);
     }
+    const capacityOf = (c: GroupCandidate) => formationPolicy.resolveGroupCapacity(c, effectiveParams);
+
+    // Issue #201 (Phase 3, ADR 3節): pendingClusterTransitionがあれば、通常のnearestCandidate探索
+    // より先にtargetの有効性を検証し優先する。無効ならこのtick内で意図を破棄し、そのまま下の通常
+    // 探索へfallbackする(agentを立ち往生させない、ADR 3.3節)。
+    let candidate: GroupCandidate | undefined;
+    if (agent.pendingClusterTransition) {
+      const invalidationReason = findClusterTransitionInvalidationReason(
+        agent.pendingClusterTransition,
+        candidates,
+        capacityOf,
+        tick,
+      );
+      if (invalidationReason) {
+        invalidatePendingClusterTransition(agent, invalidationReason, tick, log);
+      } else {
+        candidate = candidates.find((c) => c.id === agent.pendingClusterTransition!.targetClusterId);
+      }
+    }
+
     // Issue #131: 既に満員の候補へは新たに接近を始めさせない(容量込みのjoinable判定)
-    const candidate = nearestCandidate(
-      agent,
-      candidates,
-      (c) => formationPolicy.resolveGroupCapacity(c, effectiveParams),
-      cooldownExcludeIds.size > 0 ? cooldownExcludeIds : undefined,
-    );
+    if (!candidate) {
+      candidate = nearestCandidate(
+        agent,
+        candidates,
+        capacityOf,
+        cooldownExcludeIds.size > 0 ? cooldownExcludeIds : undefined,
+      );
+    }
     if (!candidate) continue;
 
     // Issue #117: この観測者が輪の構成員に対して積み上げた整合性履歴由来の集約tie補正
@@ -1411,6 +1530,25 @@ export function stepSimulation(
       continue;
     }
 
+    // Issue #201 (Phase 3, ADR 3.3節): 上記の既存チェックで捕捉できない2つの無効化理由
+    // (focusAgentLeft/intentExpired)をここで検証する。この時点で候補は有効・空きありと確定済みの
+    // ため、優先順位(4より下)は既存チェックが先に走ることで自然に保たれる。
+    if (agent.pendingClusterTransition && agent.pendingClusterTransition.targetClusterId === candidate.id) {
+      const transition = agent.pendingClusterTransition;
+      const invalidationReason: ClusterTransitionInvalidationReason | undefined =
+        transition.focusAgentId !== undefined && !candidate.memberIds.includes(transition.focusAgentId)
+          ? "focusAgentLeft"
+          : tick >= transition.expiresAtTick
+            ? "intentExpired"
+            : undefined;
+      if (invalidationReason) {
+        invalidatePendingClusterTransition(agent, invalidationReason, tick, log);
+        agent.state = "undecided";
+        agent.joinedGroupId = undefined;
+        continue;
+      }
+    }
+
     stepAgentMotion(agent, candidate);
     const d = distance(agent.x, agent.y, candidate.x, candidate.y);
     if (d < JOIN_DISTANCE) {
@@ -1486,6 +1624,32 @@ export function stepSimulation(
       }
       // Issue #176: 過去に離脱経験があるagentのみ対象(standingParty以外では常にno-op)
       logClusterRejoinIfApplicable(agent, candidate, tick, log);
+
+      // Issue #201 (Phase 3, ADR 3.4節): 意図したtargetへ実際にjoinできた場合、`clusterRejoined`とは
+      // 別に、目的地付き移動意図そのものの成否として記録し、意図を破棄する(join成功で寿命を終える)。
+      if (agent.pendingClusterTransition && agent.pendingClusterTransition.targetClusterId === candidate.id) {
+        const transition = agent.pendingClusterTransition;
+        pushLog(
+          log,
+          tick,
+          agent.isObserverJoiner
+            ? `observerJoinerが意図していた輪へ合流した`
+            : `${agent.label}さんが意図していた輪へ合流した`,
+          agent.isObserverJoiner ? ["observerJoiner", "clusterDeparture"] : ["clusterDeparture"],
+          "clusterTransitionCompleted",
+          {
+            agentId: agent.id,
+            agentLabel: agent.label,
+            groupId: candidate.id,
+            targetClusterId: transition.targetClusterId,
+            focusAgentId: transition.focusAgentId,
+            alternativeInterestScore: transition.interestScore,
+            transitionPrimaryReason: transition.primaryReason,
+            episodeId: agent.currentEpisode?.episodeId,
+          },
+        );
+        agent.pendingClusterTransition = undefined;
+      }
     }
   }
 
@@ -1720,6 +1884,43 @@ export function stepSimulation(
       { agentId: agent.id, agentLabel: agent.label, groupId: clusterId },
     );
 
+    // Issue #201 (Phase 3, ADR 3.4節): switchToTargetClusterが確定した場合のみ、離脱と同一処理内で
+    // 原子的にpendingClusterTransitionを生成する(1.5節: 生成後は再評価しない、targetを乗り換えない)。
+    const selectedTargetClusterId = departure.transition?.selectedTargetClusterId;
+    if (transitionAction === "switchToTargetCluster" && selectedTargetClusterId) {
+      const transitionDecision = departure.transition!;
+      const ttlTicks = standingPartyConfig.transition.pendingTransitionTtlTicks;
+      const interestScore = transitionDecision.alternativeInterest?.score ?? 0;
+      const primaryReason = transitionDecision.primaryReason ?? "alternativeClusterInterest";
+      agent.pendingClusterTransition = {
+        targetClusterId: selectedTargetClusterId,
+        focusAgentId: transitionDecision.focusAgentId,
+        sourceClusterId: clusterId,
+        decidedAtTick: tick,
+        expiresAtTick: tick + ttlTicks,
+        interestScore,
+        primaryReason,
+      };
+      pushLog(
+        log,
+        tick,
+        agent.isObserverJoiner
+          ? `observerJoinerが別の会話の輪を目指して移動を始めた`
+          : `${agent.label}さんが別の会話の輪を目指して移動を始めた`,
+        departureTags,
+        "clusterTransitionTargetSelected",
+        {
+          agentId: agent.id,
+          agentLabel: agent.label,
+          groupId: clusterId,
+          targetClusterId: transitionDecision.selectedTargetClusterId,
+          focusAgentId: transitionDecision.focusAgentId,
+          alternativeInterestScore: interestScore,
+          transitionPrimaryReason: primaryReason,
+        },
+      );
+    }
+
     // Issue #177 (責務10): 離脱後も成立最小人数以上を維持していれば、このクラスタは引き続き
     // active(confirmedのまま)。下回った場合は何もしない(このtick後段の責務10ループが
     // dissolving/dissolvedへ遷移させ、残存memberを`releaseMemberFromDissolvingCluster`で戻す)。
@@ -1810,6 +2011,8 @@ export function stepSimulation(
 
     if (formationPolicy.canLeave(agent, agent.stress, effectiveLeaveThreshold)) {
       agent.state = "leaving";
+      // Issue #201 (Phase 3, ADR 3.3節): 会場退出したagentは移動意図を保持しない。
+      agent.pendingClusterTransition = undefined;
       if (agent.isObserverJoiner) {
         pushLog(
           log,
