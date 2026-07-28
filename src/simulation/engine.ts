@@ -64,6 +64,8 @@ import {
   updateConversationSatisfaction,
 } from "./conversationSatisfaction";
 import type { ConversationSatisfactionConfig } from "./conversationSatisfaction";
+import { DEFAULT_CURRENT_CLUSTER_ATTACHMENT_CONFIG, initializeAttachment, updateAttachment } from "./currentClusterAttachment";
+import type { CurrentClusterAttachmentConfig } from "./currentClusterAttachment";
 import { DEFAULT_STANDING_PARTY_SCENARIO_CONFIG } from "./standingPartyScenarioConfig";
 // Issue #115: 発言生成の後段調整(乖離を反映した対外発言の選択)のためだけの依存。
 // socialExpression.ts側もattractiveness等のためにengine.tsをimportする循環参照になるが、
@@ -409,6 +411,10 @@ function createConversationEpisodeId(agentId: string, clusterId: string, joinedA
  * Issue #187 (Phase 2): 満足度の実装はstandingPartyに限定する(docs/conversation-satisfaction-model.md
  * 6.1節 ―― この設定はstandingPartyのみに作用し、afterParty/classroomPairの`conversationSatisfaction`は
  * 引き続きundefinedのまま、既存の挙動・イベント・PRNG消費順序に一切影響しない)。
+ *
+ * Issue #199 (Phase 3, ステップP3-B): 同じstandingParty限定のゲートで、現在クラスタ愛着
+ * (`episode.attachment`)も満足度と同じjoin境界で初期化する(docs/cluster-transition-phase3-model.md
+ * 1.2節・3.2節)。離脱確率の式へはまだ入力しない(#200が結線)。
  */
 function startConversationEpisode(
   agent: Agent,
@@ -418,6 +424,7 @@ function startConversationEpisode(
   params: SimParams,
   formationPolicy: FormationPolicy,
   satisfactionConfig: ConversationSatisfactionConfig = DEFAULT_CONVERSATION_SATISFACTION_CONFIG,
+  attachmentConfig: CurrentClusterAttachmentConfig = DEFAULT_CURRENT_CLUSTER_ATTACHMENT_CONFIG,
 ): void {
   agent.clusterJoinedAtTick = tick;
   const episode: ConversationEpisode = {
@@ -434,6 +441,11 @@ function startConversationEpisode(
       memberCountAtJoin: episode.memberCountAtJoin,
       cliqueRatio: computeCliqueMateRatio(agent.id, agent.cliqueId, candidate.memberIds, agents),
       existingTieStrength: params.existingTieStrength,
+    });
+    episode.attachment = initializeAttachment({
+      config: attachmentConfig,
+      tick,
+      memberIds: candidate.memberIds,
     });
   }
   agent.currentEpisode = episode;
@@ -452,6 +464,10 @@ function startConversationEpisode(
  * 何もしない ―― このtickの初期値は`startConversationEpisode`が既に計算済みで、`lastObservedMemberCount`
  * を書き換えると「自分自身のjoin」を次tickに新規member参加として誤検出してしまうため
  * (要件: 自分自身のjoinを新規member参加と二重に数えない)。
+ *
+ * Issue #199 (Phase 3, ステップP3-B): 同じstandingParty限定・同じ`priorCandidates`スナップショットで、
+ * 現在クラスタ愛着(`episode.attachment`)も毎tick一度だけ更新する(docs/cluster-transition-phase3-model.md
+ * 3.2節のstep 5a2)。離脱確率の式へはまだ入力しない(Inspector表示のみ、#200が結線)。
  */
 function updateConversationEpisode(
   agent: Agent,
@@ -462,6 +478,7 @@ function updateConversationEpisode(
   formationPolicy: FormationPolicy,
   priorCandidates: GroupCandidate[],
   satisfactionConfig: ConversationSatisfactionConfig = DEFAULT_CONVERSATION_SATISFACTION_CONFIG,
+  attachmentConfig: CurrentClusterAttachmentConfig = DEFAULT_CURRENT_CLUSTER_ATTACHMENT_CONFIG,
 ): void {
   if (!agent.currentEpisode || agent.currentEpisode.clusterId !== candidate.id) return;
   const episode = agent.currentEpisode;
@@ -469,8 +486,8 @@ function updateConversationEpisode(
 
   if (formationPolicy.id === "standingParty") {
     if (!isJoinTick) {
-      const observedMemberCount =
-        priorCandidates.find((c) => c.id === candidate.id)?.memberIds.length ?? episode.lastObservedMemberCount;
+      const priorCandidate = priorCandidates.find((c) => c.id === candidate.id);
+      const observedMemberCount = priorCandidate?.memberIds.length ?? episode.lastObservedMemberCount;
       if (episode.conversationSatisfaction !== undefined) {
         const result = updateConversationSatisfaction({
           config: satisfactionConfig,
@@ -481,6 +498,15 @@ function updateConversationEpisode(
           existingTieStrength: params.existingTieStrength,
         });
         episode.conversationSatisfaction = result.nextSatisfaction;
+      }
+      if (episode.attachment) {
+        const attachmentResult = updateAttachment({
+          config: attachmentConfig,
+          previous: episode.attachment,
+          tick,
+          observedMemberIds: priorCandidate?.memberIds ?? episode.attachment.foundingMemberIds,
+        });
+        episode.attachment = attachmentResult.next;
       }
       episode.lastObservedMemberCount = observedMemberCount;
     }
@@ -509,6 +535,7 @@ function settleIntoGroup(
   params: SimParams,
   formationPolicy: FormationPolicy,
   satisfactionConfig: ConversationSatisfactionConfig = DEFAULT_CONVERSATION_SATISFACTION_CONFIG,
+  attachmentConfig: CurrentClusterAttachmentConfig = DEFAULT_CURRENT_CLUSTER_ATTACHMENT_CONFIG,
 ): void {
   agent.state = "joined";
   agent.joinedGroupId = candidate.id;
@@ -521,7 +548,7 @@ function settleIntoGroup(
   // Issue #176: 責務9(クラスタ離脱判定)の滞在tick計算に使う合流tick。classroomPair等
   // 離脱経路を持たないシナリオでは参照されないが、settleIntoGroup経由の全joinで一貫して設定する。
   // Issue #186: 会話エピソードの開始も同じタイミングで一括して行う。
-  startConversationEpisode(agent, candidate, tick, agents, params, formationPolicy, satisfactionConfig);
+  startConversationEpisode(agent, candidate, tick, agents, params, formationPolicy, satisfactionConfig, attachmentConfig);
 }
 
 function applyInterventionActions(
@@ -1372,6 +1399,7 @@ export function stepSimulation(
         effectiveParams,
         formationPolicy,
         standingPartyConfig.conversationSatisfaction,
+        standingPartyConfig.attachment,
       );
       if (agent.isObserverJoiner) {
         pushLog(
@@ -1472,6 +1500,7 @@ export function stepSimulation(
       formationPolicy,
       state.groupCandidates,
       standingPartyConfig.conversationSatisfaction,
+      standingPartyConfig.attachment,
     );
 
     const ticksInCluster = agent.clusterJoinedAtTick !== undefined ? tick - agent.clusterJoinedAtTick : 0;
@@ -1796,6 +1825,7 @@ export function stepSimulation(
             effectiveParams,
             formationPolicy,
             standingPartyConfig.conversationSatisfaction,
+            standingPartyConfig.attachment,
           );
           // Issue #176: 過去に離脱経験があるagentのみ対象(standingParty以外では常にno-op)
           logClusterRejoinIfApplicable(agent, candidate, tick, log);
