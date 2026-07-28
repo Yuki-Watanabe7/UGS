@@ -6,6 +6,11 @@
  *
  * `SimParams`へは追加しない(#185のADR 5.1節の方針を踏襲) ―― 二次会・学校のvalidation/UI/seed結果へは
  * 一切影響しない。standingParty以外のシナリオでは常に無視される。
+ *
+ * Issue #198 (Phase 3): `docs/cluster-transition-phase3-model.md`(Issue #197 ADR)6.1節どおり、
+ * 他クラスタ関心(`AlternativeClusterInterestConfig`)をこの器へ追加する。engine.tsからはまだ
+ * どこからも参照されない(ADR 9節P3-Aの区切り) ―― 追加自体はafterParty/classroomPair/既存の
+ * standingParty挙動へ一切影響しない。
  */
 import {
   DEFAULT_CONVERSATION_SATISFACTION_CONFIG,
@@ -17,6 +22,11 @@ import {
   validateClusterDepartureDecisionConfig,
   type ClusterDepartureDecisionConfig,
 } from "./clusterDepartureDecision";
+import {
+  DEFAULT_ALTERNATIVE_CLUSTER_INTEREST_CONFIG,
+  validateAlternativeClusterInterestConfig,
+  type AlternativeClusterInterestConfig,
+} from "./alternativeClusterInterest";
 
 /** 社交的回遊傾向(`Agent.socialCirculationTendency`)を一様分布で生成する範囲 `[0,1]` */
 export type SocialCirculationTendencyRange = {
@@ -28,6 +38,8 @@ export type StandingPartyScenarioConfig = {
   conversationSatisfaction: ConversationSatisfactionConfig;
   clusterDeparture: ClusterDepartureDecisionConfig;
   circulationTendencyRange: SocialCirculationTendencyRange;
+  /** Issue #198 (Phase 3): 他クラスタ関心。engine.tsからはまだ参照されない(観察専用の純粋関数群) */
+  alternativeInterest: AlternativeClusterInterestConfig;
 };
 
 export const DEFAULT_CIRCULATION_TENDENCY_RANGE: SocialCirculationTendencyRange = { min: 0, max: 1 };
@@ -36,6 +48,7 @@ export const DEFAULT_STANDING_PARTY_SCENARIO_CONFIG: StandingPartyScenarioConfig
   conversationSatisfaction: DEFAULT_CONVERSATION_SATISFACTION_CONFIG,
   clusterDeparture: DEFAULT_CLUSTER_DEPARTURE_DECISION_CONFIG,
   circulationTendencyRange: DEFAULT_CIRCULATION_TENDENCY_RANGE,
+  alternativeInterest: DEFAULT_ALTERNATIVE_CLUSTER_INTEREST_CONFIG,
 };
 
 function assertRange01(name: string, value: number): void {
@@ -52,6 +65,7 @@ function assertRange01(name: string, value: number): void {
 export function validateStandingPartyScenarioConfig(config: StandingPartyScenarioConfig): void {
   validateConversationSatisfactionConfig(config.conversationSatisfaction);
   validateClusterDepartureDecisionConfig(config.clusterDeparture);
+  validateAlternativeClusterInterestConfig(config.alternativeInterest);
   assertRange01("circulationTendencyRange.min", config.circulationTendencyRange.min);
   assertRange01("circulationTendencyRange.max", config.circulationTendencyRange.max);
   if (config.circulationTendencyRange.min > config.circulationTendencyRange.max) {
@@ -85,6 +99,7 @@ export const NETWORKING_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = {
     circulationRampTicks: 10,
   },
   circulationTendencyRange: { min: 0.6, max: 1 },
+  alternativeInterest: DEFAULT_ALTERNATIVE_CLUSTER_INTEREST_CONFIG,
 };
 
 /**
@@ -109,6 +124,7 @@ export const INTIMATE_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = {
     circulationRampTicks: 36,
   },
   circulationTendencyRange: { min: 0, max: 0.3 },
+  alternativeInterest: DEFAULT_ALTERNATIVE_CLUSTER_INTEREST_CONFIG,
 };
 
 validateStandingPartyScenarioConfig(NETWORKING_STANDING_PARTY_CONFIG);
