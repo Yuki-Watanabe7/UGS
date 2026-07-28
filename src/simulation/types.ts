@@ -113,6 +113,15 @@ export type Agent = {
   /** Issue #176: `joined`から会話クラスタ離脱により`undecided`へ戻り、再探索した回数の累計 */
   clusterDepartureCount?: number;
   /**
+   * Issue #201 (Phase 3, ステップP3-D): `switchToTargetCluster`確定後に持つ、目的地への一時的な
+   * 移動意図(`docs/cluster-transition-phase3-model.md` 1.5節・3.4節)。standingParty以外・
+   * Phase 3無効時は常にundefined。`state`が`undecided`/`approaching`の間のみ存在し、生成後は
+   * 再評価しない(targetを乗り換えない)。join成功・3.3節の無効化・TTL超過・`leaving`遷移・
+   * 強制releaseのいずれかで破棄する。`agent.joinedGroupId`が接近先の正本のままであることは変わらず
+   * (1.5節)、このフィールドは意図の記録・無効化判定・step 2の候補選択バイパス専用に読む。
+   */
+  pendingClusterTransition?: PendingClusterTransition;
+  /**
    * Issue #186 (Phase 2): 現在`joined`している会話クラスタの「1回のjoin〜離脱」を表すエピソード状態。
    * `clusterJoinedAtTick`と同じライフサイクル(合流時に初期化、離脱・所属先喪失時にクリア)で扱う、
    * 上位互換のコンテナ。`joinedAtTick`は常に`clusterJoinedAtTick`と一致する(二重管理の不変条件、
@@ -211,6 +220,46 @@ export type ClusterTransitionPrimaryReason =
  * (このアプリはシミュレーション結果を永続化しないため、実データ上の互換対応は不要)。
  */
 export type ClusterDepartureReason = ClusterTransitionPrimaryReason | "clusterBelowMinimumSize";
+
+/**
+ * Issue #201 (Phase 3, ステップP3-D): `switchToTargetCluster`確定と同時に生成する、目的地への
+ * 一時的な移動意図。`docs/cluster-transition-phase3-model.md`(Issue #197 ADR)1.5節・4節・3.4節の
+ * 型契約どおり。生成後は不変(再評価しない、targetを乗り換えない) ―― join成功・3.3節の無効化・
+ * TTL超過・`leaving`遷移・強制releaseのいずれかで破棄する。`agent.joinedGroupId`が接近先の正本の
+ * ままであり(1.5節)、このフィールドは意図の記録・無効化判定・step 2の候補選択バイパス専用に読む。
+ * 容量の事前予約は一切行わない(#201の背景が指摘する既存の同一tick競合・capacity契約を壊さないため)。
+ */
+export type PendingClusterTransition = {
+  targetClusterId: string;
+  /** 関心を主に駆動したmember(ADR 1.1.1節)。距離・入りやすさだけで選ばれた場合はundefined */
+  focusAgentId?: string;
+  sourceClusterId: string;
+  decidedAtTick: number;
+  /** `decidedAtTick + ClusterTransitionConfig.pendingTransitionTtlTicks` */
+  expiresAtTick: number;
+  /** 決定時点の他クラスタ関心score`[0,1]`(以後再評価しない、3.4節) */
+  interestScore: number;
+  primaryReason: ClusterTransitionPrimaryReason;
+};
+
+/**
+ * Issue #201 (Phase 3): `PendingClusterTransition`が無効化される理由(ADR 3.3節の優先順位表どおり、
+ * 同時に複数成立しても最初の1つだけを記録する)。
+ * - "currentClusterLost": 意図の生成元clusterが消滅済みで、意図自体が既に意味を失っている(防御的)
+ * - "targetMissing": targetのcandidateが`groupCandidates`に存在しない
+ * - "targetDissolved" / "targetExpired": targetの`status`が`dissolving`/`dissolved` / `expired`
+ * - "targetFull": targetが容量上限に達した
+ * - "focusAgentLeft": `focusAgentId`が設定されており、そのagentがtargetの`memberIds`に含まれない
+ * - "intentExpired": `tick >= expiresAtTick`(TTL超過)
+ */
+export type ClusterTransitionInvalidationReason =
+  | "currentClusterLost"
+  | "targetMissing"
+  | "targetDissolved"
+  | "targetExpired"
+  | "targetFull"
+  | "focusAgentLeft"
+  | "intentExpired";
 
 /**
  * Issue #186 (Phase 2): 1回の`joined`〜離脱までの、ひとつながりの会話エピソードの状態。
@@ -485,7 +534,28 @@ export type SimulationEventType =
    * (`inhibition.total > 0`)が効いていたことを、1エピソードにつき最初の1回だけ記録する
    * (ADR 8.1節)。`standingPartyConfig.transition.enabled`が`false`の間は発生しない。
    */
-  | "clusterTransitionInhibited";
+  | "clusterTransitionInhibited"
+  /**
+   * Issue #201 (Phase 3): `switchToTargetCluster`が確定し、`PendingClusterTransition`を生成した
+   * (責務9の離脱と同一処理内、原子的)。`standingPartyConfig.transition.enabled`が`false`の間は
+   * 発生しない。
+   */
+  | "clusterTransitionTargetSelected"
+  /**
+   * Issue #201 (Phase 3): 移動意図が無効化された(ADR 3.3節の優先順位表どおり、`metadata
+   * .invalidationReason`に理由を1つだけ持つ)。
+   */
+  | "clusterTransitionTargetInvalidated"
+  /**
+   * Issue #201 (Phase 3): 意図したtargetへ実際にjoinできた。既存の`clusterRejoined`/`agentJoined`
+   * とは別に、目的地付き移動意図そのものの成否として記録する。
+   */
+  | "clusterTransitionCompleted"
+  /**
+   * Issue #201 (Phase 3): 無効化直後、通常の`nearestCandidate`探索へfallbackしたことを表す
+   * (`clusterTransitionTargetInvalidated`の直後に続く1件で「その後どうなったか」を補う)。
+   */
+  | "clusterTransitionAbandoned";
 
 /**
  * Issue #156: `schoolInterventionTriggered`の`metadata.outcome`。表示文言の解析に依存しない結果分類。
@@ -657,6 +727,14 @@ export type SimulationEventMetadata = {
   conflictIntensity?: number;
   /** Issue #200: 決定時点の3action確率(合計は常に1) */
   transitionActionProbabilities?: Record<ClusterTransitionAction, number>;
+  /**
+   * Issue #201: `clusterTransitionTargetSelected`/`clusterTransitionTargetInvalidated`/
+   * `clusterTransitionCompleted`/`clusterTransitionAbandoned`用。移動意図の
+   * `PendingClusterTransition.primaryReason`のスナップショット。
+   */
+  transitionPrimaryReason?: ClusterTransitionPrimaryReason;
+  /** Issue #201: `clusterTransitionTargetInvalidated`用。無効化理由(優先順位に従い1つだけ) */
+  invalidationReason?: ClusterTransitionInvalidationReason;
 };
 
 export type LogEntry = {
