@@ -33,8 +33,12 @@ export default defineConfig({
     {
       name: "iphone-chromium",
       // `.claude/skills/verify/SKILL.md`と同じ既定(iPhone 14相当、390x664、タッチ操作あり)。
+      // `devices["iPhone 14"]`は`defaultBrowserType: "webkit"`を含むため、素直に展開すると
+      // プロジェクト名(iphone-chromium)に反してWebKitが起動してしまう(CIがwebkitバイナリを
+      // インストールしていないため`browserType.launch: Executable doesn't exist`で失敗した)。
+      // viewport/UA/タッチ操作だけ流用し、ブラウザ本体はchromiumへ明示的に固定する。
       testMatch: /\.mobile\.spec\.ts$/,
-      use: { ...devices["iPhone 14"] },
+      use: { ...devices["iPhone 14"], defaultBrowserType: "chromium" },
     },
   ],
 });
