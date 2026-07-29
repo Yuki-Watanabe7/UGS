@@ -690,7 +690,7 @@ function InspectionCard({
             </div>
           ) : (
             <>
-              <div className="observer-inspector-row">
+              <div className="observer-inspector-row" data-testid="observer-inspector-target-selection">
                 <span>最良target候補</span>
                 <span title={inspection.transitionSelectedTargetClusterId}>
                   {inspection.transitionSelectedTargetClusterId ??
@@ -761,7 +761,7 @@ function InspectionCard({
           </div>
           {inspection.pendingTransition ? (
             <>
-              <div className="observer-inspector-row">
+              <div className="observer-inspector-row" data-testid="observer-inspector-pending-transition">
                 <span>出発元 → target</span>
                 <span>
                   {inspection.pendingTransition.sourceClusterId} → {inspection.pendingTransition.targetClusterId}
@@ -801,7 +801,7 @@ function InspectionCard({
             </div>
           )}
           {inspection.lastTransitionInvalidation && (
-            <div className="observer-inspector-row">
+            <div className="observer-inspector-row" data-testid="observer-inspector-invalidation-banner">
               <span>直近の移動意図の無効化</span>
               <span>
                 {CLUSTER_TRANSITION_INVALIDATION_REASON_LABEL[inspection.lastTransitionInvalidation.reason]}

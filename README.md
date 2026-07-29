@@ -961,8 +961,9 @@ Phase 2で実装した会話満足度・クラスタ離脱判定・社交的回�
   使われます(既存挙動とbyte-identical)。いずれもagent生成時にのみ使われるためReset後に反映され、
   不正な値は`standingPartyScenarioConfig.ts`のvalidate関数群がdomain layerで拒否します。
 - **比較プリセット**: 標準・ネットワーキング型・懇親型に加え、他クラスタ観察半径・関心寄与を広め/高めに
-  し最低関心scoreを下げた「交流先へ移りやすい場」、愛着の形成速度・飽和値と解散配慮・
-  `influenceAvoidance`寄与を高めた「今の輪への配慮が強い場」を選べます。いずれも`transition.enabled: true`
+  し最低関心scoreを下げた「交流先へ移りやすい場」(preset ID: `standing-party-outward-interest`)、
+  愛着の形成速度・飽和値と解散配慮・`influenceAvoidance`寄与を高めた「今の輪への配慮が強い場」
+  (preset ID: `standing-party-current-circle`)を選べます。いずれも`transition.enabled: true`
   にしたうえで、populationSize・既存関係性・Phase 2パラメータは標準ケースと揃え、Phase 3設定差だけが
   観察できる構成です。「今の輪への配慮が強い場」でも目的地付き移動が完全にゼロになる極端な設定にはして
   いません(`standingPartyPhase3PresetComparison.test.ts`で両プリセットの定性的な差を固定seed列で確認)。
@@ -997,6 +998,18 @@ Phase 2(会話満足度・離脱decision)の個別の数式・境界値は`conve
 再現性・cluster離脱と会場退出の相互作用・長時間実行での安定性を自動テストで固定しました。詳細・
 設計判断・本Issueで見つけて修正した既存バグ(空confirmedクラスタの無期限残留)は
 [`docs/standing-party-phase2-verification.md`](docs/standing-party-phase2-verification.md)を参照してください。
+
+### 定性的検証・統合E2E(#203)
+
+Phase 3(他クラスタ関心・愛着・遷移decision・目的地付き移動)の個別の数式・境界値は#198〜#201が
+実装と同時に単体テスト化済みです。#203では、それらを組み合わせたときの不変条件(pending
+transitionのexclusivity等)・Phase 3有効プリセットでの長時間実行/pause-resume再現性・
+speech/trust/relationshipTieとの同時実行・target失敗後のcooldown相互作用を追加で固定し、その過程で
+見つけた既存バグ(核形成がpendingClusterTransitionを無視する孤立参照)を修正しました。あわせて、
+リポジトリに存在しなかったPlaywright E2E基盤(desktop/iPhone相当幅)を新設しCIへ組み込みました。
+詳細・棚卸しの結果・受入条件チェックリストは
+[`docs/standing-party-phase3-verification.md`](docs/standing-party-phase3-verification.md)を
+参照してください。
 
 ## シミュレーションルールの概要
 
@@ -1104,8 +1117,32 @@ Phase 4(本心・対外表現・行動の三層モデル)に関するテスト�
 - `joinedGroupIntegrity.test.ts` — `joinedGroupId`と`memberIds`の双方向整合性の検証
 - `afterPartyRegression.test.ts` — 学校機能追加後も二次会5プリセットの挙動が変化しないことの回帰テスト
 
+立食パーティー(standingParty)の他クラスタ関心・現在クラスタ愛着・ObserverJoiner葛藤・目的地付き移動
+(#197〜#203、`docs/cluster-transition-phase3-model.md`のADRが定める「Phase 3」— 上記の発言認知/解釈/
+効果の「Phase 3」とは別の軸の名称なので注意)に関するテストは主に次のファイルにあります。
+
+- `alternativeClusterInterest.test.ts` — 他クラスタ関心score・候補選択の単調性・境界値・決定的tie-breakの検証(#198)
+- `currentClusterAttachment.test.ts` — 現在クラスタ愛着の初期化・単調増加・飽和・離脱配慮の合成の検証(#199)
+- `clusterTransitionDecision.test.ts` — 3action確率合成式の性質(常に有限・合計1・単調性・primaryReason決定性)の検証(#200)
+- `clusterTransitionEngine.test.ts` — engine結線(1 draw・byte-identical後方互換・switchToTargetClusterのmetadata記録)の検証(#200)
+- `pendingClusterTransitionEngine.test.ts` — 目的地付き移動意図の生成・join成功・無効化(満員/消滅/解散/期限切れ/focus離脱/TTL超過)・fallbackの決定的フィクスチャ(#201)。REAPPROACH_COOLDOWN_TICKSとの相互作用、および核形成(step 1)がpendingClusterTransitionを不当に上書きしないことの回帰テストを含む(#203)
+- `observerJoinerTransitionInvariance.test.ts` — `isObserverJoiner`の真偽だけでは他クラスタ関心・愛着配慮・遷移decisionのいずれも変化しないことの検証(#203)
+- `standingPartyInvariants.ts` — membership/episode/pending transitionのグローバル不変条件を1箇所に集約した共有ヘルパー(`assertStandingPartyInvariants`)。以下のロングランテストが共通で使う(#203)
+- `standingPartyLongRunStability.test.ts` / `standingPartyPhase3LongRunStability.test.ts` — Phase 2のみ/Phase 3有効(`transition.enabled: true`)それぞれのプリセットで、1,000tick×複数seedにわたりNaN・孤児episode・孤児pending transition・重複membershipが発生しないことの検証。後者はpause/resumeを挟んでも同一tick列を再現することも確認する(#203)
+- `standingPartyPhase3SpeechCrossFeature.test.ts` — 発言(`speechEffects`)・本心表出・trust・relationshipTieのPhase 3/4機能をすべてONにした状態でstandingPartyのclusterTransitionも有効化し、両者を同時実行しても不変条件・値域・再現性が壊れないことの検証(#203)
+- `standingPartyPhase3PresetComparison.test.ts` — 「交流先へ移りやすい場」/「今の輪への配慮が強い場」プリセット間の定性的な差(固定seed列)の検証(#202)
+
 ```bash
 npm run test
+```
+
+standingParty Phase 3のdesktop/iPhone相当幅の主要UI flow(preset選択→詳細設定→Reset反映→agent選択→
+target switch観察→pause/resume/reset→scenario切替、および横スクロールなし・折りたたみ/select/range
+操作)はPlaywright(`playwright.config.ts`、`e2e/*.spec.ts`)でE2Eテストしています(#203)。
+
+```bash
+npm run test:e2e       # 両方のプロジェクト(desktop-chromium / iphone-chromium)を実行
+npm run typecheck:e2e  # playwright.config.ts / e2e/ の型チェック
 ```
 
 ## 今後改善できる点

@@ -456,6 +456,7 @@ function renderNumberFields(
               step={field.step}
               value={value}
               onChange={(e) => onConfigChange(field.set(config, Number(e.target.value)))}
+              data-testid={`standing-party-field-${field.key}`}
             />
           </label>
         );
@@ -475,7 +476,12 @@ function renderBooleanFields(
         const value = field.get(config);
         return (
           <label className="field checkbox-field" key={field.key}>
-            <input type="checkbox" checked={value} onChange={(e) => onConfigChange(field.set(config, e.target.checked))} />
+            <input
+              type="checkbox"
+              checked={value}
+              onChange={(e) => onConfigChange(field.set(config, e.target.checked))}
+              data-testid={`standing-party-field-${field.key}`}
+            />
             <span>
               {field.label}
               <span className="apply-mode-badge apply-mode-badge--resetRequired">Resetで反映</span>

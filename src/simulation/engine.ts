@@ -114,7 +114,9 @@ const JOIN_DISTANCE = 26;
 const CANDIDATE_LINGER_TICKS = 4;
 // Issue #133: 参加失敗した候補への即時再接近を避けるクールダウンtick数。
 // `maxGroupSize`はcandidate存続中に変化しないため実質恒久的な除外に近いが、明示的な制御として持たせる
-const REAPPROACH_COOLDOWN_TICKS = 8;
+// Issue #203: Phase 3のtarget失敗(`recordApproachFailure`経由の無効化)がこのcooldownを正しく
+// 引き継ぐことをテストから直接確認できるようexportする。
+export const REAPPROACH_COOLDOWN_TICKS = 8;
 // Issue #176: クラスタ離脱直後、同じクラスタへ即座に再接近するのを避けるクールダウンtick数
 // (責務9の判定式そのものではなく、離脱後の移動・再探索という「経路」側の制御)
 // Canvas側(Issue #178)がクールダウン中のagentを「離脱後の再探索中」として区別表示するため、
@@ -1270,6 +1272,15 @@ export function stepSimulation(
   // 近くに揃っている人だけ(主導者0人・既存関係性も弱い場なら誰も場を作らない)
   for (const agent of agents) {
     if (agent.state !== "undecided") continue;
+    // Issue #201/#203 (Phase 3, ADR 1.5節): pendingClusterTransitionを持つagentは既にtargetを
+    // 決めている(「生成後は再評価しない、targetを乗り換えない」)。ここで無関係な新規clusterを
+    // 自発的に立ち上げさせると、targetへ向かう意図はそのまま残った状態でstate=formingへ移り、
+    // やがてそのclusterがconfirmedした際にjoinedへ一括遷移する既存経路(下記step 9相当)が
+    // pendingClusterTransitionを一切参照しないため、「joined状態なのにpendingClusterTransitionが
+    // 残る(sourceでもtargetでもないclusterへ所属している)」という孤立参照を生む。
+    // stateをundecidedのままにしておけば、直後のstep 2がpendingClusterTransitionを優先して
+    // 消費する(targetへの接近、または無効化してnearestCandidateへのfallback)。
+    if (agent.pendingClusterTransition) continue;
 
     const initiation = formationPolicy.evaluateCandidateInitiation(agent, { agents, params: effectiveParams });
     if (!initiation.eligible) continue;

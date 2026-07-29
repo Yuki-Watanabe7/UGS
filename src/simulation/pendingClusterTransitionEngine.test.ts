@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createInitialState, stepSimulation } from "./engine";
+import { createInitialState, stepSimulation, REAPPROACH_COOLDOWN_TICKS } from "./engine";
 import { SeededRandom } from "./random";
 import { DEFAULT_PARAMS } from "./presets";
 import { WORLD_HEIGHT, WORLD_WIDTH } from "./model";
@@ -404,5 +404,124 @@ describe("engine結線: switchToTargetCluster確定からjoinまでの一連の�
       }
     }
     expect(observedFullCycle).toBe(true);
+  });
+});
+
+/** `rng.chance`を常にtrueへ固定し、核形成(step 1)のroll確率に関わらず必ず成立させる。
+ * `next()`/`range()`は実系列のまま(移動計算等が破綻しないよう)。 */
+class AlwaysChanceRng extends SeededRandom {
+  chance(): boolean {
+    return true;
+  }
+}
+
+describe("pendingClusterTransition: 核形成(step 1)との相互作用 (Issue #203回帰)", () => {
+  it("pendingClusterTransitionを持つagentは、核形成条件を満たしていても自発的に新しいclusterを立ち上げない", () => {
+    // 主導性が十分高くcliqueも整っている(=何もなければ必ず核形成のrollへ進む)agentへ
+    // pendingClusterTransitionを付与し、rng.chanceを常時成立させても新規clusterを作らないことを
+    // 確認する。もしstep 1がpendingClusterTransitionを無視すると、このagentはstate="forming"へ
+    // 移り、その後confirmedした際にjoinedへ一括遷移する既存経路(step 9相当)がpendingClusterTransitionを
+    // 一切クリアしないため、「joinedなのにpendingClusterTransitionが残る」孤立参照が発生する
+    // (`standingPartyPhase3LongRunStability.test.ts`が1000tickの実行で最初に検出した)。
+    const source = makeCandidate({ id: "group-source", x: 100, y: 100, memberIds: ["ghost-source"] });
+    const target = makeCandidate({ id: "group-target", x: 700, y: 450, memberIds: ["ghost-target"] });
+    const agent = makeAgent({
+      id: "agent-x",
+      state: "undecided",
+      x: 100,
+      y: 100,
+      initiative: 1,
+      willingness: 1,
+      pendingClusterTransition: makePendingTransition({
+        targetClusterId: "group-target",
+        sourceClusterId: "group-source",
+        decidedAtTick: 0,
+        expiresAtTick: 100,
+      }),
+    });
+    const state = makeState({ tick: 0, agents: [agent], groupCandidates: [source, target] });
+
+    const rng = new AlwaysChanceRng(1);
+    const next = stepSimulation(state, DEFAULT_PARAMS, rng, undefined, undefined, undefined, undefined, undefined, {
+      scenarioId: "standingParty",
+      standingPartyConfig: DEFAULT_STANDING_PARTY_SCENARIO_CONFIG,
+    });
+
+    expect(next.log.some((entry) => entry.eventType === "nucleusCreated" && entry.metadata?.agentId === "agent-x")).toBe(
+      false,
+    );
+    const updated = next.agents.find((a) => a.id === "agent-x")!;
+    expect(updated.state).not.toBe("forming");
+    // pendingClusterTransitionを消費してtargetへ向かう既存経路(step 2)は妨げない。
+    expect(updated.state).toBe("approaching");
+    expect(updated.joinedGroupId).toBe("group-target");
+    expect(next.groupCandidates.some((c) => c.id.startsWith(`group-${state.tick}-agent-x`))).toBe(false);
+  });
+});
+
+describe("pendingClusterTransition: target失敗後のREAPPROACH_COOLDOWN_TICKS (Issue #203回帰、要件9節)", () => {
+  it("targetFullで無効化された場合、既存のcapacityFull経路と同じくlastFailedCandidateId/cooldownが設定される", () => {
+    const source = makeCandidate({ id: "group-source", x: 100, y: 100, memberIds: [] });
+    const target = makeCandidate({ id: "group-target", x: 700, y: 450, memberIds: ["ghost-1"], maxGroupSize: 1 });
+    const agent = makeAgent({
+      state: "approaching",
+      joinedGroupId: "group-target",
+      x: 100,
+      y: 100,
+      pendingClusterTransition: makePendingTransition(),
+    });
+    const state = makeState({ tick: 1, agents: [agent], groupCandidates: [source, target] });
+
+    const next = step(state);
+    const updated = next.agents.find((a) => a.id === "agent-x")!;
+
+    // 既存の参加失敗cooldown契約(責務5、`approachFailure.test.ts`と同じフィールド)がPhase 3の
+    // targetFull無効化でも適用される ―― 満員だったtargetへ即座に再接近しない。
+    expect(updated.lastFailedCandidateId).toBe("group-target");
+    expect(updated.lastFailedCandidateAtTick).toBe(next.tick);
+  });
+
+  it("cooldown中は失敗したtargetへ再接近しないが、他のclusterへの探索は妨げられない(要件9節: 全面停止しない)", () => {
+    const source = makeCandidate({ id: "group-source", x: 100, y: 100, memberIds: [] });
+    const target = makeCandidate({ id: "group-target", x: 700, y: 450, memberIds: ["ghost-1"], maxGroupSize: 1 });
+    const agent = makeAgent({
+      state: "approaching",
+      joinedGroupId: "group-target",
+      x: 100,
+      y: 100,
+      pendingClusterTransition: makePendingTransition(),
+    });
+    const afterFailure = step(makeState({ tick: 1, agents: [agent], groupCandidates: [source, target] }));
+    const failedAgent = afterFailure.agents.find((a) => a.id === "agent-x")!;
+    expect(failedAgent.state).toBe("undecided");
+    expect(failedAgent.pendingClusterTransition).toBeUndefined();
+
+    // targetを再び空け(cooldown対象かどうかだけを見るため)、agentと同じ座標に置く。
+    // group-otherも同じ座標に置き、cooldownがなければ両者は同着(tie)になる状況を作る。
+    const reopenedTarget: GroupCandidate = { ...target, x: failedAgent.x, y: failedAgent.y, memberIds: [], maxGroupSize: 999 };
+    const other = makeCandidate({ id: "group-other", x: failedAgent.x, y: failedAgent.y, memberIds: [], maxGroupSize: 999 });
+    let state: SimulationState = {
+      ...afterFailure,
+      agents: [failedAgent],
+      groupCandidates: [reopenedTarget, other],
+    };
+
+    const rng = new AlwaysChanceRng(2);
+    let sawApproach = false;
+    for (let i = 0; i < REAPPROACH_COOLDOWN_TICKS - 1; i++) {
+      state = stepSimulation(state, DEFAULT_PARAMS, rng, undefined, undefined, undefined, undefined, undefined, {
+        scenarioId: "standingParty",
+        standingPartyConfig: DEFAULT_STANDING_PARTY_SCENARIO_CONFIG,
+      });
+      const a = state.agents.find((ag) => ag.id === "agent-x")!;
+      if (a.state === "approaching" || a.state === "joined") {
+        sawApproach = true;
+        // cooldown中(REAPPROACH_COOLDOWN_TICKS未満)は、直前に満員で失敗したgroup-targetを
+        // 選ばず、group-otherへ向かう(cooldownが他clusterの探索まで止めていないことの確認)。
+        expect(a.joinedGroupId).toBe("group-other");
+        break;
+      }
+    }
+    expect(sawApproach, "cooldown期間中でも別clusterへの探索は進行するはず").toBe(true);
   });
 });
