@@ -57,22 +57,26 @@ describe("StandingPartyAdvancedSettings", () => {
     expect(html).toContain(`${DEFAULT_STANDING_PARTY_SCENARIO_CONFIG.alternativeInterest.observationRadius.toFixed(0)}px`);
   });
 
+  function transitionEnabledCheckboxTag(html: string): string {
+    // data-testidを持つ`transitionEnabled`のinputタグ自体を切り出す(属性順序に依存しない)。
+    const testidIndex = html.indexOf('data-testid="standing-party-field-transitionEnabled"');
+    const tagStart = html.lastIndexOf("<input", testidIndex);
+    const tagEnd = html.indexOf("/>", testidIndex);
+    return html.slice(tagStart, tagEnd);
+  }
+
   it("reflects transition.enabled as an unchecked checkbox by default (Phase 3 disabled)", () => {
     const html = render(DEFAULT_STANDING_PARTY_SCENARIO_CONFIG);
     expect(DEFAULT_STANDING_PARTY_SCENARIO_CONFIG.transition.enabled).toBe(false);
     expect(html).toContain("他クラスタ関心・愛着配慮をdecisionへ反映する");
     // 遷移decisionのcheckboxだけが対象。Phase 2/3の他フィールドがcheckedになっていないことは別テストで担保する。
-    const transitionSectionStart = html.indexOf("遷移decision・移動意図");
-    const transitionSectionHtml = html.slice(transitionSectionStart);
-    expect(transitionSectionHtml).not.toContain('type="checkbox" checked=""');
+    expect(transitionEnabledCheckboxTag(html)).not.toContain('checked=""');
   });
 
   it("reflects transition.enabled as a checked checkbox for the outward-interest preset (Phase 3 enabled)", () => {
     expect(OUTWARD_INTEREST_STANDING_PARTY_CONFIG.transition.enabled).toBe(true);
     const html = render(OUTWARD_INTEREST_STANDING_PARTY_CONFIG);
-    const transitionSectionStart = html.indexOf("遷移decision・移動意図");
-    const transitionSectionHtml = html.slice(transitionSectionStart);
-    expect(transitionSectionHtml).toContain('type="checkbox" checked=""');
+    expect(transitionEnabledCheckboxTag(html)).toContain('checked=""');
   });
 
   it("reflects the current-circle-attachment preset's higher attachment values", () => {

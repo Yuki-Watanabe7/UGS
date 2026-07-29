@@ -451,6 +451,7 @@ function CandidateGlyph({
   return (
     <g
       opacity={fading ? 0.35 : 1}
+      data-candidate-id={candidate.id}
       data-candidate-state={classroomState}
       data-evacuated={visual.isEvacuated || undefined}
       data-visual-slot={visual.slotIndex === undefined ? undefined : visual.slotIndex + 1}
@@ -520,6 +521,7 @@ function AgentGlyph({
   return (
     <g
       opacity={opacity}
+      data-agent-id={agent.id}
       data-agent-state={stateClass}
       data-visual-candidate={candidateId}
       data-transition-focus-agent={isTransitionFocusAgent || undefined}
