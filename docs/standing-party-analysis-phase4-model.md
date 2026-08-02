@@ -6,10 +6,11 @@ Blocks: #212(会話履歴モデル), #213(接触ネットワーク), #214(統計
 
 この文書は、立食パーティー(`standingParty`)の Phase 1〜3 で蓄積された構造化イベントと
 live な`ConversationEpisode`を、**シミュレーション本体の意思決定から分離した read-only 分析層**
-へ正規化するための**ドメイン契約(ADR)**である。**本Issueでは実装しない**
-(既存コードの挙動・PRNG消費順序・`SimulationState`のフィールドは一切変更しない)。
-後続Issue(#212〜#218)が追加の設計判断なしに実装へ着手できるよう、正規単位・正本・区間規約・
-network の意味・統計の分母・時間窓・性能・schema version・シナリオ共通化範囲・移行手順を残す。
+へ正規化するための**ドメイン契約(ADR)**である。型・導出APIの本実装は Issue #212
+(`src/simulation/standingPartyAnalysis.ts`の`buildStandingPartyConversationHistory`、
+Gap Aの`clusterMembershipLost`イベント)で行い、contact / 統計 / UI は #213 以降が担う。
+本ADR(#211)自体は契約の固定が成果物であり、#211 マージ時点では既存コードの挙動・PRNG消費順序・
+`SimulationState`のフィールドは変更していない。
 
 > **命名の注意**: Roadmap #61 の「Phase 4」(社会的表現・発話信頼・関係性補正:
 > `socialExpression` / `speechTrust` / `relationshipTie`)とは**別物**である。本ADRの Phase 4 は
@@ -199,7 +200,9 @@ state.log (+ live episodes / candidates / pending transitions)
 追加しない代替(最終 live state との差分推定)は、途中 tick の再生・horizon 途中の集計で
 曖昧になるため却下する。
 
-> 本Issue(#211)自体ではイベント追加も runtime 変更も行わない。Gap A の解消は #212 の実装範囲。
+> **更新(Issue #212)**: Gap A は観測用イベント`clusterMembershipLost`の追加と、
+> `buildStandingPartyConversationHistory`による履歴導出で解消済み。Gap B の canonical 開始規則
+> (join系の畳み込み + `groupConfirmed`時のfounder開始)も同モジュールのテストで固定している。
 
 #### Gap B: confirm 時の founder episode 開始に join イベントが無い場合がある
 
@@ -553,7 +556,8 @@ export type StandingPartyAnalysisSnapshot = {
 推奨モジュール配置:
 
 - `src/simulation/standingPartyAnalysis.ts` — 履歴・contact・統計の pure 導出の入口
-  (#212〜#214 で段階的に関数を足す。`standingPartyComparison.ts`は維持し、必要なら内部から再利用)
+  (#212で`buildStandingPartyConversationHistory`を実装済み。#213/#214で段階的に関数を足す。
+  `standingPartyComparison.ts`は維持し、必要なら内部から再利用)
 - UI コンポーネントは`src/components/`に置き、シミュレーション規則を持たない
   (既存の presentational 規律)。
 

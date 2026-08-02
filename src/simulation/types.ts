@@ -304,7 +304,7 @@ export type ConversationEpisode = {
  * - "voluntaryDeparture": 責務9による自発的なクラスタ離脱(`clusterDepartureCompleted`)
  * - "memberReleased": 責務10によるクラスタの成立最小人数割れに伴う強制解放(`clusterMemberReleased`)
  * - "membershipLost": 所属先候補自体がmissing/dissolved/expired等になった際の整合性回復
- *   (現時点では専用のSimulationEventTypeを持たず、`Agent.currentEpisode`のクリアのみで表現する)
+ *   (Issue #212: 観測用の`clusterMembershipLost`イベントで記録する。意思決定・PRNGには影響しない)
  */
 export type ConversationEpisodeEndReason = "voluntaryDeparture" | "memberReleased" | "membershipLost";
 
@@ -555,7 +555,13 @@ export type SimulationEventType =
    * Issue #201 (Phase 3): 無効化直後、通常の`nearestCandidate`探索へfallbackしたことを表す
    * (`clusterTransitionTargetInvalidated`の直後に続く1件で「その後どうなったか」を補う)。
    */
-  | "clusterTransitionAbandoned";
+  | "clusterTransitionAbandoned"
+  /**
+   * Issue #212 (standing-party Phase 4 分析): 所属先候補がmissing/dissolved/expired等になり、
+   * 整合性回復で`joined`→`undecided`へ戻したこと(`episodeEndReason: "membershipLost"`)。
+   * 観測穴埋め専用で、意思決定・PRNG・離脱判定には使わない(`docs/standing-party-analysis-phase4-model.md` Gap A)。
+   */
+  | "clusterMembershipLost";
 
 /**
  * Issue #156: `schoolInterventionTriggered`の`metadata.outcome`。表示文言の解析に依存しない結果分類。
@@ -686,11 +692,14 @@ export type SimulationEventMetadata = {
   memberCountBefore?: number;
   /**
    * Issue #186 (Phase 2): `agentJoined`/`observerJoinedForming`/`observerJoinedConfirmed`/
-   * `clusterRejoined`(開始)・`clusterDepartureCompleted`/`clusterMemberReleased`(終了)用。
-   * 該当する会話エピソードの`ConversationEpisode.episodeId`
+   * `clusterRejoined`(開始)・`clusterDepartureCompleted`/`clusterMemberReleased`/
+   * `clusterMembershipLost`(終了)用。該当する会話エピソードの`ConversationEpisode.episodeId`
    */
   episodeId?: string;
-  /** Issue #186 (Phase 2): `clusterDepartureCompleted`/`clusterMemberReleased`用。エピソード終了理由 */
+  /**
+   * Issue #186 (Phase 2): `clusterDepartureCompleted`/`clusterMemberReleased`/
+   * `clusterMembershipLost`(Issue #212)用。エピソード終了理由
+   */
   episodeEndReason?: ConversationEpisodeEndReason;
   /**
    * Issue #188 (Phase 2): `clusterDepartureStarted`/`clusterDepartureCompleted`用。離脱評価時点の
@@ -2078,4 +2087,128 @@ export type StandingPartyMonteCarloSummary = {
   averageVenueExitCount: number;
   /** 主要因別の1runあたり平均件数 */
   departureReasonRateAverages: StandingPartyDepartureReasonCounts;
+};
+
+/**
+ * Issue #212 (standing-party Phase 4 分析): 会話履歴 read model の schema version。
+ * Roadmap #61 の Phase 4(`socialExpression`等)とは無関係。
+ * `docs/standing-party-analysis-phase4-model.md` §6.2。
+ */
+export const STANDING_PARTY_ANALYSIS_SCHEMA_VERSION = 1 as const;
+
+/** 完了分布に混ぜないための区間状態(`docs/standing-party-analysis-phase4-model.md` §1冒頭・§4.3) */
+export type AnalysisIntervalStatus = "active" | "completed" | "censored";
+
+/**
+ * Issue #212: 履歴レコード上のepisode終了理由。既存3値に加え、分析層で区別する拡張値を含む。
+ * イベントmetadataの`episodeEndReason`は従来どおり`ConversationEpisodeEndReason`のまま
+ * (`targetedTransition`は`voluntaryDeparture`+`transitionAction`から導出する)。
+ */
+export type ConversationEpisodeEndReasonV2 =
+  | ConversationEpisodeEndReason
+  | "targetedTransition"
+  | "venueExit"
+  | "reset";
+
+/** Issue #212: 1agentの1回のjoined〜episode終了を表す正規履歴レコード */
+export type ConversationEpisodeRecord = {
+  episodeId: string;
+  agentId: string;
+  clusterId: string;
+  startedAtTick: number;
+  endedAtTick?: number;
+  /** endedAtTick定義時は endedAtTick - startedAtTick。active/censoredは asOfTick - startedAtTick */
+  dwellTicks: number;
+  status: AnalysisIntervalStatus;
+  endReason?: ConversationEpisodeEndReasonV2;
+  joinedGroupStatus: GroupCandidateStatus;
+  startMemberIds: string[];
+  endMemberIds?: string[];
+};
+
+/**
+ * Issue #212: cluster membership区間。standingPartyではepisodeと1:1で、同じ`episodeId`を共有する
+ * (`docs/standing-party-analysis-phase4-model.md` §1.2)。
+ */
+export type ClusterMembershipInterval = {
+  intervalId: string;
+  agentId: string;
+  clusterId: string;
+  startedAtTick: number;
+  endedAtTick?: number;
+  status: AnalysisIntervalStatus;
+  episodeId: string;
+};
+
+export type ClusterLifetimeEndReason =
+  | "activeClusterDissolved"
+  | "groupDissolved"
+  | "groupExpired"
+  | "cleanedUp";
+
+/** Issue #212: 1つのGroupCandidateの生成〜解散/期限切れ/cleanupまでのlifetime */
+export type ClusterLifetimeRecord = {
+  clusterId: string;
+  founderAgentId?: string;
+  createdAtTick: number;
+  confirmedAtTick?: number;
+  dissolvingAtTick?: number;
+  endedAtTick?: number;
+  status: AnalysisIntervalStatus;
+  endReason?: ClusterLifetimeEndReason;
+  peakMemberCount: number;
+  joinCount: number;
+  voluntaryLeaveCount: number;
+  forcedReleaseCount: number;
+};
+
+export type ClusterTransitionResult = "completed" | "invalidated" | "abandoned" | "explore";
+
+/** Issue #212: 目的地付き移動または目的地なし再探索の1過程 */
+export type ClusterTransitionRecord = {
+  transitionId: string;
+  agentId: string;
+  sourceClusterId: string;
+  targetClusterId?: string;
+  focusAgentId?: string;
+  startedAtTick: number;
+  endedAtTick?: number;
+  result?: ClusterTransitionResult;
+  invalidationReason?: ClusterTransitionInvalidationReason;
+  sourceEpisodeId?: string;
+  targetEpisodeId?: string;
+  /** endedAtTick定義時は endedAtTick - startedAtTick */
+  elapsedTicks?: number;
+};
+
+export type StandingPartyAnalysisDiagnosticCode =
+  | "duplicateEpisodeStart"
+  | "episodeCloseWithoutOpen"
+  | "transitionCloseWithoutOpen"
+  | "overlappingMembership"
+  | "membershipStateMismatch";
+
+/** Issue #212: イベント欠落・不正順序を黙って補正せず検出するための診断 */
+export type StandingPartyAnalysisDiagnostic = {
+  code: StandingPartyAnalysisDiagnosticCode;
+  tick: number;
+  agentId?: string;
+  clusterId?: string;
+  episodeId?: string;
+  transitionId?: string;
+  detail?: string;
+};
+
+/**
+ * Issue #212: 会話参加・離脱・クラスタ遷移の統合履歴スナップショット。
+ * contact / network / 統計は #213/#214 の範囲(本型には含めない)。
+ */
+export type StandingPartyConversationHistory = {
+  schemaVersion: typeof STANDING_PARTY_ANALYSIS_SCHEMA_VERSION;
+  asOfTick: number;
+  episodes: ConversationEpisodeRecord[];
+  membershipIntervals: ClusterMembershipInterval[];
+  clusterLifetimes: ClusterLifetimeRecord[];
+  transitions: ClusterTransitionRecord[];
+  diagnostics: StandingPartyAnalysisDiagnostic[];
 };
