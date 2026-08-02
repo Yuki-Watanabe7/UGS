@@ -18,7 +18,10 @@ Parent Roadmap: #172。Blocks: 立食パーティーシナリオの動的グル�
 > 責務10の解散判定対象にする、という追加の不変条件が実装時に必要になった。また3.2節の
 > 「dissolving中に新規合流でminGroupSize回復」という再形成パスは採用せず、実装範囲の受入条件
 > どおり「dissolving/dissolvedは新規参加を受け付けず、再形成は常に新しいcluster IDを発行する」
-> という単純な規則に倒している。Follow-up D(`ClusterMembershipEvent`、接触履歴ログ)は未着手。
+> という単純な規則に倒している。Follow-up D(`ClusterMembershipEvent`、接触履歴ログ)は
+> Issue #211([standing-party-analysis-phase4-model.md](standing-party-analysis-phase4-model.md))で
+> **supersede**済み(専用 append-only ログ新設ではなく、既存`state.log`からの導出履歴を正本とする)。
+> 実装は #212 以降。
 
 `FormationPolicy`(Issue #130、[formation-policy-model.md](formation-policy-model.md))が確立した
 「シナリオ固有ルールは`engine.ts`へ分岐を書かず、ポリシー実装を1つ追加する」という拡張パターンを、
@@ -266,6 +269,10 @@ export type GroupCandidate = {
    (`{ agentId, clusterId, tick, kind: "joined" | "departed" }`)のような追記専用ログを新設する案を
    後続Issue(情報伝播・接触ネットワーク)向けに残す。**本Issueではこのログ自体を実装しない**
    (対象外: 情報伝播・接触ネットワークの本実装)。
+   > **更新(Issue #211)**: Follow-up D の「専用`ClusterMembershipEvent`ログ新設」案は、
+   > [standing-party-analysis-phase4-model.md](standing-party-analysis-phase4-model.md) により
+   > supersede された。正本は既存`SimulationState.log`(`eventType`/`metadata`)からの pure 導出と
+   > live episode 補完とし、接触ネットワーク・統計は意思決定非介入の read model として #212 以降で実装する。
 
 ### 3.4 未決定事項として後続Issueへ引き継ぐ論点
 
@@ -304,9 +311,11 @@ export type GroupCandidate = {
    A・B完了後、3.2節の状態遷移表を実装する新しい`FormationPolicy`。`presets.ts`への新プリセット
    追加、`scenarioPresentation.ts`への語彙追加(`scenario-presentation-boundary.md`のパターンに
    従う)を含む。依存: A, B。
-4. **Follow-up D: `ClusterMembershipEvent`(接触履歴ログ)**
-   3.3節7の追記専用ログ。情報伝播・接触ネットワークのモデル化に着手する段階で必要になるため、
-   C完了後、実際にその要求が具体化してから着手する(先行実装しない)。
+4. **Follow-up D: `ClusterMembershipEvent`(接触履歴ログ)** — **superseded by Issue #211**
+   3.3節7の追記専用ログ案は、Roadmap #172 Phase 4 の分析契約
+   ([standing-party-analysis-phase4-model.md](standing-party-analysis-phase4-model.md))へ委譲した。
+   専用ログを正本として新設するのではなく、既存構造化イベントからの導出履歴 + 接触/統計 read model
+   として #212〜#214 で実装する(本 Follow-up を独立Issueとしては開かない)。
 
 ### 既存シナリオへの影響範囲
 
