@@ -2247,11 +2247,37 @@ export function stepSimulation(
     } else if (agent.state === "joined") {
       const candidate = candidates.find((c) => c.id === agent.joinedGroupId);
       if (!candidate || !isJoinable(candidate) || !candidate.memberIds.includes(agent.id)) {
+        // Issue #212: standingPartyの分析層がmembershipLostを再構成できるよう、クリア前に観測用
+        // イベントを残す。rngは消費しない。意思決定・離脱判定には使わない(Gap A)。
+        // afterParty/classroomPairへcluster*イベントを混入させない(既存回帰テストの契約)。
+        if (formationPolicy.id === "standingParty") {
+          const lostGroupId = agent.joinedGroupId;
+          const episodeId = agent.currentEpisode?.episodeId;
+          const ticksInCluster =
+            agent.currentEpisode?.joinedAtTick !== undefined ? tick - agent.currentEpisode.joinedAtTick : undefined;
+          const tags: LogTag[] = agent.isObserverJoiner ? ["observerJoiner", "clusterDeparture"] : ["clusterDeparture"];
+          pushLog(
+            log,
+            tick,
+            agent.isObserverJoiner
+              ? `observerJoinerの所属先が失われ、再探索状態に戻った`
+              : `${agent.label}さんの所属先が失われ、再探索状態に戻った`,
+            tags,
+            "clusterMembershipLost",
+            {
+              agentId: agent.id,
+              agentLabel: agent.label,
+              groupId: lostGroupId,
+              episodeId,
+              episodeEndReason: "membershipLost",
+              ticksInCluster,
+            },
+          );
+        }
         agent.state = "undecided";
         agent.joinedGroupId = undefined;
         agent.clusterJoinedAtTick = undefined;
         // Issue #186: 所属先の消滅/解散/期限切れによる整合性回復(endReason: "membershipLost")。
-        // この経路は防御的な掃除であり専用イベントは持たないため、episode状態のクリアのみ行う。
         agent.currentEpisode = undefined;
       }
     }

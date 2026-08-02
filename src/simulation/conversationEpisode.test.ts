@@ -328,7 +328,7 @@ describe("会話エピソード: 終了 (Issue #186)", () => {
     expect(releaseEvent?.metadata?.episodeEndReason).toBe("memberReleased");
   });
 
-  it("所属clusterの消滅(整合性回復)でepisodeがクリアされる", () => {
+  it("所属clusterの消滅(整合性回復)でepisodeがクリアされ、clusterMembershipLostが記録される", () => {
     const agent = makeAgent({
       id: "member-0",
       state: "joined",
@@ -351,6 +351,11 @@ describe("会話エピソード: 終了 (Issue #186)", () => {
     expect(recovered.state).toBe("undecided");
     expect(recovered.joinedGroupId).toBeUndefined();
     expect(recovered.currentEpisode).toBeUndefined();
+
+    const lost = next.log.find((e) => e.eventType === "clusterMembershipLost");
+    expect(lost?.metadata?.episodeId).toBe("member-0:missing-group:0");
+    expect(lost?.metadata?.episodeEndReason).toBe("membershipLost");
+    expect(lost?.metadata?.groupId).toBe("missing-group");
   });
 });
 

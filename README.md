@@ -1011,6 +1011,15 @@ speech/trust/relationshipTieとの同時実行・target失敗後のcooldown相�
 [`docs/standing-party-phase3-verification.md`](docs/standing-party-phase3-verification.md)を
 参照してください。
 
+### 会話履歴モデル(#212)
+
+Phase 4 分析層の第一弾として、`state.log`(+ live episode / pending transition)から
+会話episode・membership区間・cluster lifetime・cluster transitionの正規履歴を
+`buildStandingPartyConversationHistory`でpure導出します(意思決定・PRNG非介入)。
+所属喪失の観測穴は`clusterMembershipLost`イベントで埋めます。契約は
+[`docs/standing-party-analysis-phase4-model.md`](docs/standing-party-analysis-phase4-model.md)
+(Issue #211 ADR)。接触network・統計・UIは#213以降です。
+
 ## シミュレーションルールの概要
 
 行動ルールは `src/simulation/engine.ts` に集約されています。主なルール:
@@ -1037,6 +1046,7 @@ src/
     presets.ts              二次会5つ+立食パーティー5つ+教室での班分け4つ、計14シナリオプリセットとデフォルトパラメータ
     standingPartyScenarioConfig.ts 立食パーティー専用のPhase 2設定(満足度・離脱判定・回遊傾向分布)+Phase 3設定(他クラスタ関心・愛着離脱配慮・遷移decision)束とその比較プリセット(#189、#202)
     standingPartyComparison.ts 立食パーティーのプリセット間比較指標(自発離脱・再参加・滞在tick等)の集計ロジック(#190)
+    standingPartyAnalysis.ts   立食パーティー Phase 4 分析: 会話episode/membership/lifetime/transition履歴のpure導出(#212、ADR: docs/standing-party-analysis-phase4-model.md)
     formationPolicy.ts       シナリオ別の班形成・成立・終了ルールを切り替えるFormationPolicyの定義
     groupPartition.ts        人口を定員ルール(固定/可変)で分割し構造的未割当人数を決定的に計算
     pairFormation.ts         教室ペア形成(classroom-pair)専用のMonte Carlo集計ロジック
@@ -1131,6 +1141,7 @@ Phase 4(本心・対外表現・行動の三層モデル)に関するテスト�
 - `standingPartyLongRunStability.test.ts` / `standingPartyPhase3LongRunStability.test.ts` — Phase 2のみ/Phase 3有効(`transition.enabled: true`)それぞれのプリセットで、1,000tick×複数seedにわたりNaN・孤児episode・孤児pending transition・重複membershipが発生しないことの検証。後者はpause/resumeを挟んでも同一tick列を再現することも確認する(#203)
 - `standingPartyPhase3SpeechCrossFeature.test.ts` — 発言(`speechEffects`)・本心表出・trust・relationshipTieのPhase 3/4機能をすべてONにした状態でstandingPartyのclusterTransitionも有効化し、両者を同時実行しても不変条件・値域・再現性が壊れないことの検証(#203)
 - `standingPartyPhase3PresetComparison.test.ts` — 「交流先へ移りやすい場」/「今の輪への配慮が強い場」プリセット間の定性的な差(固定seed列)の検証(#202)
+- `standingPartyAnalysis.test.ts` — 会話履歴read model(episode/membership/lifetime/transition)の導出・Gap A/B・決定性・非mutationの検証(#212)
 
 ```bash
 npm run test
