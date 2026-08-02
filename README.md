@@ -1018,7 +1018,15 @@ Phase 4 分析層の第一弾として、`state.log`(+ live episode / pending tr
 `buildStandingPartyConversationHistory`でpure導出します(意思決定・PRNG非介入)。
 所属喪失の観測穴は`clusterMembershipLost`イベントで埋めます。契約は
 [`docs/standing-party-analysis-phase4-model.md`](docs/standing-party-analysis-phase4-model.md)
-(Issue #211 ADR)。接触network・統計・UIは#213以降です。
+(Issue #211 ADR)。
+
+### 接触ネットワーク(#213)
+
+#212のmembership区間の時間重複から、2agent間の`ContactIntervalRecord`と無向
+`ContactNetworkEdge`、node・記述指標(density / isolated / connected components等)を
+`buildStandingPartyContactNetwork`でpure導出します。接近のみ・空間近接・clique / trust /
+relationshipTieは接触に数えず、edge weightにも混ぜません。時間窓clip・完了/activeの区別・
+memo化ラッパを含み、統計・UIは#214以降です。
 
 ## シミュレーションルールの概要
 
@@ -1046,7 +1054,8 @@ src/
     presets.ts              二次会5つ+立食パーティー5つ+教室での班分け4つ、計14シナリオプリセットとデフォルトパラメータ
     standingPartyScenarioConfig.ts 立食パーティー専用のPhase 2設定(満足度・離脱判定・回遊傾向分布)+Phase 3設定(他クラスタ関心・愛着離脱配慮・遷移decision)束とその比較プリセット(#189、#202)
     standingPartyComparison.ts 立食パーティーのプリセット間比較指標(自発離脱・再参加・滞在tick等)の集計ロジック(#190)
-    standingPartyAnalysis.ts   立食パーティー Phase 4 分析: 会話episode/membership/lifetime/transition履歴のpure導出(#212、ADR: docs/standing-party-analysis-phase4-model.md)
+    standingPartyAnalysis.ts   立食パーティー Phase 4 分析入口: 会話履歴(#212)と接触network(#213)のpure導出(ADR: docs/standing-party-analysis-phase4-model.md)
+    contactNetwork.ts          立食パーティー Phase 4: membership重複からcontact interval / edge / node / 記述指標を導出(#213)
     formationPolicy.ts       シナリオ別の班形成・成立・終了ルールを切り替えるFormationPolicyの定義
     groupPartition.ts        人口を定員ルール(固定/可変)で分割し構造的未割当人数を決定的に計算
     pairFormation.ts         教室ペア形成(classroom-pair)専用のMonte Carlo集計ロジック
@@ -1142,6 +1151,7 @@ Phase 4(本心・対外表現・行動の三層モデル)に関するテスト�
 - `standingPartyPhase3SpeechCrossFeature.test.ts` — 発言(`speechEffects`)・本心表出・trust・relationshipTieのPhase 3/4機能をすべてONにした状態でstandingPartyのclusterTransitionも有効化し、両者を同時実行しても不変条件・値域・再現性が壊れないことの検証(#203)
 - `standingPartyPhase3PresetComparison.test.ts` — 「交流先へ移りやすい場」/「今の輪への配慮が強い場」プリセット間の定性的な差(固定seed列)の検証(#202)
 - `standingPartyAnalysis.test.ts` — 会話履歴read model(episode/membership/lifetime/transition)の導出・Gap A/B・決定性・非mutationの検証(#212)
+- `contactNetwork.test.ts` — 接触ネットワーク(contact interval / edge集約 / 時間窓 / clique混同禁止 / 決定性・非mutation)の検証(#213)
 
 ```bash
 npm run test

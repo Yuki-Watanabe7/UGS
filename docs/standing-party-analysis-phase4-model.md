@@ -8,7 +8,9 @@ Blocks: #212(会話履歴モデル), #213(接触ネットワーク), #214(統計
 live な`ConversationEpisode`を、**シミュレーション本体の意思決定から分離した read-only 分析層**
 へ正規化するための**ドメイン契約(ADR)**である。型・導出APIの本実装は Issue #212
 (`src/simulation/standingPartyAnalysis.ts`の`buildStandingPartyConversationHistory`、
-Gap Aの`clusterMembershipLost`イベント)で行い、contact / 統計 / UI は #213 以降が担う。
+Gap Aの`clusterMembershipLost`イベント)および Issue #213
+(`src/simulation/contactNetwork.ts`の`deriveContactIntervals` /
+`buildStandingPartyContactNetwork`)で行い、統計 / UI は #214 以降が担う。
 本ADR(#211)自体は契約の固定が成果物であり、#211 マージ時点では既存コードの挙動・PRNG消費順序・
 `SimulationState`のフィールドは変更していない。
 
@@ -57,7 +59,7 @@ Gap Aの`clusterMembershipLost`イベント)で行い、contact / 統計 / UI �
 
 ### 0.3 本Issueの対象外(再掲)
 
-- 履歴・network・統計の本実装(#212〜#214)
+- 履歴・network・統計の本実装(#212〜#214)。うち#212(会話履歴)と#213(接触ネットワーク)は実装済み
 - Canvas / timeline / graph / dashboard UI(#215〜#217)
 - DB・クラウド保存・複数端末同期
 - 人間関係の好悪推定、network centrality を社会的価値として評価すること
@@ -203,6 +205,12 @@ state.log (+ live episodes / candidates / pending transitions)
 > **更新(Issue #212)**: Gap A は観測用イベント`clusterMembershipLost`の追加と、
 > `buildStandingPartyConversationHistory`による履歴導出で解消済み。Gap B の canonical 開始規則
 > (join系の畳み込み + `groupConfirmed`時のfounder開始)も同モジュールのテストで固定している。
+>
+> **更新(Issue #213)**: membership区間の時間重複から`ContactIntervalRecord` /
+> `ContactNetworkEdge` / node / 記述指標を`buildStandingPartyContactNetwork`で導出する。
+> clique / trust / relationshipTie は edge weight に混ぜず、比較用`comparisonAttributes`または
+> 別ログとの照合に留める。実装は`src/simulation/contactNetwork.ts`(入口は
+> `standingPartyAnalysis.ts`から再エクスポート)。
 
 #### Gap B: confirm 時の founder episode 開始に join イベントが無い場合がある
 
@@ -556,8 +564,9 @@ export type StandingPartyAnalysisSnapshot = {
 推奨モジュール配置:
 
 - `src/simulation/standingPartyAnalysis.ts` — 履歴・contact・統計の pure 導出の入口
-  (#212で`buildStandingPartyConversationHistory`を実装済み。#213/#214で段階的に関数を足す。
-  `standingPartyComparison.ts`は維持し、必要なら内部から再利用)
+  (#212で`buildStandingPartyConversationHistory`、#213で`buildStandingPartyContactNetwork`を実装済み。
+  #214で統計を段階的に足す。`standingPartyComparison.ts`は維持し、必要なら内部から再利用)
+- `src/simulation/contactNetwork.ts` — #213: membership重複→contact interval / edge / node / 指標
 - UI コンポーネントは`src/components/`に置き、シミュレーション規則を持たない
   (既存の presentational 規律)。
 
@@ -588,7 +597,7 @@ Roadmap #172 の推奨順を本契約で固定する:
    - Gap A(`clusterMembershipLost`イベント追加)をこの Issue で解消
    - Gap B の canonical 開始規則をテストで固定
    - `membershipLost` / `targetedTransition` / censored を区別
-2. **#213 接触ネットワーク**
+2. **#213 接触ネットワーク** — **実装済み**
    - membership 重複から`ContactIntervalRecord` / `ContactNetworkEdge`
    - clique / trust / tie と混同しないテスト
 3. **#214 統計集計**

@@ -2186,7 +2186,9 @@ export type StandingPartyAnalysisDiagnosticCode =
   | "episodeCloseWithoutOpen"
   | "transitionCloseWithoutOpen"
   | "overlappingMembership"
-  | "membershipStateMismatch";
+  | "membershipStateMismatch"
+  /** Issue #213: 同一agentが同一tickで複数clusterに同時所属している不正状態 */
+  | "overlappingMultiClusterMembership";
 
 /** Issue #212: イベント欠落・不正順序を黙って補正せず検出するための診断 */
 export type StandingPartyAnalysisDiagnostic = {
@@ -2201,7 +2203,7 @@ export type StandingPartyAnalysisDiagnostic = {
 
 /**
  * Issue #212: 会話参加・離脱・クラスタ遷移の統合履歴スナップショット。
- * contact / network / 統計は #213/#214 の範囲(本型には含めない)。
+ * contact / network は #213、統計は #214 の範囲(本型には含めない)。
  */
 export type StandingPartyConversationHistory = {
   schemaVersion: typeof STANDING_PARTY_ANALYSIS_SCHEMA_VERSION;
@@ -2210,5 +2212,90 @@ export type StandingPartyConversationHistory = {
   membershipIntervals: ClusterMembershipInterval[];
   clusterLifetimes: ClusterLifetimeRecord[];
   transitions: ClusterTransitionRecord[];
+  diagnostics: StandingPartyAnalysisDiagnostic[];
+};
+
+/**
+ * Issue #213: 2agentが同一clusterに同時`joined`所属していた連続期間。
+ * IDは `` `${minId}:${maxId}:${clusterId}:${startTick}` `` (ADR §1.5 / §6.1)。
+ * 区間は半開`[startedAtTick, endedAtTick)`。active/censoredは`endedAtTick`未定義。
+ */
+export type ContactIntervalRecord = {
+  contactIntervalId: string;
+  agentIdA: string;
+  agentIdB: string;
+  clusterId: string;
+  startedAtTick: number;
+  endedAtTick?: number;
+  status: AnalysisIntervalStatus;
+  /** endedAtTick定義時は endedAtTick - startedAtTick。active/censoredは asOfTick - startedAtTick */
+  dwellTicks: number;
+};
+
+/**
+ * Issue #213: 2agent間に1つ以上のcontact intervalがあるとき張る無向辺。
+ * edgeKeyは `` `${minId}:${maxId}` ``。weightは同席tick等の観測事実のみで、
+ * clique / trust / relationshipTie を混ぜない(ADR §3)。
+ */
+export type ContactNetworkEdge = {
+  edgeKey: string;
+  agentIdA: string;
+  agentIdB: string;
+  totalCoPresenceTicks: number;
+  contactIntervalCount: number;
+  distinctClusterCount: number;
+  firstContactTick: number;
+  lastContactTick: number;
+  isActive: boolean;
+};
+
+/**
+ * Issue #213: contact networkのnode。比較表示用のclique等は`comparisonAttributes`に分離し、
+ * edge weightへ暗黙に混ぜない。
+ */
+export type ContactNetworkNode = {
+  agentId: string;
+  label: string;
+  isObserverJoiner: boolean;
+  currentState: AgentState;
+  currentClusterId?: string;
+  /** 異なる接触相手数 */
+  degree: number;
+  /** 総接触tick(全edgeのtotalCoPresenceTicks合計) */
+  weightedDegree: number;
+  activeContactCount: number;
+  episodeCount: number;
+  /**
+   * 表示比較用。contactの有無・weightとは独立。
+   * trust / relationshipTieはpair単位のため本nodeには載せず、呼び出し側が別ログと照合する。
+   */
+  comparisonAttributes?: {
+    cliqueId?: number;
+  };
+};
+
+/** Issue #213: Phase 4で必要な記述指標に限定したnetwork指標(中心性の高度分析は対象外) */
+export type ContactNetworkMetrics = {
+  nodeCount: number;
+  edgeCount: number;
+  /** `2|E| / (n(n-1))`。n < 2 のとき 0 */
+  density: number;
+  isolatedNodeCount: number;
+  connectedComponentCount: number;
+};
+
+/**
+ * Issue #213: membership区間の時間重複から導出した接触ネットワークsnapshot。
+ * 入力の履歴・SimulationStateをmutationしない。
+ */
+export type StandingPartyContactNetwork = {
+  schemaVersion: typeof STANDING_PARTY_ANALYSIS_SCHEMA_VERSION;
+  asOfTick: number;
+  fromTick: number;
+  toTick: number;
+  contactIntervals: ContactIntervalRecord[];
+  edges: ContactNetworkEdge[];
+  nodes: ContactNetworkNode[];
+  metrics: ContactNetworkMetrics;
   diagnostics: StandingPartyAnalysisDiagnostic[];
 };
