@@ -94,8 +94,10 @@ Phase 2は、この`ctx`と`decision`の型を拡張し、`agent`/`candidate`を
     「エピソード = join〜離脱の1区間」という単位が滑走面をまたいで一貫する。再参加時に前回満足度を
     引き継ぐ設計は「特定の輪への愛着・記憶」を意味し、これはPhase 3(愛着)の対象。Phase 2では
     エピソードは常に無記憶(memoryless)に初期化する。
-  - 接触履歴(誰といつ同席したか)の記録自体は、会話クラスタADR 3.3節7の`ClusterMembershipEvent`
-    (Follow-up D、未着手)へ委ね、満足度・エピソード状態には持ち込まない。
+  - 接触履歴(誰といつ同席したか)の記録自体は、満足度・エピソード状態には持ち込まない。
+    接触・会話履歴の分析契約は Issue #211
+    ([standing-party-analysis-phase4-model.md](standing-party-analysis-phase4-model.md))へ委譲
+    (旧 Follow-up D / `ClusterMembershipEvent`案は同ADRで supersede)。
 
 ---
 
