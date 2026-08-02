@@ -10,7 +10,9 @@ live な`ConversationEpisode`を、**シミュレーション本体の意思決�
 (`src/simulation/standingPartyAnalysis.ts`の`buildStandingPartyConversationHistory`、
 Gap Aの`clusterMembershipLost`イベント)および Issue #213
 (`src/simulation/contactNetwork.ts`の`deriveContactIntervals` /
-`buildStandingPartyContactNetwork`)で行い、統計 / UI は #214 以降が担う。
+`buildStandingPartyContactNetwork`)および統計集計(#214、
+`src/simulation/standingPartyStatistics.ts`の`buildStandingPartyRunStatistics`経由)で行い、
+UI は #215 以降が担う。
 本ADR(#211)自体は契約の固定が成果物であり、#211 マージ時点では既存コードの挙動・PRNG消費順序・
 `SimulationState`のフィールドは変更していない。
 
@@ -59,7 +61,7 @@ Gap Aの`clusterMembershipLost`イベント)および Issue #213
 
 ### 0.3 本Issueの対象外(再掲)
 
-- 履歴・network・統計の本実装(#212〜#214)。うち#212(会話履歴)と#213(接触ネットワーク)は実装済み
+- 履歴・network・統計の本実装(#212〜#214)。#212(会話履歴)・#213(接触ネットワーク)・#214(統計集計)は実装済み
 - Canvas / timeline / graph / dashboard UI(#215〜#217)
 - DB・クラウド保存・複数端末同期
 - 人間関係の好悪推定、network centrality を社会的価値として評価すること
@@ -211,6 +213,12 @@ state.log (+ live episodes / candidates / pending transitions)
 > clique / trust / relationshipTie は edge weight に混ぜず、比較用`comparisonAttributes`または
 > 別ログとの照合に留める。実装は`src/simulation/contactNetwork.ts`(入口は
 > `standingPartyAnalysis.ts`から再エクスポート)。
+>
+> **更新(Issue #214)**: 履歴・contactから`StandingPartyRunStatistics`(agent / cluster / run /
+> ObserverJoiner比較 / 時系列)を`buildStandingPartyRunStatistics`で導出する。完了と
+> active/censoredの分離、`DistributionSummary`(empty非捏造)、turnover=
+> `(vol+forced)/max(join,1)`、meanMemberCount=区間加重平均、density分母=開始時populationを固定。
+> 実装は`src/simulation/standingPartyStatistics.ts`(入口は`standingPartyAnalysis.ts`)。
 
 #### Gap B: confirm 時の founder episode 開始に join イベントが無い場合がある
 
@@ -333,7 +341,7 @@ Phase 5 の情報伝播が再利用してよいのは**接触事実(contact inte
 | `lifetimeTicks` | `endedAtTick - createdAtTick`(未終了は censored) |
 | `peakMemberCount` / `meanMemberCount` | lifetime 中の member 数(joined のみ) |
 | `joinCount` / `voluntaryLeaveCount` / `forcedReleaseCount` | イベント件数 |
-| `turnover` | `(voluntaryLeave + forcedRelease) / max(joinCount, 1)`など、定義を #214 で数値固定 |
+| `turnover` | `(voluntaryLeave + forcedRelease) / max(joinCount, 1)`(#214で数値固定) |
 | `endReason` | dissolved / expired / stillActive / cleanedUp |
 
 ### 4.3 run 全体
@@ -342,7 +350,7 @@ Phase 5 の情報伝播が再利用してよいのは**接触事実(contact inte
 | --- | --- |
 | 滞在時間分布 | **完了** episode の`dwellTicks`の件数・中央値・分位点 |
 | 接触人数分布 | agent 別`distinctContactCount`の分布 |
-| network density | `2|E| / (n(n-1))`(会場退出済み agent を分母に含めるかは #214 で固定。推奨: run 開始時 population を分母) |
+| network density | `2|E| / (n(n-1))`。分母nはrun開始時populationで固定(#214)。接触に現れたnode集合ベースのdensityは`ContactNetworkMetrics`に別途保持 |
 | 孤立 node 数 | degree 0 の agent 数 |
 | cluster lifetime 分布 | 完了 lifetime のみ |
 | 目的地付き移動成功率 | `success / (success + failure)`。explore 除外 |
@@ -564,9 +572,10 @@ export type StandingPartyAnalysisSnapshot = {
 推奨モジュール配置:
 
 - `src/simulation/standingPartyAnalysis.ts` — 履歴・contact・統計の pure 導出の入口
-  (#212で`buildStandingPartyConversationHistory`、#213で`buildStandingPartyContactNetwork`を実装済み。
-  #214で統計を段階的に足す。`standingPartyComparison.ts`は維持し、必要なら内部から再利用)
+  (#212で`buildStandingPartyConversationHistory`、#213で`buildStandingPartyContactNetwork`、
+  #214で`buildStandingPartyRunStatistics`を実装済み。`standingPartyComparison.ts`は維持)
 - `src/simulation/contactNetwork.ts` — #213: membership重複→contact interval / edge / node / 指標
+- `src/simulation/standingPartyStatistics.ts` — #214: 分布要約・agent/cluster/run統計・時系列
 - UI コンポーネントは`src/components/`に置き、シミュレーション規則を持たない
   (既存の presentational 規律)。
 
@@ -600,7 +609,7 @@ Roadmap #172 の推奨順を本契約で固定する:
 2. **#213 接触ネットワーク** — **実装済み**
    - membership 重複から`ContactIntervalRecord` / `ContactNetworkEdge`
    - clique / trust / tie と混同しないテスト
-3. **#214 統計集計**
+3. **#214 統計集計** — **実装済み**
    - agent / cluster / run 指標、未完了分離、ObserverJoiner 記述統計
 4. **#215 / #216 / #217** UI(タイムライン・graph・ダッシュボード)
 5. **#218** 統合検証・E2E(1000 tick、複数 seed、desktop / iPhone 幅)
