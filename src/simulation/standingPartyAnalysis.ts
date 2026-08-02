@@ -1,13 +1,21 @@
 /**
- * Issue #212 (standing-party Phase 4 分析): 会話参加・離脱・クラスタ遷移を統合した会話履歴
- * read model。`docs/standing-party-analysis-phase4-model.md`の契約どおり、
+ * Issue #212 / #213 (standing-party Phase 4 分析): 会話参加・離脱・クラスタ遷移を統合した会話履歴
+ * read modelと、membership重複から接触ネットワークを導出する入口。
+ * `docs/standing-party-analysis-phase4-model.md`の契約どおり、
  * `state.log`の構造化イベント(+ liveな`currentEpisode`/`pendingClusterTransition`/
  * `groupCandidates`)からpure・決定的に導出する。RNGは消費せず、入力stateをmutationしない。
- * 表示文言(`message`)は参照しない。contact / network / 統計集計は#213/#214の範囲。
+ * 表示文言(`message`)は参照しない。統計集計は#214の範囲。
  *
  * `standingPartyComparison.ts`(#190)と同様、afterParty/classroomPairのrunに対して呼び出しても
  * 対象イベントが無ければ空/ゼロ相当を返すだけで例外は投げない。
  */
+import {
+  buildContactNetworkFromHistory,
+  buildContactNetworkMemoKey,
+  readContactNetworkMemo,
+  writeContactNetworkMemo,
+  type BuildContactNetworkFromHistoryOptions,
+} from "./contactNetwork";
 import type {
   AnalysisIntervalStatus,
   ClusterLifetimeEndReason,
@@ -21,9 +29,26 @@ import type {
   SimulationEventType,
   SimulationState,
   StandingPartyAnalysisDiagnostic,
+  StandingPartyContactNetwork,
   StandingPartyConversationHistory,
 } from "./types";
 import { STANDING_PARTY_ANALYSIS_SCHEMA_VERSION } from "./types";
+
+export type BuildStandingPartyContactNetworkOptions = BuildContactNetworkFromHistoryOptions & {
+  /** 事前構築済み履歴。省略時は`buildStandingPartyConversationHistory(state)` */
+  history?: StandingPartyConversationHistory;
+};
+
+export {
+  assertContactDerivationOrderIndependent,
+  assertContactNetworkDoesNotMutateState,
+  buildContactNetworkFromHistory,
+  createContactIntervalId,
+  createContactNetworkEdgeKey,
+  deriveContactIntervals,
+  detectOverlappingMultiClusterMembership,
+} from "./contactNetwork";
+export type { BuildContactNetworkFromHistoryOptions } from "./contactNetwork";
 
 /** join系イベント(同一episodeIdは1件に畳む)。Gap Bのcanonical開始信号 §2.4 */
 const EPISODE_START_EVENT_TYPES: ReadonlySet<SimulationEventType> = new Set([
@@ -839,4 +864,48 @@ export function assertHistoryDoesNotMutateState(
     }
   }
   return first;
+}
+
+/**
+ * Issue #213: SimulationStateから接触ネットワークsnapshotを導出する入口。
+ * 履歴未指定時は`buildStandingPartyConversationHistory`でmembershipを構築してから
+ * `buildContactNetworkFromHistory`へ渡す。RNG非消費・入力非mutation。
+ */
+export function buildStandingPartyContactNetwork(
+  state: SimulationState,
+  options?: BuildStandingPartyContactNetworkOptions,
+): StandingPartyContactNetwork {
+  const asOfTick = options?.asOfTick ?? state.tick;
+  const history =
+    options?.history ?? buildStandingPartyConversationHistory(state, { asOfTick });
+  const { history: _omit, ...networkOptions } = options ?? {};
+  void _omit;
+  return buildContactNetworkFromHistory(state, history, {
+    ...networkOptions,
+    asOfTick,
+  });
+}
+
+/**
+ * 同一`SimulationState`参照に対する再render向けmemo化ラッパ(ADR §5.2 / §7.2)。
+ * stateが新しいオブジェクトになれば再計算する。導出はsimulationを変えない。
+ */
+export function buildStandingPartyContactNetworkMemoized(
+  state: SimulationState,
+  options?: BuildStandingPartyContactNetworkOptions,
+): StandingPartyContactNetwork {
+  const asOfTick = options?.asOfTick ?? state.tick;
+  const history =
+    options?.history ?? buildStandingPartyConversationHistory(state, { asOfTick });
+  const { history: _omit, ...networkOptions } = options ?? {};
+  void _omit;
+  const key = buildContactNetworkMemoKey(state, { ...networkOptions, asOfTick }, history.asOfTick);
+  const cached = readContactNetworkMemo(state, key);
+  if (cached) return cached;
+  const network = buildContactNetworkFromHistory(state, history, {
+    ...networkOptions,
+    asOfTick,
+  });
+  writeContactNetworkMemo(state, key, network);
+  return network;
 }
