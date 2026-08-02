@@ -2299,3 +2299,217 @@ export type StandingPartyContactNetwork = {
   metrics: ContactNetworkMetrics;
   diagnostics: StandingPartyAnalysisDiagnostic[];
 };
+
+/**
+ * Issue #214: 数値列の記述統計。emptyは0で捏造せず、分位点・mean等を`undefined`にする。
+ * `docs/standing-party-analysis-phase4-model.md` §4。
+ */
+export type DistributionSummary = {
+  count: number;
+  min?: number;
+  max?: number;
+  mean?: number;
+  median?: number;
+  p10?: number;
+  p25?: number;
+  p75?: number;
+  p90?: number;
+  sum?: number;
+};
+
+/**
+ * Issue #214: 成功率など分母0を明示する比率。`rate`は`denominator === 0`のとき`undefined`。
+ */
+export type RateWithDenominator = {
+  numerator: number;
+  denominator: number;
+  rate?: number;
+};
+
+/**
+ * Issue #214: 統計集計のfilter。元履歴をmutationせず、窓clip / 部分集合で再集計する。
+ * 半開区間`[fromTick, toTick)`。省略時は run 全体(`[0, asOfTick)`)。
+ */
+export type StandingPartyStatisticsFilter = {
+  fromTick?: number;
+  toTick?: number;
+  agentIds?: readonly string[];
+  clusterIds?: readonly string[];
+  /** ObserverJoinerのみ / 除外 / 全員(default) */
+  observerJoinerMode?: "only" | "exclude" | "all";
+  /** episode終了理由で絞る(完了episodeのみ対象。activeは`includeActive`側) */
+  endReasons?: readonly ConversationEpisodeEndReasonV2[];
+  /** transition結果で絞る */
+  transitionResults?: readonly ClusterTransitionResult[];
+  /**
+   * active / censored 区間を件数・系列に含めるか。default true。
+   * 完了分布(`completedDwell`等)には常に混ぜない。
+   */
+  includeActive?: boolean;
+};
+
+/** Issue #214: agent粒度の記述統計 */
+export type StandingPartyAgentStatistics = {
+  agentId: string;
+  label: string;
+  isObserverJoiner: boolean;
+  finalState: AgentState;
+  startedEpisodeCount: number;
+  completedEpisodeCount: number;
+  activeEpisodeCount: number;
+  /** 完了episodeの滞在tick分布。0件ならempty summary */
+  completedDwellTicks: DistributionSummary;
+  /** 現在openなepisodeの滞在tick合計(複数あっても通常0〜1)。無ければundefined */
+  currentEpisodeDwellTicks?: number;
+  distinctContactCount: number;
+  contactIntervalCount: number;
+  totalContactTicks: number;
+  joinedClusterCount: number;
+  distinctClusterCount: number;
+  voluntaryDepartureCount: number;
+  forcedReleaseCount: number;
+  departAndExploreCount: number;
+  targetedTransitionStartedCount: number;
+  targetedTransitionSuccessCount: number;
+  targetedTransitionFailureCount: number;
+  targetedTransitionFallbackCount: number;
+  /** success / (success + failure)。分母0はrate undefined */
+  targetedTransitionSuccessRate: RateWithDenominator;
+  /** 愛着由来のstay記録(`clusterTransitionInhibited` + stayedByAttachment) */
+  stayedByAttachmentCount: number;
+  /** 配慮由来のstay記録(stayedByDepartureConcern) */
+  stayedByDepartureConcernCount: number;
+  /** 混合抑制のstay記録(stayedByMixedInhibition) */
+  stayedByMixedInhibitionCount: number;
+  /** 会場退出tick。構造化イベントで確定できる場合のみ(主にobserverLeft) */
+  venueExitTick?: number;
+  /** 観測時点で`state === "left"`ならtrue */
+  hasExitedVenue: boolean;
+};
+
+/** Issue #214: cluster粒度の記述統計。turnover = (vol+forced) / max(join, 1) */
+export type StandingPartyClusterStatistics = {
+  clusterId: string;
+  founderAgentId?: string;
+  createdAtTick: number;
+  confirmedAtTick?: number;
+  endedAtTick?: number;
+  status: AnalysisIntervalStatus;
+  endReason?: ClusterLifetimeEndReason;
+  /** completedなら ended - created。active/censoredは asOf - created */
+  lifetimeTicks: number;
+  /** confirmed〜終了(またはasOf)の長さ。未confirmならundefined */
+  activeDurationTicks?: number;
+  peakMemberCount: number;
+  /**
+   * lifetime窓でのjoined member数の区間加重平均(=毎tick snapshot平均)。
+   * Σ(membership重複tick) / lifetimeTicks。lifetimeTicks===0ならundefined。
+   */
+  meanMemberCount?: number;
+  /** 終了時点(またはasOf)のjoined member数 */
+  finalMemberCount: number;
+  uniqueMemberCount: number;
+  joinCount: number;
+  voluntaryLeaveCount: number;
+  forcedReleaseCount: number;
+  turnoverRate: number;
+  targetedTransitionInflowCount: number;
+  targetedTransitionOutflowCount: number;
+};
+
+/** Issue #214: run全体の記述統計・分布・network概要 */
+export type StandingPartyRunLevelStatistics = {
+  populationSize: number;
+  observationFromTick: number;
+  observationToTick: number;
+  asOfTick: number;
+  completedEpisodeDwellTicks: DistributionSummary;
+  activeEpisodeCount: number;
+  completedEpisodeCount: number;
+  agentDistinctContactCounts: DistributionSummary;
+  pairContactDurationTicks: DistributionSummary;
+  completedClusterLifetimeTicks: DistributionSummary;
+  completedClusterPeakSizes: DistributionSummary;
+  clusterCreatedCount: number;
+  clusterEndedCount: number;
+  /** 観測終点でのactive cluster数 */
+  activeClusterCountAtAsOf: number;
+  network: ContactNetworkMetrics;
+  /**
+   * density分母に使うnode数。ADR推奨どおりrun開始時populationを固定分母とする
+   * (`network.density`は接触に現れたnode集合ベースのまま別途保持)。
+   */
+  networkDensityVsPopulation: RateWithDenominator;
+  voluntaryDepartureCount: number;
+  forcedReleaseCount: number;
+  voluntaryDepartureShare: RateWithDenominator;
+  targetedTransitionSuccessCount: number;
+  targetedTransitionFailureCount: number;
+  targetedTransitionFailureByReason: Partial<Record<ClusterTransitionInvalidationReason, number>>;
+  targetedTransitionSuccessRate: RateWithDenominator;
+  venueExitCount: number;
+  activeEpisodeCountAtAsOf: number;
+  activeContactIntervalCountAtAsOf: number;
+};
+
+/** Issue #214: ObserverJoiner個人と非OJ集団の記述比較(優劣・因果は主張しない) */
+export type StandingPartyObserverJoinerComparison = {
+  /** ObserverJoiner本人(複数将来拡張のため配列)。0人なら空 */
+  observerJoiners: StandingPartyAgentStatistics[];
+  /** 非ObserverJoiner集団の代表値(同じ定義・分母) */
+  nonObserverJoinerGroup: {
+    agentCount: number;
+    episodeCount: DistributionSummary;
+    completedDwellTicks: DistributionSummary;
+    distinctContactCount: DistributionSummary;
+    targetedTransitionStartedCount: DistributionSummary;
+    targetedTransitionSuccessRate: RateWithDenominator;
+    stayedByAttachmentCount: DistributionSummary;
+    stayedByDepartureConcernCount: DistributionSummary;
+    venueExitCount: number;
+    venueExitRate: RateWithDenominator;
+  };
+};
+
+/** Issue #214: UI向け時系列の1サンプル */
+export type StandingPartyTimeSeriesPoint = {
+  tick: number;
+  activeClusterCount: number;
+  joinedCount: number;
+  undecidedCount: number;
+  approachingCount: number;
+  formingCount: number;
+  leavingCount: number;
+  leftCount: number;
+  activeContactEdgeCount: number;
+  cumulativeUniqueContactEdgeCount: number;
+  cumulativeCompletedEpisodeCount: number;
+  cumulativeTargetedTransitionSuccessCount: number;
+  cumulativeTargetedTransitionFailureCount: number;
+};
+
+/** Issue #214: サンプリング済み時系列。最終tickは必ず含む */
+export type StandingPartyTimeSeries = {
+  schemaVersion: typeof STANDING_PARTY_ANALYSIS_SCHEMA_VERSION;
+  fromTick: number;
+  toTick: number;
+  sampleIntervalTicks: number;
+  points: StandingPartyTimeSeriesPoint[];
+};
+
+/**
+ * Issue #214: standing-party Phase 4 統計集計のversioned snapshot。
+ * `StandingPartyRunSummary`(#190)は維持し、本型は横に載せる薄い層。
+ */
+export type StandingPartyRunStatistics = {
+  schemaVersion: typeof STANDING_PARTY_ANALYSIS_SCHEMA_VERSION;
+  asOfTick: number;
+  fromTick: number;
+  toTick: number;
+  filter: StandingPartyStatisticsFilter;
+  agents: StandingPartyAgentStatistics[];
+  clusters: StandingPartyClusterStatistics[];
+  run: StandingPartyRunLevelStatistics;
+  observerJoinerComparison: StandingPartyObserverJoinerComparison;
+  series: StandingPartyTimeSeries;
+};

@@ -1,10 +1,10 @@
 /**
- * Issue #212 / #213 (standing-party Phase 4 分析): 会話参加・離脱・クラスタ遷移を統合した会話履歴
- * read modelと、membership重複から接触ネットワークを導出する入口。
+ * Issue #212 / #213 / #214 (standing-party Phase 4 分析): 会話参加・離脱・クラスタ遷移を統合した
+ * 会話履歴read model、membership重複から接触ネットワークを導出する入口、および記述統計集計API。
  * `docs/standing-party-analysis-phase4-model.md`の契約どおり、
  * `state.log`の構造化イベント(+ liveな`currentEpisode`/`pendingClusterTransition`/
  * `groupCandidates`)からpure・決定的に導出する。RNGは消費せず、入力stateをmutationしない。
- * 表示文言(`message`)は参照しない。統計集計は#214の範囲。
+ * 表示文言(`message`)は参照しない。
  *
  * `standingPartyComparison.ts`(#190)と同様、afterParty/classroomPairのrunに対して呼び出しても
  * 対象イベントが無ければ空/ゼロ相当を返すだけで例外は投げない。
@@ -16,6 +16,10 @@ import {
   writeContactNetworkMemo,
   type BuildContactNetworkFromHistoryOptions,
 } from "./contactNetwork";
+import {
+  buildStandingPartyStatisticsFromHistory,
+  type BuildStandingPartyStatisticsOptions,
+} from "./standingPartyStatistics";
 import type {
   AnalysisIntervalStatus,
   ClusterLifetimeEndReason,
@@ -31,6 +35,7 @@ import type {
   StandingPartyAnalysisDiagnostic,
   StandingPartyContactNetwork,
   StandingPartyConversationHistory,
+  StandingPartyRunStatistics,
 } from "./types";
 import { STANDING_PARTY_ANALYSIS_SCHEMA_VERSION } from "./types";
 
@@ -49,6 +54,16 @@ export {
   detectOverlappingMultiClusterMembership,
 } from "./contactNetwork";
 export type { BuildContactNetworkFromHistoryOptions } from "./contactNetwork";
+
+export {
+  assertStatisticsDoesNotMutateState,
+  buildStandingPartyStatisticsFromHistory,
+  buildStandingPartyTimeSeries,
+  clipHalfOpenInterval,
+  rateWithDenominator,
+  summarizeDistribution,
+} from "./standingPartyStatistics";
+export type { BuildStandingPartyStatisticsOptions } from "./standingPartyStatistics";
 
 /** join系イベント(同一episodeIdは1件に畳む)。Gap Bのcanonical開始信号 §2.4 */
 const EPISODE_START_EVENT_TYPES: ReadonlySet<SimulationEventType> = new Set([
@@ -908,4 +923,29 @@ export function buildStandingPartyContactNetworkMemoized(
   });
   writeContactNetworkMemo(state, key, network);
   return network;
+}
+
+export type BuildStandingPartyRunStatisticsOptions = BuildStandingPartyStatisticsOptions & {
+  /** 事前構築済み履歴。省略時は`buildStandingPartyConversationHistory(state)` */
+  history?: StandingPartyConversationHistory;
+};
+
+/**
+ * Issue #214: SimulationStateから記述統計snapshotを導出する入口。
+ * 履歴未指定時は`buildStandingPartyConversationHistory`で構築してから
+ * `buildStandingPartyStatisticsFromHistory`へ渡す。RNG非消費・入力非mutation。
+ */
+export function buildStandingPartyRunStatistics(
+  state: SimulationState,
+  options?: BuildStandingPartyRunStatisticsOptions,
+): StandingPartyRunStatistics {
+  const asOfTick = options?.asOfTick ?? state.tick;
+  const history =
+    options?.history ?? buildStandingPartyConversationHistory(state, { asOfTick });
+  const { history: _omit, ...statsOptions } = options ?? {};
+  void _omit;
+  return buildStandingPartyStatisticsFromHistory(state, history, {
+    ...statsOptions,
+    asOfTick,
+  });
 }
