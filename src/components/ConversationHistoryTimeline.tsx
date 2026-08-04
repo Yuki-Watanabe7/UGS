@@ -40,6 +40,11 @@ type Props = {
   onSelectedAgentIdChange?: (agentId: string | undefined) => void;
   selectedClusterId?: string;
   onSelectedClusterIdChange?: (clusterId: string | undefined) => void;
+  /**
+   * Issue #216: 接触networkのinterval選択などからtimelineのtick範囲へ連携する。
+   * 値が変わったときだけ filter に反映する(表示専用)。
+   */
+  linkedTickWindow?: { fromTick?: number; toTick?: number };
 };
 
 function episodeBarClass(episode: ConversationEpisodeRecord, selected: boolean): string {
@@ -71,6 +76,7 @@ export function ConversationHistoryTimeline({
   onSelectedAgentIdChange,
   selectedClusterId,
   onSelectedClusterIdChange,
+  linkedTickWindow,
 }: Props) {
   const [filter, setFilter] = useState<ConversationHistoryViewFilter>({
     mode: "agent",
@@ -93,6 +99,15 @@ export function ConversationHistoryTimeline({
       prev.clusterId === selectedClusterId ? prev : { ...prev, clusterId: selectedClusterId },
     );
   }, [selectedClusterId]);
+
+  useEffect(() => {
+    if (!linkedTickWindow) return;
+    setFilter((prev) => ({
+      ...prev,
+      fromTick: linkedTickWindow.fromTick ?? prev.fromTick,
+      toTick: linkedTickWindow.toTick ?? prev.toTick,
+    }));
+  }, [linkedTickWindow]);
 
   // Reset / 新runで履歴が空になったら選択をクリア
   useEffect(() => {

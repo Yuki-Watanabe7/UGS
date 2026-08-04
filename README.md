@@ -1044,6 +1044,16 @@ ObserverJoiner・進行中/完了のfilter、詳細panel、Canvas/Inspectorと�
 表示操作はsimulation state・PRNG・履歴生成に影響せず、過去tick選択も巻き戻しません
 (replayは将来境界)。接触network graphは#216、統計dashboardは#217です。
 
+### 接触ネットワークグラフ(#216)
+
+#213の接触ネットワークsnapshotを、standingParty画面専用の折りたたみパネルで可視化します。
+agentをnode・同席contactをedgeとしてSVG描画し、weight(同席tick / 区間数 / 異なるcluster数 /
+接触の有無)切替、tick範囲・最小duration・activeのみ・ego network・ObserverJoiner辺・
+cluster filter、node/edge詳細(interval一覧)、Canvas/Inspector/timelineとの選択連携、
+zoomボタン・reset view・keyboard用代替listを提供します。layoutは決定的な円周配置で
+simulation座標・PRNGに影響しません。接触とclique / trust / relationshipTieはUI上で分離し、
+接触が信頼や好意を意味しない旨を明示します。統計dashboardは#217です。
+
 ## シミュレーションルールの概要
 
 行動ルールは `src/simulation/engine.ts` に集約されています。主なルール:
@@ -1097,6 +1107,8 @@ src/
     StandingPartyAdvancedSettings.tsx 立食パーティー専用のPhase 2+Phase 3詳細設定パネル(#189、#202、standingParty選択時のみ表示)
     ConversationHistoryTimeline.tsx 立食パーティー専用の会話履歴タイムライン(#215、agent/cluster mode・filter・詳細・Canvas選択同期)
     ConversationHistoryFilters.tsx / ConversationHistoryDetail.tsx / conversationHistoryProjection.ts  同上のfilter・詳細・表示投影
+    ContactNetworkGraph.tsx 立食パーティー専用の接触ネットワークグラフ(#216、weight切替・filter・詳細・Canvas/timeline選択同期)
+    ContactNetworkControls.tsx / ContactNetworkDetail.tsx / contactNetworkProjection.ts  同上の操作・詳細・表示投影
     EventLog.tsx            状態ログの表示(発言・発言効果・乖離・信頼・関係性フィルタを含む)
     AgentLegend.tsx         凡例
     SimulationSummaryPanel.tsx  終了サマリーの表示
@@ -1173,6 +1185,7 @@ Phase 4(本心・対外表現・行動の三層モデル)に関するテスト�
 - `contactNetwork.test.ts` — 接触ネットワーク(contact interval / edge集約 / 時間窓 / clique混同禁止 / 決定性・非mutation)の検証(#213)
 - `standingPartyStatistics.test.ts` — 記述統計(分布要約・完了/active分離・OJ比較・filter・時系列・決定性・非mutation)の検証(#214)
 - `ConversationHistoryTimeline.test.ts` / `conversationHistoryProjection.test.ts` — 会話履歴タイムラインUIと投影filter(mode・reason・tick範囲・empty・選択同期DOM契約)の検証(#215)
+- `ContactNetworkGraph.test.ts` / `contactNetworkProjection.test.ts` — 接触ネットワークグラフUIと投影(weight・isolated・active/past・ego・OJ・layout安定・詳細disclaimer)の検証(#216)
 
 ```bash
 npm run test

@@ -26,6 +26,7 @@ import {
 } from "./components/speechBubbleDisplayFilter";
 import { StandingPartyAdvancedSettings } from "./components/StandingPartyAdvancedSettings";
 import { ConversationHistoryTimeline } from "./components/ConversationHistoryTimeline";
+import { ContactNetworkGraph } from "./components/ContactNetworkGraph";
 import {
   DEFAULT_STANDING_PARTY_SCENARIO_CONFIG,
   validateStandingPartyScenarioConfig,
@@ -156,6 +157,10 @@ function SimulationApp({ scenario }: Props) {
   const [selectedAgentId, setSelectedAgentId] = useState<string | undefined>(undefined);
   // Issue #215: 会話履歴タイムラインとCanvasで共有するcluster選択(表示専用。sim/PRNG非介入)。
   const [selectedClusterId, setSelectedClusterId] = useState<string | undefined>(undefined);
+  // Issue #216: 接触networkのinterval → timeline tick範囲連携(表示専用)。
+  const [historyTickWindow, setHistoryTickWindow] = useState<
+    { fromTick?: number; toTick?: number } | undefined
+  >(undefined);
 
   const rngRef = useRef(new SeededRandom(seed));
 
@@ -442,13 +447,31 @@ function SimulationApp({ scenario }: Props) {
             onSelectedAgentIdChange={setSelectedAgentId}
           />
           {presentation.id === "standingParty" && (
-            <ConversationHistoryTimeline
-              state={simState}
-              selectedAgentId={selectedAgentId}
-              onSelectedAgentIdChange={setSelectedAgentId}
-              selectedClusterId={selectedClusterId}
-              onSelectedClusterIdChange={setSelectedClusterId}
-            />
+            <>
+              <ContactNetworkGraph
+                state={simState}
+                selectedAgentId={selectedAgentId}
+                onSelectedAgentIdChange={setSelectedAgentId}
+                selectedClusterId={selectedClusterId}
+                onSelectedClusterIdChange={setSelectedClusterId}
+                onTimelineFocus={(focus) => {
+                  if (focus.agentId !== undefined) setSelectedAgentId(focus.agentId);
+                  if (focus.clusterId !== undefined) setSelectedClusterId(focus.clusterId);
+                  setHistoryTickWindow({
+                    fromTick: focus.fromTick,
+                    toTick: focus.toTick,
+                  });
+                }}
+              />
+              <ConversationHistoryTimeline
+                state={simState}
+                selectedAgentId={selectedAgentId}
+                onSelectedAgentIdChange={setSelectedAgentId}
+                selectedClusterId={selectedClusterId}
+                onSelectedClusterIdChange={setSelectedClusterId}
+                linkedTickWindow={historyTickWindow}
+              />
+            </>
           )}
           <SimulationSummaryPanel state={simState} params={params} />
           <EventLog
