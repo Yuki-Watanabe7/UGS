@@ -1034,7 +1034,15 @@ memo化ラッパを含みます。記述統計は#214、UIは#215以降です。
 (`StandingPartyRunStatistics`)とUI向け時系列を`buildStandingPartyRunStatistics`でpure導出します。
 完了episodeとactive/censoredを分離し、中央値・分位点を含む分布要約(emptyは0で捏造しない)、
 voluntary departure / forced release / targeted transitionの別集計、ObserverJoiner比較
-(優劣・因果は主張しない)、時間窓・agent/cluster filterに対応します。ダッシュボードUIは#215以降です。
+(優劣・因果は主張しない)、時間窓・agent/cluster filterに対応します。ダッシュボードUIは#217です。
+
+### 会話履歴タイムライン(#215)
+
+#212の正規履歴を、standingParty画面専用の折りたたみパネルで可視化します。
+agent timeline / cluster timelineの切替、tick範囲・終了理由・自発/強制/目的地付き遷移・
+ObserverJoiner・進行中/完了のfilter、詳細panel、Canvas/Inspectorとの選択同期を提供します。
+表示操作はsimulation state・PRNG・履歴生成に影響せず、過去tick選択も巻き戻しません
+(replayは将来境界)。接触network graphは#216、統計dashboardは#217です。
 
 ## シミュレーションルールの概要
 
@@ -1087,6 +1095,8 @@ src/
     SimulationCanvas.tsx    SVGによる描画のみを担当
     ControlPanel.tsx        操作パネルとパラメータスライダー
     StandingPartyAdvancedSettings.tsx 立食パーティー専用のPhase 2+Phase 3詳細設定パネル(#189、#202、standingParty選択時のみ表示)
+    ConversationHistoryTimeline.tsx 立食パーティー専用の会話履歴タイムライン(#215、agent/cluster mode・filter・詳細・Canvas選択同期)
+    ConversationHistoryFilters.tsx / ConversationHistoryDetail.tsx / conversationHistoryProjection.ts  同上のfilter・詳細・表示投影
     EventLog.tsx            状態ログの表示(発言・発言効果・乖離・信頼・関係性フィルタを含む)
     AgentLegend.tsx         凡例
     SimulationSummaryPanel.tsx  終了サマリーの表示
@@ -1162,6 +1172,7 @@ Phase 4(本心・対外表現・行動の三層モデル)に関するテスト�
 - `standingPartyAnalysis.test.ts` — 会話履歴read model(episode/membership/lifetime/transition)の導出・Gap A/B・決定性・非mutationの検証(#212)
 - `contactNetwork.test.ts` — 接触ネットワーク(contact interval / edge集約 / 時間窓 / clique混同禁止 / 決定性・非mutation)の検証(#213)
 - `standingPartyStatistics.test.ts` — 記述統計(分布要約・完了/active分離・OJ比較・filter・時系列・決定性・非mutation)の検証(#214)
+- `ConversationHistoryTimeline.test.ts` / `conversationHistoryProjection.test.ts` — 会話履歴タイムラインUIと投影filter(mode・reason・tick範囲・empty・選択同期DOM契約)の検証(#215)
 
 ```bash
 npm run test

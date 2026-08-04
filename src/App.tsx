@@ -25,6 +25,7 @@ import {
   type SpeechBubbleDisplaySettingsState,
 } from "./components/speechBubbleDisplayFilter";
 import { StandingPartyAdvancedSettings } from "./components/StandingPartyAdvancedSettings";
+import { ConversationHistoryTimeline } from "./components/ConversationHistoryTimeline";
 import {
   DEFAULT_STANDING_PARTY_SCENARIO_CONFIG,
   validateStandingPartyScenarioConfig,
@@ -153,6 +154,8 @@ function SimulationApp({ scenario }: Props) {
   // Issue #202 (Phase 3): Inspectorで選択中のagentをCanvasと共有し、選択中agentのpending transition
   // targetだけをCanvas上に表示できるようにする(全agentの関心線は表示しない)。
   const [selectedAgentId, setSelectedAgentId] = useState<string | undefined>(undefined);
+  // Issue #215: 会話履歴タイムラインとCanvasで共有するcluster選択(表示専用。sim/PRNG非介入)。
+  const [selectedClusterId, setSelectedClusterId] = useState<string | undefined>(undefined);
 
   const rngRef = useRef(new SeededRandom(seed));
 
@@ -425,6 +428,7 @@ function SimulationApp({ scenario }: Props) {
             speeches={visibleSpeeches}
             tick={simState.tick}
             selectedAgentId={selectedAgentId}
+            selectedClusterId={presentation.id === "standingParty" ? selectedClusterId : undefined}
           />
         </section>
 
@@ -437,6 +441,15 @@ function SimulationApp({ scenario }: Props) {
             selectedAgentId={selectedAgentId}
             onSelectedAgentIdChange={setSelectedAgentId}
           />
+          {presentation.id === "standingParty" && (
+            <ConversationHistoryTimeline
+              state={simState}
+              selectedAgentId={selectedAgentId}
+              onSelectedAgentIdChange={setSelectedAgentId}
+              selectedClusterId={selectedClusterId}
+              onSelectedClusterIdChange={setSelectedClusterId}
+            />
+          )}
           <SimulationSummaryPanel state={simState} params={params} />
           <EventLog
             state={simState}
