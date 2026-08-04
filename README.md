@@ -1066,6 +1066,15 @@ transitionのCSV一式でexportできます(決定的serialize・CSV formula inj
 表示・export操作はsimulation state・PRNG・event列に影響しません。chartライブラリは追加せず
 手書きSVG+tableです。
 
+### 統合検証とE2E(#218)
+
+#211〜#217で実装した分析層全体について、決定的fixture・横断不変条件・event cross-check・
+1000tick×複数seed安定性・analysis非介入(導出ON/OFFでsim/PRNG不変)・UI↔export数値一致・
+desktop/iPhone Playwright E2Eを整備しました。新しいシミュレーション挙動は追加していません。
+検証の棚卸し・benchmark手順・利用上の注意(接触≠好意、仮説的simulation、Phase 5境界)は
+[`docs/standing-party-phase4-verification.md`](docs/standing-party-phase4-verification.md)
+を参照してください。
+
 ## シミュレーションルールの概要
 
 行動ルールは `src/simulation/engine.ts` に集約されています。主なルール:
@@ -1096,6 +1105,7 @@ src/
     contactNetwork.ts          立食パーティー Phase 4: membership重複からcontact interval / edge / node / 記述指標を導出(#213)
     standingPartyStatistics.ts 立食パーティー Phase 4: 滞在・接触・cluster寿命・transitionの記述統計と時系列(#214)
     analysisExport.ts            立食パーティー Phase 4: 現在runの履歴・network・統計のJSON/CSV export(#217)
+    standingPartyAnalysisInvariants.ts 立食パーティー Phase 4: 履歴/network/統計の横断不変条件(#218)
     formationPolicy.ts       シナリオ別の班形成・成立・終了ルールを切り替えるFormationPolicyの定義
     groupPartition.ts        人口を定員ルール(固定/可変)で分割し構造的未割当人数を決定的に計算
     pairFormation.ts         教室ペア形成(classroom-pair)専用のMonte Carlo集計ロジック
@@ -1200,6 +1210,8 @@ Phase 4(本心・対外表現・行動の三層モデル)に関するテスト�
 - `standingPartyStatistics.test.ts` — 記述統計(分布要約・完了/active分離・OJ比較・filter・時系列・決定性・非mutation)の検証(#214)
 - `ConversationHistoryTimeline.test.ts` / `conversationHistoryProjection.test.ts` — 会話履歴タイムラインUIと投影filter(mode・reason・tick範囲・empty・選択同期DOM契約)の検証(#215)
 - `ContactNetworkGraph.test.ts` / `contactNetworkProjection.test.ts` — 接触ネットワークグラフUIと投影(weight・isolated・active/past・ego・OJ・layout安定・詳細disclaimer)の検証(#216)
+- `StandingPartyAnalyticsDashboard.test.ts` / `analysisExport.test.ts` — 統計ダッシュボードUIとJSON/CSV export(schema・escaping・決定性・非mutation)の検証(#217)
+- `standingPartyAnalysisInvariants.ts` / `standingPartyAnalysisPhase4Verification.test.ts` / `standingPartyAnalysisUiIntegration.test.ts` — Phase 4分析の横断不変条件・決定的fixture・event cross-check・1000tick安定性・分析非介入・export↔UI一致・3パネル統合の検証(#218)
 
 ```bash
 npm run test
@@ -1208,6 +1220,8 @@ npm run test
 standingParty Phase 3のdesktop/iPhone相当幅の主要UI flow(preset選択→詳細設定→Reset反映→agent選択→
 target switch観察→pause/resume/reset→scenario切替、および横スクロールなし・折りたたみ/select/range
 操作)はPlaywright(`playwright.config.ts`、`e2e/*.spec.ts`)でE2Eテストしています(#203)。
+Phase 4分析UI(timeline / network / dashboard / export / filter連携 / 320px到達性)も同様に
+`e2e/standingPartyPhase4.*.spec.ts`でCI実行します(#218)。
 
 ```bash
 npm run test:e2e       # 両方のプロジェクト(desktop-chromium / iphone-chromium)を実行

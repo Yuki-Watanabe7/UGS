@@ -62,7 +62,8 @@ UI は #215 以降が担う。
 ### 0.3 本Issueの対象外(再掲)
 
 - 履歴・network・統計の本実装(#212〜#214)。#212(会話履歴)・#213(接触ネットワーク)・#214(統計集計)は実装済み
-- Canvas / timeline / graph / dashboard UI(#215〜#217)
+- Canvas / timeline / graph / dashboard UI(#215〜#217) — 実装済み。統合検証は#218
+  ([standing-party-phase4-verification.md](standing-party-phase4-verification.md))
 - DB・クラウド保存・複数端末同期
 - 人間関係の好悪推定、network centrality を社会的価値として評価すること
 - 話題・情報伝播・口コミ拡散(Phase 5)
