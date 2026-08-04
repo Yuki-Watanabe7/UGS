@@ -27,6 +27,7 @@ import {
 import { StandingPartyAdvancedSettings } from "./components/StandingPartyAdvancedSettings";
 import { ConversationHistoryTimeline } from "./components/ConversationHistoryTimeline";
 import { ContactNetworkGraph } from "./components/ContactNetworkGraph";
+import { StandingPartyAnalyticsDashboard } from "./components/StandingPartyAnalyticsDashboard";
 import {
   DEFAULT_STANDING_PARTY_SCENARIO_CONFIG,
   validateStandingPartyScenarioConfig,
@@ -448,6 +449,26 @@ function SimulationApp({ scenario }: Props) {
           />
           {presentation.id === "standingParty" && (
             <>
+              <StandingPartyAnalyticsDashboard
+                state={simState}
+                params={params}
+                presetId={presetId}
+                standingPartyConfig={appliedStandingPartyConfig}
+                selectedAgentId={selectedAgentId}
+                onSelectedAgentIdChange={setSelectedAgentId}
+                selectedClusterId={selectedClusterId}
+                onSelectedClusterIdChange={setSelectedClusterId}
+                onDrillDown={(focus) => {
+                  if (focus.agentId !== undefined) setSelectedAgentId(focus.agentId);
+                  if (focus.clusterId !== undefined) setSelectedClusterId(focus.clusterId);
+                  if (focus.fromTick !== undefined || focus.toTick !== undefined) {
+                    setHistoryTickWindow({
+                      fromTick: focus.fromTick,
+                      toTick: focus.toTick,
+                    });
+                  }
+                }}
+              />
               <ContactNetworkGraph
                 state={simState}
                 selectedAgentId={selectedAgentId}

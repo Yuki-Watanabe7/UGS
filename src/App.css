@@ -1507,6 +1507,279 @@
   word-break: break-word;
 }
 
+/* Issue #217: standingParty統計ダッシュボード */
+.analytics-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.analytics-dashboard-summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  color: #e5e7eb;
+}
+
+.analytics-dashboard-note,
+.analytics-card-hint,
+.analytics-dist-meta,
+.analytics-empty {
+  margin: 0;
+  font-size: 11px;
+  color: #9ca3af;
+  line-height: 1.4;
+}
+
+.analytics-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.analytics-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #d1d5db;
+}
+
+.analytics-filter-row label {
+  min-width: 7em;
+  color: #9ca3af;
+}
+
+.analytics-filter-row input[type="number"],
+.analytics-filter-row select {
+  min-width: 0;
+  flex: 1 1 110px;
+  font-size: 12px;
+  padding: 4px 6px;
+  background: #111827;
+  color: #e5e7eb;
+  border: 1px solid #374151;
+  border-radius: 4px;
+}
+
+.analytics-filter-row input:focus-visible,
+.analytics-filter-row select:focus-visible,
+.analytics-view-toggle button:focus-visible,
+.analytics-export button:focus-visible,
+.analytics-link-btn:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 1px;
+}
+
+.analytics-filter-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+.analytics-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.analytics-view-toggle,
+.analytics-export {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.analytics-view-toggle button,
+.analytics-export button {
+  font-size: 12px;
+  padding: 6px 10px;
+  border: 1px solid #4b5563;
+  background: #1f2937;
+  color: #e5e7eb;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.analytics-view-toggle button.is-active {
+  background: #374151;
+  border-color: #9ca3af;
+}
+
+.analytics-link-btn {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #93c5fd;
+  font-size: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.analytics-overview {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.analytics-card {
+  border: 1px solid #374151;
+  border-radius: 4px;
+  padding: 8px 10px;
+  background: #111827;
+}
+
+.analytics-card h4,
+.analytics-section-title {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: #e5e7eb;
+}
+
+.analytics-card p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #d1d5db;
+}
+
+.analytics-charts,
+.analytics-tables {
+  display: grid;
+  gap: 12px;
+}
+
+.analytics-dist-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
+  gap: 6px;
+  margin: 8px 0 0;
+}
+
+.analytics-dist-stats dt {
+  font-size: 10px;
+  color: #9ca3af;
+}
+
+.analytics-dist-stats dd {
+  margin: 0;
+  font-size: 12px;
+  color: #e5e7eb;
+}
+
+.analytics-box {
+  position: relative;
+  height: 28px;
+  margin: 8px 0;
+  background: #0b1220;
+  border-radius: 2px;
+}
+
+.analytics-box-whisker {
+  position: absolute;
+  top: 13px;
+  width: 84%;
+  height: 2px;
+  background: #6b7280;
+}
+
+.analytics-box-iqr {
+  position: absolute;
+  top: 6px;
+  height: 16px;
+  background: #374151;
+  border: 1px solid #9ca3af;
+}
+
+.analytics-box-median {
+  position: absolute;
+  top: 4px;
+  width: 3px;
+  height: 20px;
+  background: #93c5fd;
+}
+
+.analytics-breakdown ul,
+.analytics-oj ul {
+  margin: 0;
+  padding-left: 1.2em;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #d1d5db;
+}
+
+.analytics-series-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+@media (min-width: 769px) {
+  .analytics-overview {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .analytics-series-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.analytics-series {
+  margin: 0;
+}
+
+.analytics-series figcaption {
+  font-size: 11px;
+  margin-bottom: 4px;
+  color: #9ca3af;
+}
+
+.analytics-series-svg {
+  width: 100%;
+  height: auto;
+  background: #0b1220;
+  border: 1px solid #374151;
+}
+
+.analytics-series-line {
+  stroke: #93c5fd;
+  stroke-width: 1.5;
+}
+
+.analytics-series-label {
+  font-size: 10px;
+  fill: #9ca3af;
+}
+
+.analytics-table-wrap {
+  overflow-x: auto;
+}
+
+.analytics-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.analytics-table th,
+.analytics-table td {
+  border: 1px solid #374151;
+  padding: 4px 6px;
+  text-align: left;
+  vertical-align: top;
+  color: #d1d5db;
+}
+
+.analytics-table th {
+  background: #1f2937;
+  color: #e5e7eb;
+}
+
 /* Issue #216: 接触ネットワークグラフ */
 .contact-network {
   display: flex;
@@ -1984,35 +2257,39 @@
     order: 7;
   }
 
-  .contact-network {
+  .analytics-dashboard {
     order: 8;
   }
 
-  .conversation-history {
+  .contact-network {
     order: 9;
   }
 
-  .simulation-summary {
+  .conversation-history {
     order: 10;
   }
 
-  .event-log {
+  .simulation-summary {
     order: 11;
+  }
+
+  .event-log {
+    order: 12;
   }
 
   /* .monte-carlo-panel は介入比較パネルにも付いているため、
      後着の .intervention-comparison-panel 指定で介入比較だけ最後に回す */
   .monte-carlo-panel {
-    order: 12;
+    order: 13;
   }
 
   .intervention-comparison-panel {
-    order: 13;
+    order: 14;
   }
 
   /* 同様に、発言効果ON/OFF比較パネルも .monte-carlo-panel を共有しているため最後尾へ回す */
   .speech-effects-comparison-panel {
-    order: 14;
+    order: 15;
   }
 
   /* viewBoxによる縮小表示は活かしつつ、スマホで縦に大きすぎないよう制限する。
