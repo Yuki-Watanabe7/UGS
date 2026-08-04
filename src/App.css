@@ -1507,6 +1507,313 @@
   word-break: break-word;
 }
 
+/* Issue #216: 接触ネットワークグラフ */
+.contact-network {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.contact-network-summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  color: #e5e7eb;
+}
+
+.contact-network-note,
+.contact-network-weight-meta,
+.contact-network-disclaimer,
+.contact-network-filter-hint,
+.contact-network-agent-count {
+  margin: 0;
+  font-size: 11px;
+  color: #9ca3af;
+  line-height: 1.4;
+}
+
+.contact-network-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.contact-network-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.contact-network-filter-row--checks {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.contact-network-filter-label {
+  font-size: 11.5px;
+  color: #9ca3af;
+  min-width: 5.5em;
+}
+
+.contact-network-filter-select,
+.contact-network-filter-number {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid #3f4250;
+  background: #232634;
+  color: #cbd5e1;
+  font-size: 11.5px;
+}
+
+.contact-network-filter-number {
+  flex: 0 1 5.5em;
+}
+
+.contact-network-filter-select:focus-visible,
+.contact-network-filter-number:focus-visible,
+.contact-network-zoom-btn:focus-visible,
+.contact-network-list-btn:focus-visible,
+.contact-network-interval-btn:focus-visible,
+.contact-network-interval-timeline-btn:focus-visible {
+  outline: 2px solid #1d4ed8;
+  outline-offset: 1px;
+}
+
+.contact-network-filter-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: #cbd5e1;
+}
+
+.contact-network-filter-sep {
+  color: #9ca3af;
+  font-size: 11px;
+}
+
+.contact-network-zoom {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.contact-network-zoom-btn {
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid #3f4250;
+  background: #2a2e3c;
+  color: #e5e7eb;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.contact-network-zoom-label {
+  font-size: 11.5px;
+  color: #cbd5e1;
+  min-width: 3.5em;
+  text-align: center;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.contact-network-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  font-size: 10.5px;
+  color: #9ca3af;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.contact-network-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(140px, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.contact-network-viewport {
+  overflow: auto;
+  max-height: 320px;
+  background: #1a1d27;
+  border: 1px solid #2f3342;
+  border-radius: 6px;
+  padding: 6px;
+}
+
+.contact-network-svg {
+  display: block;
+  max-width: none;
+}
+
+.contact-network-edge {
+  stroke: #64748b;
+  fill: none;
+  pointer-events: none;
+}
+
+.contact-network-edge--active {
+  stroke: #38bdf8;
+}
+
+.contact-network-edge--past {
+  stroke: #64748b;
+}
+
+.contact-network-edge--selected {
+  stroke: #fbbf24;
+}
+
+.contact-network-edge-hit {
+  cursor: pointer;
+}
+
+.contact-network-node-circle {
+  fill: #475569;
+  stroke: #94a3b8;
+  stroke-width: 1.5;
+  cursor: pointer;
+}
+
+.contact-network-node-circle--oj {
+  fill: #1e3a5f;
+  stroke: #38bdf8;
+  stroke-width: 2;
+  stroke-dasharray: 2 1;
+}
+
+.contact-network-node-circle--isolated {
+  fill: #27272a;
+  stroke: #71717a;
+  stroke-dasharray: 3 2;
+}
+
+.contact-network-node-circle--selected {
+  stroke: #fbbf24;
+  stroke-width: 2.5;
+  stroke-dasharray: none;
+}
+
+.contact-network-node-label,
+.contact-network-node-oj-marker {
+  fill: #cbd5e1;
+  font-size: 9px;
+  pointer-events: none;
+}
+
+.contact-network-node-oj-marker {
+  fill: #7dd3fc;
+  font-weight: 700;
+  font-size: 8px;
+}
+
+.contact-network-lists {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.contact-network-list-title,
+.contact-network-detail-title,
+.contact-network-detail-subtitle {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: #e5e7eb;
+}
+
+.contact-network-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 140px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.contact-network-list-btn,
+.contact-network-interval-btn,
+.contact-network-interval-timeline-btn {
+  width: 100%;
+  text-align: left;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid #3f4250;
+  background: #232634;
+  color: #cbd5e1;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.contact-network-list-btn--selected,
+.contact-network-interval-btn--selected {
+  border-color: #fbbf24;
+  box-shadow: 0 0 0 1px #fbbf24;
+}
+
+.contact-network-interval-timeline-btn {
+  margin-top: 4px;
+  width: auto;
+}
+
+.contact-network-hidden,
+.contact-network-detail--empty,
+.contact-network-detail-missing,
+.contact-network-detail-empty-list {
+  font-size: 11.5px;
+  color: #9ca3af;
+  line-height: 1.4;
+}
+
+.contact-network-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+  border-top: 1px solid #2f3342;
+}
+
+.contact-network-detail-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11.5px;
+  color: #9ca3af;
+}
+
+.contact-network-detail-row span:last-child {
+  color: #e5e7eb;
+  text-align: right;
+  word-break: break-all;
+}
+
+.contact-network-strongest,
+.contact-network-intervals {
+  margin: 0;
+  padding-left: 1.2em;
+  font-size: 11.5px;
+  color: #cbd5e1;
+}
+
+.contact-network-intervals li {
+  margin-bottom: 6px;
+}
+
+.contact-network-comparison {
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px dashed #3f4250;
+  border-radius: 6px;
+  background: #1a1d27;
+}
+
 /* Phase 3の解釈/効果ログは発言ログと同じ左ボーダー系だが、色相を変えて視覚的に区別する
    (色だけに依存しないよう、行頭の絵文字とmeta見出しのテキストでも区別できるようにしている)。 */
 .event-log-entry--speech-effect {
@@ -1583,6 +1890,10 @@
   }
 
   .conversation-history {
+    flex-shrink: 0;
+  }
+
+  .contact-network {
     flex-shrink: 0;
   }
 
@@ -1673,27 +1984,35 @@
     order: 7;
   }
 
-  .simulation-summary {
+  .contact-network {
     order: 8;
   }
 
-  .event-log {
+  .conversation-history {
     order: 9;
+  }
+
+  .simulation-summary {
+    order: 10;
+  }
+
+  .event-log {
+    order: 11;
   }
 
   /* .monte-carlo-panel は介入比較パネルにも付いているため、
      後着の .intervention-comparison-panel 指定で介入比較だけ最後に回す */
   .monte-carlo-panel {
-    order: 10;
+    order: 12;
   }
 
   .intervention-comparison-panel {
-    order: 11;
+    order: 13;
   }
 
   /* 同様に、発言効果ON/OFF比較パネルも .monte-carlo-panel を共有しているため最後尾へ回す */
   .speech-effects-comparison-panel {
-    order: 12;
+    order: 14;
   }
 
   /* viewBoxによる縮小表示は活かしつつ、スマホで縦に大きすぎないよう制限する。
