@@ -158,9 +158,11 @@ preset ID(`standing-party-outward-interest`/`standing-party-current-circle`)を�
 ## 対象外・注意点(issueの記載を踏襲)
 
 - 実データによるパラメータ推定・統計的妥当性の証明は行わない。
-- 長期的な人物間好感度・接触記憶、会話履歴timeline・network graph、話題・情報伝播は対象外(Phase 4以降)。
+- 長期的な人物間好感度・接触記憶、話題・情報伝播は対象外(Phase 5以降)。
   会話履歴・接触ネットワーク・統計の分析契約は Issue #211
-  ([standing-party-analysis-phase4-model.md](standing-party-analysis-phase4-model.md))。
+  ([standing-party-analysis-phase4-model.md](standing-party-analysis-phase4-model.md))、
+  統合検証は Issue #218
+  ([standing-party-phase4-verification.md](standing-party-phase4-verification.md))。
   ※ Roadmap #61 の speech Phase 4 とは別物。
 - 会場退出・stressモデルの全面再設計は行っていない(本Issueで見つけた孤立参照バグは、上記の最小限の
   修正のみで解消した)。
