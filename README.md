@@ -1034,7 +1034,7 @@ memo化ラッパを含みます。記述統計は#214、UIは#215以降です。
 (`StandingPartyRunStatistics`)とUI向け時系列を`buildStandingPartyRunStatistics`でpure導出します。
 完了episodeとactive/censoredを分離し、中央値・分位点を含む分布要約(emptyは0で捏造しない)、
 voluntary departure / forced release / targeted transitionの別集計、ObserverJoiner比較
-(優劣・因果は主張しない)、時間窓・agent/cluster filterに対応します。ダッシュボードUIは#217です。
+(優劣・因果は主張しない)、時間窓・agent/cluster filterに対応します。ダッシュボードとexportは#217です。
 
 ### 会話履歴タイムライン(#215)
 
@@ -1053,6 +1053,18 @@ cluster filter、node/edge詳細(interval一覧)、Canvas/Inspector/timelineと�
 zoomボタン・reset view・keyboard用代替listを提供します。layoutは決定的な円周配置で
 simulation座標・PRNGに影響しません。接触とclique / trust / relationshipTieはUI上で分離し、
 接触が信頼や好意を意味しない旨を明示します。統計dashboardは#217です。
+
+### 統計ダッシュボードとデータ出力(#217)
+
+#214の`StandingPartyRunStatistics`を、standingParty画面専用の折りたたみパネルで
+分布・時系列・内訳・代替tableとして可視化します。overview(観測窓・episode・接触edge・
+cluster・離脱/遷移・会場退出)、滞在/接触/cluster寿命の箱ひげ風要約(件数・median・分位点。
+完了分布に進行中を混ぜない)、ObserverJoiner比較(優劣なし)、共通filter(tick/agent/cluster/
+終了理由/transition結果/進行中含む)、timeline・networkへのdrill-downを提供します。
+加えて現在runの履歴・network・統計をversion付きJSON、およびepisode/contact/agent/cluster/
+transitionのCSV一式でexportできます(決定的serialize・CSV formula injection対策)。
+表示・export操作はsimulation state・PRNG・event列に影響しません。chartライブラリは追加せず
+手書きSVG+tableです。
 
 ## シミュレーションルールの概要
 
@@ -1083,6 +1095,7 @@ src/
     standingPartyAnalysis.ts   立食パーティー Phase 4 分析入口: 会話履歴(#212)・接触network(#213)・統計(#214)のpure導出(ADR: docs/standing-party-analysis-phase4-model.md)
     contactNetwork.ts          立食パーティー Phase 4: membership重複からcontact interval / edge / node / 記述指標を導出(#213)
     standingPartyStatistics.ts 立食パーティー Phase 4: 滞在・接触・cluster寿命・transitionの記述統計と時系列(#214)
+    analysisExport.ts            立食パーティー Phase 4: 現在runの履歴・network・統計のJSON/CSV export(#217)
     formationPolicy.ts       シナリオ別の班形成・成立・終了ルールを切り替えるFormationPolicyの定義
     groupPartition.ts        人口を定員ルール(固定/可変)で分割し構造的未割当人数を決定的に計算
     pairFormation.ts         教室ペア形成(classroom-pair)専用のMonte Carlo集計ロジック
@@ -1109,6 +1122,7 @@ src/
     ConversationHistoryFilters.tsx / ConversationHistoryDetail.tsx / conversationHistoryProjection.ts  同上のfilter・詳細・表示投影
     ContactNetworkGraph.tsx 立食パーティー専用の接触ネットワークグラフ(#216、weight切替・filter・詳細・Canvas/timeline選択同期)
     ContactNetworkControls.tsx / ContactNetworkDetail.tsx / contactNetworkProjection.ts  同上の操作・詳細・表示投影
+    StandingPartyAnalyticsDashboard.tsx 立食パーティー専用の統計ダッシュボード(#217、分布・時系列・内訳・代替table・JSON/CSV export)
     EventLog.tsx            状態ログの表示(発言・発言効果・乖離・信頼・関係性フィルタを含む)
     AgentLegend.tsx         凡例
     SimulationSummaryPanel.tsx  終了サマリーの表示
