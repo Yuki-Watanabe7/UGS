@@ -79,6 +79,11 @@ type Props = {
    * 自動的に消える ―― 表示専用のstateを別途持たない)。
    */
   selectedAgentId?: string;
+  /**
+   * Issue #215: 会話履歴タイムライン等で選択中のcluster。standingPartyのみ、該当候補へ
+   * history-selection highlightを付ける(表示専用。simulation stateは変更しない)。
+   */
+  selectedClusterId?: string;
 };
 
 function stateColor(agent: Agent, showClassroomAssignmentState: boolean): string {
@@ -414,6 +419,8 @@ type CandidateGlyphProps = {
    * 通常(役割なし)はundefined。
    */
   transitionRole?: "source" | "target";
+  /** Issue #215: 履歴タイムライン等でこのclusterが選択されているとき true */
+  historySelected?: boolean;
 };
 
 function CandidateGlyph({
@@ -424,6 +431,7 @@ function CandidateGlyph({
   isStandingParty = false,
   presentation,
   transitionRole,
+  historySelected = false,
 }: CandidateGlyphProps) {
   const fading =
     candidate.status === "dissolving" ||
@@ -447,6 +455,7 @@ function CandidateGlyph({
       : transitionRole === "source"
         ? "選択中agentの移動元"
         : undefined;
+  const historySelectedLabel = historySelected ? "履歴で選択中の輪" : undefined;
 
   return (
     <g
@@ -456,12 +465,15 @@ function CandidateGlyph({
       data-evacuated={visual.isEvacuated || undefined}
       data-visual-slot={visual.slotIndex === undefined ? undefined : visual.slotIndex + 1}
       data-transition-role={transitionRole}
+      data-history-selected={historySelected || undefined}
       aria-label={
         classroomState
           ? `${unitWord}候補 ${candidate.id}: ${classroomCandidateStateLabel(classroomState, unitWord)}、${candidate.memberIds.length}/${maxSize}、空き${openSlots}${visual.slotIndex === undefined ? "" : `、成立済み表示 ${visual.slotIndex + 1}`}`
           : standingPartyActive
-            ? `会話の輪 ${candidate.id}: 現在${candidate.memberIds.length}人、人数は今後も変動します${transitionRoleLabel ? `、${transitionRoleLabel}` : ""}`
-            : undefined
+            ? `会話の輪 ${candidate.id}: 現在${candidate.memberIds.length}人、人数は今後も変動します${transitionRoleLabel ? `、${transitionRoleLabel}` : ""}${historySelectedLabel ? `、${historySelectedLabel}` : ""}`
+            : historySelectedLabel
+              ? `会話の輪 ${candidate.id}: ${historySelectedLabel}`
+              : undefined
       }
     >
       <circle
@@ -472,7 +484,8 @@ function CandidateGlyph({
           (classroomState
             ? `candidate-ring classroom-${classroomState}`
             : candidateRingClass(candidate, standingPartyActive)) +
-          (transitionRole ? ` candidate-ring--transition-${transitionRole}` : "")
+          (transitionRole ? ` candidate-ring--transition-${transitionRole}` : "") +
+          (historySelected ? " candidate-ring--history-selected" : "")
         }
       />
 
@@ -503,6 +516,7 @@ function AgentGlyph({
   isPostClusterDeparture: postClusterDeparture = false,
   candidateId,
   isTransitionFocusAgent = false,
+  isHistorySelected = false,
 }: {
   agent: Agent;
   isClassroomPair: boolean;
@@ -513,6 +527,8 @@ function AgentGlyph({
    * 控えめな追加marker(点線リング)を1つ足すだけで、他の見た目(色・状態表示)は変えない。
    */
   isTransitionFocusAgent?: boolean;
+  /** Issue #215: Inspector / 履歴タイムラインでこのagentが選択されているとき */
+  isHistorySelected?: boolean;
 }) {
   const radius = radiusFor(agent);
   const opacity = agent.state === "left" ? 0.3 : 1;
@@ -525,7 +541,17 @@ function AgentGlyph({
       data-agent-state={stateClass}
       data-visual-candidate={candidateId}
       data-transition-focus-agent={isTransitionFocusAgent || undefined}
+      data-history-selected={isHistorySelected || undefined}
     >
+      {isHistorySelected && (
+        <circle
+          cx={agent.x}
+          cy={agent.y}
+          r={radius + 7}
+          className="history-selected-agent-marker"
+          aria-label={`${agent.label}は履歴・Inspectorで選択中`}
+        />
+      )}
       {isTransitionFocusAgent && (
         <circle
           cx={agent.x}
@@ -566,6 +592,7 @@ export function SimulationCanvas({
   speeches = [],
   tick,
   selectedAgentId,
+  selectedClusterId,
 }: Props) {
   const presentation = getScenarioPresentation(formationScenarioId, formationClassroomGroupSize);
   const isClassroomPair = presentation.id === "classroomPair";
@@ -728,6 +755,7 @@ export function SimulationCanvas({
                       ? "source"
                       : undefined
                 }
+                historySelected={isStandingParty && selectedClusterId === candidate.id}
               />
             ))}
             {simulationAgents.map((agent) => (
@@ -740,6 +768,7 @@ export function SimulationCanvas({
                 isTransitionFocusAgent={
                   selectedPendingTransition !== undefined && selectedPendingTransition.focusAgentId === agent.id
                 }
+                isHistorySelected={isStandingParty && selectedAgentId === agent.id}
               />
             ))}
             <BubbleLayer canvas={simulationBubbles} />

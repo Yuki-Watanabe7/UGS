@@ -685,6 +685,21 @@
   stroke-dasharray: 9 3;
 }
 
+/* Issue #215: 履歴タイムラインで選択中のcluster */
+.candidate-ring.candidate-ring--history-selected {
+  stroke: #fbbf24;
+  stroke-width: 2.5;
+  stroke-dasharray: 2 2;
+}
+
+.history-selected-agent-marker {
+  fill: none;
+  stroke: #fbbf24;
+  stroke-width: 1.5;
+  stroke-dasharray: 3 2;
+  pointer-events: none;
+}
+
 /* 関心を主に駆動したfocus agentへの控えめなmarker。1つのagentにつき最大1つのみ追加する */
 .transition-focus-agent-marker {
   fill: none;
@@ -1221,6 +1236,277 @@
   color: #6b7280;
 }
 
+/* Issue #215: standingParty会話履歴タイムライン */
+.conversation-history {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.conversation-history-summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  color: #e5e7eb;
+}
+
+.conversation-history-note {
+  margin: 0;
+  font-size: 11px;
+  color: #9ca3af;
+  line-height: 1.4;
+}
+
+.conversation-history-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.conversation-history-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.conversation-history-filter-label {
+  font-size: 11.5px;
+  color: #9ca3af;
+  min-width: 4.5em;
+}
+
+.conversation-history-filter-select,
+.conversation-history-filter-search,
+.conversation-history-filter-number {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid #3f4250;
+  background: #232634;
+  color: #cbd5e1;
+  font-size: 11.5px;
+}
+
+.conversation-history-filter-number {
+  flex: 0 1 5.5em;
+}
+
+.conversation-history-filter-select:focus-visible,
+.conversation-history-filter-search:focus-visible,
+.conversation-history-filter-number:focus-visible {
+  outline: 2px solid #1d4ed8;
+  outline-offset: 1px;
+}
+
+.conversation-history-filter-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: #cbd5e1;
+}
+
+.conversation-history-filter-sep {
+  color: #9ca3af;
+  font-size: 11px;
+}
+
+.conversation-history-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10.5px;
+  color: #9ca3af;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.conversation-history-tracks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.conversation-history-lane {
+  display: grid;
+  grid-template-columns: minmax(52px, 72px) 1fr;
+  gap: 6px;
+  align-items: start;
+}
+
+.conversation-history-lane-label {
+  font-size: 11px;
+  color: #cbd5e1;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 2px 0;
+  cursor: pointer;
+  word-break: break-all;
+}
+
+.conversation-history-lane-label:focus-visible {
+  outline: 2px solid #1d4ed8;
+  outline-offset: 1px;
+}
+
+.conversation-history-track {
+  position: relative;
+  min-height: 22px;
+  background: #1a1d27;
+  border-radius: 4px;
+  border: 1px solid #2f3342;
+}
+
+.conversation-history-tick-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #f8fafc;
+  opacity: 0.7;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.conversation-history-bar {
+  position: absolute;
+  top: 3px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+  border-radius: 3px;
+  border: 1px solid #64748b;
+  background: #334155;
+  color: #e2e8f0;
+  font-size: 9.5px;
+  line-height: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  cursor: pointer;
+  min-width: 8px;
+  box-sizing: border-box;
+  z-index: 1;
+}
+
+.conversation-history-bar:focus-visible {
+  outline: 2px solid #1d4ed8;
+  outline-offset: 1px;
+  z-index: 3;
+}
+
+.conversation-history-bar--selected {
+  box-shadow: 0 0 0 1px #fbbf24;
+  z-index: 3;
+}
+
+.conversation-history-bar--active {
+  border-style: solid;
+  background: #1d4ed8;
+}
+
+.conversation-history-bar--completed {
+  border-style: solid;
+  background: #334155;
+}
+
+.conversation-history-bar--censored {
+  border-style: dashed;
+  background: #3f3f46;
+}
+
+.conversation-history-bar--reason-voluntaryDeparture {
+  border-left: 3px solid #86efac;
+}
+
+.conversation-history-bar--reason-memberReleased {
+  border-left: 3px solid #f87171;
+  border-style: double;
+}
+
+.conversation-history-bar--reason-targetedTransition {
+  border-left: 3px solid #38bdf8;
+  border-style: dashed;
+}
+
+.conversation-history-bar--reason-membershipLost,
+.conversation-history-bar--reason-venueExit,
+.conversation-history-bar--reason-reset {
+  border-left: 3px solid #a78bfa;
+}
+
+.conversation-history-bar--lifetime {
+  top: 2px;
+  height: 14px;
+  opacity: 0.55;
+  background: #422006;
+  border-color: #b45309;
+}
+
+.conversation-history-bar--membership {
+  height: 14px;
+  font-size: 9px;
+}
+
+.conversation-history-bar--transition {
+  background: #0f172a;
+  border-color: #38bdf8;
+}
+
+.conversation-history-bar-icon {
+  flex-shrink: 0;
+}
+
+.conversation-history-bar-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conversation-history-empty,
+.conversation-history-detail--empty,
+.conversation-history-truncation,
+.conversation-history-detail-missing {
+  font-size: 12px;
+  color: #9ca3af;
+  padding: 6px 0;
+}
+
+.conversation-history-detail {
+  border-top: 1px solid #2f3342;
+  padding-top: 8px;
+  font-size: 11.5px;
+}
+
+.conversation-history-detail-title {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: #e5e7eb;
+}
+
+.conversation-history-detail-row {
+  display: grid;
+  grid-template-columns: minmax(7em, 38%) 1fr;
+  gap: 6px;
+  padding: 2px 0;
+  border-bottom: 1px solid #232634;
+}
+
+.conversation-history-detail-row span:first-child {
+  color: #9ca3af;
+}
+
+.conversation-history-detail-row span:last-child {
+  color: #d1d5db;
+  word-break: break-word;
+}
+
 /* Phase 3の解釈/効果ログは発言ログと同じ左ボーダー系だが、色相を変えて視覚的に区別する
    (色だけに依存しないよう、行頭の絵文字とmeta見出しのテキストでも区別できるようにしている)。 */
 .event-log-entry--speech-effect {
@@ -1294,6 +1580,14 @@
     flex-shrink: 0;
     max-height: none;
     overflow-y: visible;
+  }
+
+  .conversation-history {
+    flex-shrink: 0;
+  }
+
+  .conversation-history-tracks {
+    max-height: 280px;
   }
 
   .event-log {
