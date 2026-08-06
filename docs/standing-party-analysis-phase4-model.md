@@ -310,8 +310,11 @@ degree / strength は記述統計として出してよいが、UI 文言で「�
 | `relationshipTie`(Roadmap #61) | 同様の一貫性履歴 → attractiveness 補正 | 別軸。contact の weight に足さない |
 | 空間近接 | 座標距離 | contact ではない |
 
-Phase 5 の情報伝播が再利用してよいのは**接触事実(contact interval / edge の存在と区間)**までである。
-話題モデル・伝播確率・口コミ内容は本契約の外に置き、型にもフィールドを先取りしない。
+Phase 5 の**runtime**は、この接触履歴・edge・統計を話者選択・伝播確率・移動decisionの入力にしては
+ならない。runtimeはliveなcluster membership・内容発話・agent情報状態だけを参照する。
+Phase 5 のread-only分析は、実際に発生した伝播eventを接触事実へ事後overlayしてよい。
+話題モデル・口コミ内容は本契約の型へ先取りせず、詳細は
+[`information-propagation-phase5-model.md`](information-propagation-phase5-model.md)(Issue #228)へ委譲する。
 
 ---
 
@@ -591,7 +594,8 @@ export type StandingPartyAnalysisSnapshot = {
 | `standingPartyAnalysis.ts`(予定) | log → 正規履歴 → contact → 統計 | `SeededRandom`の消費、`Agent` trait / stress の更新、`stepSimulation`からの呼び出し |
 | `standingPartyComparison.ts` | #190 比較指標(維持) | Phase 4 network をここに詰め込みすぎない |
 | `App.tsx` / components | 表示・フィルタ・エクスポート | 独自に join/leave を数え直すこと、message 文字列 parse |
-| Phase 5(将来) | 接触事実を入力に伝播モデルを載せる | Phase 4 型へ話題フィールドを逆流入させること |
+| Phase 5 runtime | live membership・発話・agent情報状態から伝播を処理 | Phase 4 history / contact / statisticsをdecision入力にすること |
+| Phase 5 analysis | 実伝播eventをcontactへ事後overlayする | 分析結果をruntimeへ戻すこと、Phase 4型へ話題fieldを逆流入させること |
 
 Inspector や将来ダッシュボードが欲しい値は、すべて分析 API 経由で取得する。
 「画面ごとに`state.log`を filter して count++」は #215 以降も禁止(回帰の温床)。
@@ -638,7 +642,7 @@ Roadmap #172 の推奨順を本契約で固定する:
 | analysis が意思決定・PRNG へ影響しない境界 | §2.2、§6.4、§9 |
 | afterParty / classroomPair との共通化範囲 | §6.3 |
 | 1000 tick を想定した性能・保持方針 | §7 |
-| Phase 5 へ渡すのは接触事実まで | §3.3 |
+| Phase 5 runtimeはcontact分析を入力にせず、分析overlayだけが事後利用 | §3.3、§9 |
 | 既存 runtime 挙動は本Issueでは変更しない | 冒頭・対象外・本Issueの成果物は文書のみ |
 | lint / test / build 成功 | 文書のみの変更で既存どおり成功すること |
 
@@ -656,5 +660,5 @@ Roadmap #172 の推奨順を本契約で固定する:
 8. 分析 API は RNG 非消費・`stepSimulation`非介入。
 9. schema version は`STANDING_PARTY_ANALYSIS_SCHEMA_VERSION`( #61 Phase 4 と分離)。
 10. Follow-up D(`ClusterMembershipEvent`単体)は本契約で supersede。
-11. Phase 5 用に話題・伝播フィールドを先取りしない。
+11. Phase 5 用に話題・伝播フィールドをPhase 4型へ先取りしない。Phase 5 runtimeは本分析を入力にしない。
 12. 本Issueではコード挙動を変更しない。

@@ -1075,6 +1075,16 @@ desktop/iPhone Playwright E2Eを整備しました。新しいシミュレーシ
 [`docs/standing-party-phase4-verification.md`](docs/standing-party-phase4-verification.md)
 を参照してください。
 
+### Phase 5の話題・情報・口コミ伝播設計(#228)
+
+社会的行為としての`SpeechIntent`と、伝達内容であるTopic / Claim / Variantを分離し、
+heard / understood / adopted / remembered / retold、source provenance、同一tickの更新順、
+独立派生RNG、memory / variant / event上限、満足度・cluster移動feedbackの境界を
+[`docs/information-propagation-phase5-model.md`](docs/information-propagation-phase5-model.md)に定義しています。
+現時点では設計文書のみで、既存runtimeの挙動は変更していません。Phase 5 runtimeはPhase 4の
+contact networkをdecision入力にせず、liveなcluster membership・内容発話・agent情報状態だけを参照します。
+contactとの照合は将来のread-only分析で事後的に行います。
+
 ## シミュレーションルールの概要
 
 行動ルールは `src/simulation/engine.ts` に集約されています。主なルール:
