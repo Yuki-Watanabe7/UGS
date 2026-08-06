@@ -44,6 +44,7 @@ import { useActiveExpressions } from "./hooks/useActiveExpressions";
 import { useActiveSpeechBubbles } from "./hooks/useActiveSpeechBubbles";
 import { useIsMobile } from "./hooks/useIsMobile";
 import { AppLink } from "./components/AppLink";
+import { ScenarioIntroduction } from "./components/ScenarioIntroduction";
 import {
   getPresetForScenario,
   getPresetsForScenario,
@@ -318,23 +319,18 @@ function SimulationApp({ scenario }: Props) {
           <span className="scenario-category-label">{scenario.homeTitle}</span>
         </div>
         <h1>{scenario.pageTitle}</h1>
-        {isMobile ? (
-          <details className="app-intro-details">
-            <summary>このシミュレーターについて</summary>
-            <p>{scenario.introText}</p>
-          </details>
-        ) : (
-          <p>{scenario.introText}</p>
-        )}
-        <p className="tick-status">
-          Tick: {simState.tick} {simState.finished ? "(終了)" : running ? "(実行中)" : "(一時停止)"}
-        </p>
-        <p className="current-condition">
-          プリセット: {getPresetById(presetId).name} / seed: {seed}
-          {presentation.showInterventionControls
-            ? ` / 介入: ${getInterventionById(activeInterventionId).name}`
-            : ""}
-        </p>
+        <ScenarioIntroduction summary={scenario.introSummary} details={scenario.introDetails} />
+        <div className="app-header-status" aria-label="現在のシミュレーション状態">
+          <p className="tick-status">
+            Tick: {simState.tick} {simState.finished ? "(終了)" : running ? "(実行中)" : "(一時停止)"}
+          </p>
+          <p className="current-condition">
+            プリセット: {getPresetById(presetId).name} / seed: {seed}
+            {presentation.showInterventionControls
+              ? ` / 介入: ${getInterventionById(activeInterventionId).name}`
+              : ""}
+          </p>
+        </div>
       </header>
 
       <main className="app-main">
