@@ -155,8 +155,11 @@ Phase 3 E2Eと同様、URL隠しseed注入は使わずUIのSeed入力を操作�
 
 ### Phase 5境界
 
-話題・情報伝播・口コミ拡散を追加する際は、本分析層の履歴/contact/統計を**観測入力**として
-再利用してよいが、意思決定へ循環依存させない(ADR §2.1 / §6.4と同じ境界)。
+話題・情報伝播・口コミ拡散を追加するruntimeは、本分析層の履歴/contact/統計を入力にせず、
+liveなcluster membership・内容発話・agent情報状態から処理する。本分析層を再利用できるのは、
+実際に発生した伝播eventをcontactへ事後overlayするread-only分析だけである。
+詳細は[`information-propagation-phase5-model.md`](information-propagation-phase5-model.md)
+(Issue #228)を参照。
 
 ### 仮説的simulationであることの明示
 
