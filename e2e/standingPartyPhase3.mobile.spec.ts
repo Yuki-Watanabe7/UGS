@@ -20,8 +20,10 @@ test.describe("standingParty Phase 3: iPhone相当幅flow", () => {
     // 初期表示で横スクロールが発生しない(390x664、iPhone 14相当)。
     expect(await hasNoHorizontalScroll(page)).toBe(true);
 
-    // ヘッダー説明文が<details>化される(768px以下、useIsMobile)。
-    await expect(page.locator(".app-intro-details")).toBeVisible();
+    // ヘッダー説明は全viewport共通の<details>で、初期状態は閉じている。
+    const introductionDetails = page.locator(".scenario-introduction-details");
+    await expect(introductionDetails).toBeVisible();
+    await expect(introductionDetails).not.toHaveAttribute("open");
 
     // Canvas・操作・設定・Inspector・ログのいずれにも到達できる(スクロールして表示確認)。
     const canvas = page.locator("svg.simulation-field-canvas");
@@ -29,6 +31,10 @@ test.describe("standingParty Phase 3: iPhone相当幅flow", () => {
     const advancedSettings = page.getByRole("heading", { name: "詳細設定(立食パーティー)" });
     const inspector = page.locator(".panel.observer-inspector");
     const eventLog = page.getByRole("heading", { name: "状態ログ" });
+
+    const initialCanvasBox = await canvas.boundingBox();
+    expect(initialCanvasBox, "初期表示でCanvasの位置が取得できない").not.toBeNull();
+    expect(initialCanvasBox!.y, "詳細を閉じた初期表示ではCanvasへ過度なscrollなしで到達できる").toBeLessThan(520);
 
     for (const locator of [canvas, controlPanel, advancedSettings, inspector, eventLog]) {
       await locator.scrollIntoViewIfNeeded();

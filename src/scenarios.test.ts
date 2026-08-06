@@ -52,4 +52,18 @@ describe("scenario category configuration", () => {
     expect(preset.formationScenarioId).toBe("standingParty");
     expect(standingParty.presentation.id).toBe("standingParty");
   });
+
+  it("provides a compact summary and structured details for every scenario", () => {
+    for (const scenario of [
+      getScenarioById("after-party"),
+      getScenarioById("classroom"),
+      getScenarioById("standing-party"),
+    ]) {
+      expect(scenario.introSummary.trim()).not.toBe("");
+      expect(scenario.introDetails?.length).toBeGreaterThan(0);
+      expect(scenario.introDetails?.every((section) =>
+        section.id.trim() !== "" && section.title.trim() !== "" && section.body.trim() !== "",
+      )).toBe(true);
+    }
+  });
 });
