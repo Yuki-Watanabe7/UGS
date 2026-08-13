@@ -262,6 +262,7 @@ const AFTER_PARTY_SPEECH: Record<SpeechReason, string> = {
   joinGreeting: "合流できた、よろしく!",
   leaveDeclaration: "今日はここで帰るね、また今度!",
   lightObserverInvitation: "よかったら一緒に行く?",
+  contentTurn: "そういえばさ、",
 };
 
 const CLASSROOM_SPEECH: Record<SpeechReason, string> = {
@@ -272,6 +273,7 @@ const CLASSROOM_SPEECH: Record<SpeechReason, string> = {
   joinGreeting: "ペア決まったね、よろしく",
   leaveDeclaration: "今は少し考えさせて",
   lightObserverInvitation: "まだなら一緒に組まない?",
+  contentTurn: "そういえばさ、",
 };
 
 const AFTER_PARTY_EXPRESSIONS: Record<ExpressionReason, ExpressionTemplateVariants> = {
@@ -641,6 +643,7 @@ const STANDING_PARTY_SPEECH: Record<SpeechReason, string> = {
   joinGreeting: "合流できた、よろしく!",
   leaveDeclaration: "少し他も回ってみるね",
   lightObserverInvitation: "よかったら一緒に話す?",
+  contentTurn: "そういえばさ、",
 };
 
 const STANDING_PARTY_EXPRESSIONS: Record<ExpressionReason, ExpressionTemplateVariants> = {

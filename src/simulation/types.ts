@@ -28,6 +28,8 @@ import type { ExpressedStance, PublicExpressionDivergence } from "./socialExpres
 import type { CurrentClusterAttachmentState, DepartureConcernFactor } from "./currentClusterAttachment";
 import type { AlternativeClusterInterestFactor } from "./alternativeClusterInterest";
 import type { InformationRuntimeState } from "./informationState";
+import type { ClusterTopicRuntimeState } from "./conversationTopic";
+import type { ContentUtteranceEvent, ContentUtteranceReason } from "./contentUtterance";
 
 /**
  * エージェントの行動状態。Phase 4の三層モデル(`socialExpression.ts`)では、この状態遷移・移動
@@ -403,7 +405,9 @@ export type LogTag =
    * Issue #176: 合流済みクラスタからの離脱・再探索・再参加に関するイベント。「会場からの退出」
    * (既存の`leave`タグ)とは意味を分ける(受入条件: クラスタ離脱と会場退出をログ/タグから区別できる)。
    */
-  | "clusterDeparture";
+  | "clusterDeparture"
+  /** Issue #230 (Phase 5): active clusterでの内容発話(topic/claim付き発言)・話題選択に関するイベント */
+  | "contentUtterance";
 
 /**
  * 集計(終了サマリー/Monte Carlo)向けのイベント種別。
@@ -562,7 +566,18 @@ export type SimulationEventType =
    * 整合性回復で`joined`→`undecided`へ戻したこと(`episodeEndReason: "membershipLost"`)。
    * 観測穴埋め専用で、意思決定・PRNG・離脱判定には使わない(`docs/standing-party-analysis-phase4-model.md` Gap A)。
    */
-  | "clusterMembershipLost";
+  | "clusterMembershipLost"
+  /**
+   * Issue #230 (Phase 5): confirmed clusterで内容発話(`ContentUtteranceEvent`)が1件生成された。
+   * `metadata.topicId`/`claimId`/`variantId`/`contentUtteranceReason`/`topicTransition`で
+   * 誰が・どのtopicを・どのclaim/variantとして・topicが継続/変更/開始のいずれで話したかを追跡できる。
+   */
+  | "contentUtteranceGenerated"
+  /**
+   * Issue #230 (Phase 5): 発話機会が巡ってきたclusterで、発話可能な話者/claimが見つからず発話が
+   * 起きなかった。同一clusterで理由が変わらない間は再記録しない(受入条件: 発話なしを毎tick大量記録しない)。
+   */
+  | "contentUtteranceSkipped";
 
 /**
  * Issue #156: `schoolInterventionTriggered`の`metadata.outcome`。表示文言の解析に依存しない結果分類。
@@ -745,6 +760,20 @@ export type SimulationEventMetadata = {
   transitionPrimaryReason?: ClusterTransitionPrimaryReason;
   /** Issue #201: `clusterTransitionTargetInvalidated`用。無効化理由(優先順位に従い1つだけ) */
   invalidationReason?: ClusterTransitionInvalidationReason;
+  /** Issue #230: `contentUtteranceGenerated`/`contentUtteranceSkipped`用。発話が起きた(起きなかった)cluster ID。既存`groupId`と同じ意味だがcluster文脈であることを明示するため別名で持つ */
+  clusterId?: string;
+  /** Issue #230: `contentUtteranceGenerated`用。選ばれたtopic ID */
+  topicId?: string;
+  /** Issue #230: `contentUtteranceGenerated`用。選ばれたcanonical claim ID */
+  claimId?: string;
+  /** Issue #230: `contentUtteranceGenerated`用。実際に話されたvariant ID(発話者が現在保持しているものそのまま) */
+  variantId?: string;
+  /** Issue #230: `contentUtteranceGenerated`用。話者からみたこの発話の分類(originalShare/knownClaimShare/retelling) */
+  contentUtteranceReason?: ContentUtteranceReason;
+  /** Issue #230: `contentUtteranceGenerated`用。cluster topic runtime上でこの発話が持つ意味(新規開始/切替/継続) */
+  topicTransition?: "started" | "changed" | "continued";
+  /** Issue #230: `contentUtteranceSkipped`用。発話が起きなかった理由の構造化コード */
+  contentUtteranceSkipReason?: "noEligibleSpeaker" | "noEligibleClaim";
 };
 
 export type LogEntry = {
@@ -954,6 +983,21 @@ export type SimulationState = {
    * 状態遷移そのものを実装しない)。無効時・未指定時(既存stateの読み込み等)はundefinedのまま。
    */
   informationRuntime?: InformationRuntimeState;
+  /**
+   * Issue #230 (Phase 5): confirmed clusterごとの会話topic runtime state(`conversationTopic.ts`)。
+   * `informationRuntime`と同じ境界: `standingPartyConfig.informationPropagation.enabled`が真の場合だけ
+   * `engine.ts`が更新し、無効時・standingParty以外では常にundefinedのまま(既存挙動に一切影響しない)。
+   * cluster解散・membership喪失後は対応するentryを破棄する(`pruneClusterTopicRuntimeState`)。
+   */
+  clusterTopicRuntime?: ClusterTopicRuntimeState;
+  /**
+   * Issue #230 (Phase 5): 生成された内容発話(`ContentUtteranceEvent`)の時系列蓄積ログ。
+   * `speechLog`と同じ「後から取り除かない、蓄積するだけ」の方針。各要素は`speechEventId`で
+   * `speechLog`中の対応する`SpeechEvent`(intent: "shareInformation")と1:1に対応する。
+   * 受け手の採用・記憶更新(#231以降)はこのログを起点にするが、このIssue自体はここへ書き込むだけで
+   * 読み取り側の状態遷移は実装しない。
+   */
+  contentUtteranceLog?: ContentUtteranceEvent[];
 };
 
 /**

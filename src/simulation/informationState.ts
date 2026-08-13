@@ -145,6 +145,38 @@ export type InformationPropagationLimits = {
   maxSourceTracesPerAgentClaim: number;
 };
 
+/**
+ * Issue #230 (Phase 5): active clusterでの内容発話機会・話者・topic・claim選択に使う設定(§8.1)。
+ * `informationPropagation.enabled`がfalseの間は`contentUtterance.ts`側の生成関数自体が呼ばれない
+ * ため、この設定自体は常に存在してもよい(catalog/init/limitsと同じ既定値保持の方針)。
+ */
+export type ContentUtteranceConfig = {
+  /** 同一clusterの発話機会を評価する間隔tick。integer >= 1 */
+  utteranceIntervalTicks: number;
+  /** 発話機会が巡ってきたclusterで実際に発話が起こる確率。[0, 1] */
+  utteranceProbability: number;
+  /** 同一cluster・同一tickに許容する発話数上限。integer 0..2 */
+  maxUtterancesPerClusterPerTick: number;
+  /** 同一agent・同一tickに許容する発話数上限。integer 0..1 */
+  maxUtterancesPerAgentPerTick: number;
+  /** 同一agentが同一clusterで連続して話者に選ばれないための最小間隔tick。integer >= 0 */
+  speakerRepeatCooldownTicks: number;
+  /** 同一claimが同一clusterで連続して話されないための最小間隔tick。integer >= 0 */
+  claimRepeatCooldownTicks: number;
+  /** 同一topicが最低限維持されるtick数(この間は他topicへの切替を抑止する)。integer >= 1 */
+  minTopicDurationTicks: number;
+  /** 現在topicを維持する方向への重み。[0, 1] */
+  topicPersistence: number;
+  /** topicが同一clusterで繰り返されるほど蓄積するfatigueの増分係数。[0, 1] */
+  fatigueGain: number;
+  /** tickごとのfatigue減衰係数。[0, 1] */
+  fatigueDecay: number;
+  /** cluster audience向け内容発話の到達距離(`SpeechEvent.range`相当)。finite > 0 */
+  clusterAudienceRange: number;
+  /** cluster audience向け内容発話の強さ(`SpeechEvent.strength`相当)。finite > 0 */
+  clusterAudienceStrength: number;
+};
+
 /** `StandingPartyScenarioConfig`配下に置くPhase 5専用設定(§7.1/§9)。`enabled: false`が既定 */
 export type InformationPropagationConfig = {
   enabled: boolean;
@@ -152,6 +184,7 @@ export type InformationPropagationConfig = {
   claimCatalog: ClaimCatalog;
   init: InformationInitConfig;
   limits: InformationPropagationLimits;
+  contentUtterance: ContentUtteranceConfig;
 };
 
 // --- validation -------------------------------------------------------------------------------
@@ -179,12 +212,58 @@ function assertUnit(name: string, value: number): void {
 }
 
 /**
+ * Issue #230: `ContentUtteranceConfig`のvalidation(§8.1の定義域表どおり)。NaN/Infinity・
+ * 定義域外・非整数のintegerフィールドを拒否する。
+ */
+export function validateContentUtteranceConfig(config: ContentUtteranceConfig): void {
+  for (const [name, value] of [
+    ["utteranceIntervalTicks", config.utteranceIntervalTicks],
+    ["minTopicDurationTicks", config.minTopicDurationTicks],
+  ] as const) {
+    if (!Number.isInteger(value) || value < 1) {
+      throw new Error(`informationState: contentUtterance.${name} must be a positive integer (got ${value})`);
+    }
+  }
+  for (const [name, value] of [
+    ["speakerRepeatCooldownTicks", config.speakerRepeatCooldownTicks],
+    ["claimRepeatCooldownTicks", config.claimRepeatCooldownTicks],
+  ] as const) {
+    if (!Number.isInteger(value) || value < 0) {
+      throw new Error(`informationState: contentUtterance.${name} must be a non-negative integer (got ${value})`);
+    }
+  }
+  if (!Number.isInteger(config.maxUtterancesPerClusterPerTick) || config.maxUtterancesPerClusterPerTick < 0 || config.maxUtterancesPerClusterPerTick > 2) {
+    throw new Error(
+      `informationState: contentUtterance.maxUtterancesPerClusterPerTick must be an integer within [0, 2] (got ${config.maxUtterancesPerClusterPerTick})`,
+    );
+  }
+  if (!Number.isInteger(config.maxUtterancesPerAgentPerTick) || config.maxUtterancesPerAgentPerTick < 0 || config.maxUtterancesPerAgentPerTick > 1) {
+    throw new Error(
+      `informationState: contentUtterance.maxUtterancesPerAgentPerTick must be an integer within [0, 1] (got ${config.maxUtterancesPerAgentPerTick})`,
+    );
+  }
+  assertUnit("contentUtterance.utteranceProbability", config.utteranceProbability);
+  assertUnit("contentUtterance.topicPersistence", config.topicPersistence);
+  assertUnit("contentUtterance.fatigueGain", config.fatigueGain);
+  assertUnit("contentUtterance.fatigueDecay", config.fatigueDecay);
+  for (const [name, value] of [
+    ["clusterAudienceRange", config.clusterAudienceRange],
+    ["clusterAudienceStrength", config.clusterAudienceStrength],
+  ] as const) {
+    if (!Number.isFinite(value) || value <= 0) {
+      throw new Error(`informationState: contentUtterance.${name} must be a finite number > 0 (got ${value})`);
+    }
+  }
+}
+
+/**
  * catalog(委譲)・fixture配置・分布config・上限を検証する。不正ID参照、NaN/Infinity、定義域外値、
  * 負のholder数を拒否する(受入条件)。
  */
 export function validateInformationPropagationConfig(config: InformationPropagationConfig): void {
   validateTopicCatalog(config.topicCatalog);
   validateClaimCatalog(config.claimCatalog, config.topicCatalog);
+  validateContentUtteranceConfig(config.contentUtterance);
 
   const claimIds = new Set(config.claimCatalog.claims.map((claim) => claim.id));
 
@@ -237,6 +316,22 @@ export const DEFAULT_INFORMATION_PROPAGATION_LIMITS: InformationPropagationLimit
   maxSourceTracesPerAgentClaim: 8,
 };
 
+/** Issue #230: §8.1の初期推奨値。population約24・1000tickを想定した控えめな既定値 */
+export const DEFAULT_CONTENT_UTTERANCE_CONFIG: ContentUtteranceConfig = {
+  utteranceIntervalTicks: 4,
+  utteranceProbability: 0.5,
+  maxUtterancesPerClusterPerTick: 1,
+  maxUtterancesPerAgentPerTick: 1,
+  speakerRepeatCooldownTicks: 3,
+  claimRepeatCooldownTicks: 6,
+  minTopicDurationTicks: 3,
+  topicPersistence: 0.6,
+  fatigueGain: 0.2,
+  fatigueDecay: 0.05,
+  clusterAudienceRange: 90,
+  clusterAudienceStrength: 1,
+};
+
 /**
  * master flag OFF(既定)。無効時はcatalog/init/limitsを持つが、`createInitialInformationRuntimeState`は
  * `enabled`を見て呼び出し側(engine.ts)が完全にskipする(受入条件: Phase 5 disabled時に既存Agent、
@@ -248,6 +343,7 @@ export const DEFAULT_INFORMATION_PROPAGATION_CONFIG: InformationPropagationConfi
   claimCatalog: STANDING_PARTY_CLAIM_CATALOG,
   init: DEFAULT_INFORMATION_INIT_CONFIG,
   limits: DEFAULT_INFORMATION_PROPAGATION_LIMITS,
+  contentUtterance: DEFAULT_CONTENT_UTTERANCE_CONFIG,
 };
 
 validateInformationPropagationConfig(DEFAULT_INFORMATION_PROPAGATION_CONFIG);

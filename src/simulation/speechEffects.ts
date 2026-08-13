@@ -223,6 +223,9 @@ const INTENT_BASE: Record<SpeechIntent, { direction: 1 | -1; magnitude: number }
   welcome: { direction: 1, magnitude: 0.6 },
   greet: { direction: 1, magnitude: 0.35 },
   decline: { direction: -1, magnitude: 0.5 },
+  // Issue #230 (Phase 5, ADR #228 §3.2): 内容発話の中立carrier。magnitude 0によりintensityが常に
+  // NEUTRAL_INTENSITY_THRESHOLD未満(valence: "neutral")になり、deriveSpeechEffectsは何も生成しない。
+  shareInformation: { direction: 1, magnitude: 0 },
 };
 
 /** 最終intensityがこの値未満まで弱まった場合、方向の符号によらず"neutral"として丸める */
@@ -302,6 +305,9 @@ const INTENT_DIMENSION: Record<SpeechIntent, SpeechEffectDimension> = {
   welcome: "attractiveness",
   greet: "stress",
   decline: "leaveThreshold",
+  // shareInformationは常にvalence: "neutral"(INTENT_BASE参照)のため、deriveSpeechEffectsが
+  // このdimensionまで読みに来ることはない。型の網羅性のためだけの値。
+  shareInformation: "stress",
 };
 
 /**
