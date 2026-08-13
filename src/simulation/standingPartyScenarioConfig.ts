@@ -42,6 +42,11 @@ import {
   validateClusterTransitionConfig,
   type ClusterTransitionConfig,
 } from "./clusterTransitionDecision";
+import {
+  DEFAULT_INFORMATION_PROPAGATION_CONFIG,
+  validateInformationPropagationConfig,
+  type InformationPropagationConfig,
+} from "./informationState";
 
 /** 社交的回遊傾向(`Agent.socialCirculationTendency`)を一様分布で生成する範囲 `[0,1]` */
 export type SocialCirculationTendencyRange = {
@@ -63,6 +68,12 @@ export type StandingPartyScenarioConfig = {
    * step 5a3(他クラスタ関心の導出)も実行されない(ADR 4.3節1、後方互換の本体)。
    */
   transition: ClusterTransitionConfig;
+  /**
+   * Issue #229 (Phase 5): 話題・情報伝播の初期状態(Topic/Claim catalog、初期保有・関心分布、上限)。
+   * `enabled: false`(既定)の間は`engine.ts`が`createInitialInformationRuntimeState`を一切呼ばず、
+   * `SimulationState.informationRuntime`は常にundefinedのまま(既存Agent/state/event/PRNG系列を変えない)。
+   */
+  informationPropagation: InformationPropagationConfig;
 };
 
 export const DEFAULT_CIRCULATION_TENDENCY_RANGE: SocialCirculationTendencyRange = { min: 0, max: 1 };
@@ -74,6 +85,7 @@ export const DEFAULT_STANDING_PARTY_SCENARIO_CONFIG: StandingPartyScenarioConfig
   alternativeInterest: DEFAULT_ALTERNATIVE_CLUSTER_INTEREST_CONFIG,
   attachment: DEFAULT_CURRENT_CLUSTER_ATTACHMENT_CONFIG,
   transition: DEFAULT_CLUSTER_TRANSITION_CONFIG,
+  informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
 };
 
 function assertRange01(name: string, value: number): void {
@@ -93,6 +105,7 @@ export function validateStandingPartyScenarioConfig(config: StandingPartyScenari
   validateAlternativeClusterInterestConfig(config.alternativeInterest);
   validateCurrentClusterAttachmentConfig(config.attachment);
   validateClusterTransitionConfig(config.transition);
+  validateInformationPropagationConfig(config.informationPropagation);
   assertRange01("circulationTendencyRange.min", config.circulationTendencyRange.min);
   assertRange01("circulationTendencyRange.max", config.circulationTendencyRange.max);
   if (config.circulationTendencyRange.min > config.circulationTendencyRange.max) {
@@ -129,6 +142,7 @@ export const NETWORKING_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = {
   alternativeInterest: DEFAULT_ALTERNATIVE_CLUSTER_INTEREST_CONFIG,
   attachment: DEFAULT_CURRENT_CLUSTER_ATTACHMENT_CONFIG,
   transition: DEFAULT_CLUSTER_TRANSITION_CONFIG,
+  informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
 };
 
 /**
@@ -156,6 +170,7 @@ export const INTIMATE_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = {
   alternativeInterest: DEFAULT_ALTERNATIVE_CLUSTER_INTEREST_CONFIG,
   attachment: DEFAULT_CURRENT_CLUSTER_ATTACHMENT_CONFIG,
   transition: DEFAULT_CLUSTER_TRANSITION_CONFIG,
+  informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
 };
 
 validateStandingPartyScenarioConfig(NETWORKING_STANDING_PARTY_CONFIG);
@@ -205,6 +220,7 @@ export const OUTWARD_INTEREST_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig
     targetShareBase: 0.6,
     targetShareGain: 0.35,
   },
+  informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
 };
 
 /**
@@ -236,6 +252,7 @@ export const CURRENT_CIRCLE_ATTACHMENT_STANDING_PARTY_CONFIG: StandingPartyScena
     ...DEFAULT_CLUSTER_TRANSITION_CONFIG,
     enabled: true,
   },
+  informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
 };
 
 validateStandingPartyScenarioConfig(OUTWARD_INTEREST_STANDING_PARTY_CONFIG);

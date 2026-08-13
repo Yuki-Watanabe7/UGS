@@ -58,6 +58,7 @@ import {
   shouldTriggerLightObserverInvitation,
 } from "./interventions";
 import { SeededRandom } from "./random";
+import { createInitialInformationRuntimeState } from "./informationState";
 import { WORLD_WIDTH, WORLD_HEIGHT, clamp, distance, createInitialAgents } from "./model";
 import { formatTick } from "./time";
 import {
@@ -180,6 +181,11 @@ export function createInitialState(
   // Issue #189 (Phase 2): standingParty以外では常にDEFAULT(既存の[0,1]一様分布と一致)。
   const initialStandingPartyConfig = formation?.standingPartyConfig ?? DEFAULT_STANDING_PARTY_SCENARIO_CONFIG;
   const agents = createInitialAgents(seed, effectiveParams, initialStandingPartyConfig.circulationTendencyRange);
+  // Issue #229 (Phase 5): 無効時(既定)はこの関数自体を呼ばず、独立streamの生成すら行わない
+  // (受入条件: Phase 5 disabled時に既存Agent、state、event、PRNG系列が変わらない)。
+  const informationRuntime = initialStandingPartyConfig.informationPropagation.enabled
+    ? createInitialInformationRuntimeState(agents, seed, initialStandingPartyConfig.informationPropagation)
+    : undefined;
   // Issue #132: 教室ペア形成シナリオの初期ログは、二次会シナリオ向けの文言(「二次会に行くか」)を
   // そのまま使うと文脈が合わないため、formationPolicy.idで出し分ける
   // Issue #174: 立食パーティーでも同様に、二次会固有の文言を避け会場で会話の輪を探す文脈にする
@@ -310,6 +316,7 @@ export function createInitialState(
     tieHistory: {},
     relationshipTieUpdateLog: [],
     tieCommitments: [],
+    informationRuntime,
   };
 }
 
@@ -2386,6 +2393,9 @@ export function stepSimulation(
     interventionRuntimeState,
     activeInterventionEffects: [...activeInterventionEffects, ...newInterventionEffects],
     speechLog: [],
+    // Issue #229 (Phase 5): このIssueでは発話・伝播・記憶更新を実装しないため、前tickの値をそのまま
+    // 引き継ぐだけ(#230以降がここへ実際の状態遷移を追加する)。
+    informationRuntime: state.informationRuntime,
   };
 
   // formingGroupRecruitment/approachWelcome/joinGreeting/leaveDeclarationは、
