@@ -27,6 +27,7 @@ import type {
 import type { ExpressedStance, PublicExpressionDivergence } from "./socialExpression";
 import type { CurrentClusterAttachmentState, DepartureConcernFactor } from "./currentClusterAttachment";
 import type { AlternativeClusterInterestFactor } from "./alternativeClusterInterest";
+import type { InformationRuntimeState } from "./informationState";
 
 /**
  * エージェントの行動状態。Phase 4の三層モデル(`socialExpression.ts`)では、この状態遷移・移動
@@ -943,6 +944,16 @@ export type SimulationState = {
    * スナップショット)。個別介入の実装が存在しない間は常に空配列。
    */
   activeInterventionEffects?: InterventionEffect[];
+  /**
+   * Issue #229 (Phase 5, roadmap #172): agentごとのtopic/claim情報状態(`informationState.ts`)。
+   * catalog(Topic/Claim定義)自体はここへ持たず、`standingPartyConfig.informationPropagation`
+   * (run/scenario config)側に置く ―― これはmutableなagent stateだけを持つ(§2.4/§2.6の境界)。
+   * `createInitialState`は`informationPropagation.enabled`が真の場合だけ
+   * `createInitialInformationRuntimeState`で初期配置を生成し、`stepSimulation`は#230以降が
+   * 発話・受信・採用・記憶更新を実装するまでは単純に前tickの値をそのまま引き継ぐ(このIssueでは
+   * 状態遷移そのものを実装しない)。無効時・未指定時(既存stateの読み込み等)はundefinedのまま。
+   */
+  informationRuntime?: InformationRuntimeState;
 };
 
 /**
