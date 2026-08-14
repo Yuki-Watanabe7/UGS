@@ -9,6 +9,7 @@ const INTENT_LABEL: Record<SpeechIntent, string> = {
   welcome: "歓迎",
   greet: "挨拶",
   decline: "辞退",
+  shareInformation: "話題を共有",
 };
 
 export function speechIntentLabel(intent: SpeechIntent): string {

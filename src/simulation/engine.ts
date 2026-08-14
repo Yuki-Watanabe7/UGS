@@ -35,6 +35,8 @@ import {
 } from "./schoolInterventionRuntime";
 import type { SpeechEvent } from "./speech";
 import { createSpeechEvent, deriveSpeechEvents } from "./speech";
+import type { ContentUtteranceEvent } from "./contentUtterance";
+import { deriveContentUtterances } from "./contentUtterance";
 import type { SpeechActiveEffect, SpeechEffectsConfig } from "./speechEffects";
 import {
   advanceActiveSpeechEffects,
@@ -317,6 +319,8 @@ export function createInitialState(
     relationshipTieUpdateLog: [],
     tieCommitments: [],
     informationRuntime,
+    clusterTopicRuntime: undefined,
+    contentUtteranceLog: [],
   };
 }
 
@@ -2495,10 +2499,43 @@ export function stepSimulation(
   const tickEffects = deriveSpeechEffects(tickInterpretations, tickSpeechEvents, speechEffectsConfig);
   const tickActiveEffects = deriveSpeechActiveEffects(tickEffects, nextState.agents, speechEffectsConfig);
 
+  // Issue #230 (Phase 5, ADR #228 §5): 既存Phase 1〜4処理・社会的SpeechEventの生成/認知/解釈/効果登録が
+  // 全て終わった後段でだけ、confirmed clusterでの内容発話(topic/claim付き発言)を生成する。
+  // standingParty以外、またはinformationPropagation.enabled === falseの間は一切呼ばない
+  // (受入条件: Phase 5 disabled時にPhase 4までの挙動・PRNG消費列が一切変わらない)。
+  const contentUtteranceLogEntries: LogEntry[] = [];
+  let tickContentUtterances: ContentUtteranceEvent[] = [];
+  let tickContentSpeechEvents: SpeechEvent[] = [];
+  let nextClusterTopicRuntime = state.clusterTopicRuntime;
+  if (formationPolicy.id === "standingParty" && standingPartyConfig.informationPropagation.enabled) {
+    const contentResult = deriveContentUtterances({
+      tick,
+      agents: nextState.agents,
+      groupCandidates: nextState.groupCandidates,
+      informationRuntime: nextState.informationRuntime ?? {},
+      clusterTopicRuntime: state.clusterTopicRuntime ?? {},
+      topicCatalog: standingPartyConfig.informationPropagation.topicCatalog,
+      claimCatalog: standingPartyConfig.informationPropagation.claimCatalog,
+      config: standingPartyConfig.informationPropagation.contentUtterance,
+      runSeed,
+    });
+    tickContentUtterances = contentResult.utterances;
+    tickContentSpeechEvents = contentResult.speechEvents;
+    nextClusterTopicRuntime = contentResult.clusterTopicRuntime;
+    for (const event of contentResult.events) {
+      pushLog(contentUtteranceLogEntries, tick, event.message, event.tags ?? ["contentUtterance"], event.eventType, event.metadata);
+    }
+  }
+
   return {
     ...nextState,
+    log: [...nextState.log, ...contentUtteranceLogEntries],
     // Issue #115: 記録・Phase 3入力とも乖離調整後のSpeechEvent列を使う(調整前の基礎列は残さない)
-    speechLog: [...(state.speechLog ?? []), ...tickSpeechEvents],
+    // Issue #230: 内容発話のcarrier SpeechEventはPhase 3/4パイプライン(認知/解釈/trust/tie)を通さず、
+    // 後段でそのままspeechLogへ追記するだけ(ADR §5のtick順序: 既存パイプライン確定後に生成)。
+    speechLog: [...(state.speechLog ?? []), ...tickSpeechEvents, ...tickContentSpeechEvents],
+    contentUtteranceLog: [...(state.contentUtteranceLog ?? []), ...tickContentUtterances],
+    clusterTopicRuntime: nextClusterTopicRuntime,
     speechReceptionLog: [...(state.speechReceptionLog ?? []), ...tickReceptions],
     speechInterpretationLog: [...(state.speechInterpretationLog ?? []), ...tickInterpretations],
     speechEffectLog: [...(state.speechEffectLog ?? []), ...tickEffects],

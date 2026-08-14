@@ -7,7 +7,12 @@ import { WORLD_HEIGHT, WORLD_WIDTH } from "./model";
  * Phase 2が扱うのは、誘う("invite")・歓迎する("welcome")・合流を告げる("greet")・
  * 辞退を告げる("decline")の4種のみ。
  */
-export type SpeechIntent = "invite" | "welcome" | "greet" | "decline";
+/**
+ * Issue #230 (Phase 5, ADR #228 §0/§3.2): "shareInformation"はtopic/claim内容を運ぶだけの中立
+ * carrier intentであり、誘う・歓迎する等の社会的行為の意味は一切持たない。Phase 3の
+ * `SpeechActiveEffect`(speechEffects.ts)を一切生成しない(`INTENT_BASE`の基礎強度が0に固定されている)。
+ */
+export type SpeechIntent = "invite" | "welcome" | "greet" | "decline" | "shareInformation";
 
 /**
  * 発言が発生した構造的な理由。`SpeechEvent.textKey`のテンプレート参照キーにも使う。
@@ -20,6 +25,8 @@ export type SpeechIntent = "invite" | "welcome" | "greet" | "decline";
  * - "joinGreeting": 輪への到着・グループ成立により合流した本人が発する合流挨拶。
  * - "leaveDeclaration": 曖昧な時間に耐えられず離脱を始めた本人が発する、辞退・帰宅表明。
  * - "lightObserverInvitation": `light-observer-invitation`介入で、observerJoinerに軽く声をかける発言。
+ * - "contentTurn": Issue #230 (Phase 5)。active clusterでのtopic/claim内容発話。intentは常に
+ *   "shareInformation"で、この発言自体は誘う/歓迎する/合流/辞退のいずれの意味も持たない。
  */
 export type SpeechReason =
   | "initiativeFormedCore"
@@ -28,7 +35,8 @@ export type SpeechReason =
   | "approachWelcome"
   | "joinGreeting"
   | "leaveDeclaration"
-  | "lightObserverInvitation";
+  | "lightObserverInvitation"
+  | "contentTurn";
 
 /** 発言が届く範囲。特定の1人ではなく周囲へ向けた発言の場合に設定される(`target`とは排他) */
 export type SpeechAudience = "nearby";

@@ -129,6 +129,7 @@ describe("SpeechEventの一意性・整合性: speechLog全体が満たすべき
     joinGreeting: "greet",
     leaveDeclaration: "decline",
     lightObserverInvitation: "invite",
+    contentTurn: "shareInformation",
   };
 
   for (const preset of PRESETS) {
