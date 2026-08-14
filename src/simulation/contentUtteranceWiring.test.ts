@@ -161,8 +161,24 @@ describe("Phase 5 content utterance wiring (enabled)", () => {
     expect(next.speechLog?.some((s) => s.id === utterance.speechEventId && s.intent === "shareInformation")).toBe(true);
     expect(next.clusterTopicRuntime?.["group-1"]?.currentTopicId).toBe(topicId);
 
-    // agentごとの情報状態(informationRuntime)自体はこのIssueでは書き換えない(#231以降の対象)
-    expect(next.informationRuntime).toEqual(state.informationRuntime);
+    // Issue #231: 話者(agent-1)の情報状態は変わらないが、受け手(agent-2)はこの発話を受信・理解・
+    // 採用decisionまで経て情報状態が更新される。
+    expect(next.informationRuntime?.["agent-1"]).toEqual(state.informationRuntime?.["agent-1"]);
+    const receiverClaimState = next.informationRuntime?.["agent-2"]?.claims[claimId];
+    expect(receiverClaimState).toBeDefined();
+    expect(receiverClaimState?.awareness).toBe("understood");
+    expect(receiverClaimState?.heardCount).toBe(1);
+    expect(receiverClaimState?.firstHeardTick).toBe(11);
+    expect(receiverClaimState?.sourceTraces.some((t) => t.kind === "heardUtterance" && t.immediateSpeakerId === "agent-1")).toBe(
+      true,
+    );
+
+    expect(next.informationReceptionLog).toHaveLength(1);
+    expect(next.informationReceptionLog![0]).toMatchObject({ receiverId: "agent-2", claimId, heard: true, comprehension: "understood" });
+    expect(next.informationAdoptionLog).toHaveLength(1);
+    expect(next.informationAdoptionLog![0]).toMatchObject({ receiverId: "agent-2", claimId });
+    expect(next.informationMemoryUpdateLog).toHaveLength(1);
+    expect(next.informationMemoryUpdateLog![0]).toMatchObject({ receiverId: "agent-2", claimId, reason: "firstExposure" });
   });
 
   it("does not perturb agent transitions/log for non-Phase-5 concerns compared to disabled, aside from the new content utterance additions", () => {

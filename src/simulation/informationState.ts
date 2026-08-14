@@ -177,6 +177,52 @@ export type ContentUtteranceConfig = {
   clusterAudienceStrength: number;
 };
 
+/**
+ * Issue #231 (Phase 5): `informationTransmission.ts`が使う、受信理解・採用decision・記憶更新の設定(§4/§8.1)。
+ * `informationPropagation.enabled`がfalseの間はこの設定自体が参照されない(#230の`ContentUtteranceConfig`
+ * と同じ既定値保持の方針)。
+ */
+export type InformationTransmissionConfig = {
+  /** heard判定後、理解(`"understood"`)扱いにする最低comprehension score。[0, 1] */
+  comprehensionThreshold: number;
+  /** 採用確率の基礎値。[0, 1] */
+  adoptionBaseRate: number;
+  /** speakerへのtrust(§4.2 `speakerTrust`)を採用確率へ加算する係数。finite */
+  trustWeight: number;
+  /** relationship tie補正(§4.2 `relationshipTie`)を加算する係数。finite */
+  tieWeight: number;
+  /** receiverのtopic interestを加算する係数。finite */
+  topicInterestWeight: number;
+  /** receiverの既存confidenceを加算する係数(anchoring)。finite */
+  priorConfidenceWeight: number;
+  /** 同じimmediate sourceの反復を逓減させたnovelty値に掛かる係数。finite >= 0 */
+  sourceRepetitionWeight: number;
+  /** 独立した直接sourceの人数(不明瞭)を有限加算する係数。finite >= 0 */
+  sourceDiversityWeight: number;
+  /** source diversityの加算が頭打ちになるまでの、原本を含む累計distinct source数。integer >= 1 */
+  sourceDiversitySaturationCount: number;
+  /** 既存active variantとの一致/競合を反映する係数。finite */
+  variantCompatibilityWeight: number;
+  /** claim.verifiabilityを反映する係数。finite */
+  claimVerifiabilityWeight: number;
+  /** carrier SpeechEvent.strengthを反映する係数。finite */
+  utteranceStrengthWeight: number;
+  /** rejectedとuncertainを分ける、残余確率のうちuncertainへ割り当てる割合。[0, 1] */
+  uncertainBandShare: number;
+  /** 採用確率からconfidence変化量へのスケール。finite > 0 */
+  confidenceUpdateScale: number;
+  /** adopted時のmemory増分。[0, 1] */
+  memoryGainOnAdoption: number;
+  /** heard(理解できなかった場合を含む)時の基礎memory増分。[0, 1] */
+  memoryGainOnHeard: number;
+  /** tickあたりのmemory減衰量。[0, 1]。0ならforgetAtTickを一切設定しない(忘れない) */
+  memoryDecayPerTick: number;
+  /** この値を下回ると`forgotten`になる。[0, 1] */
+  forgetThreshold: number;
+  /** relearn時の最低memoryStrength。[0, 1]、`forgetThreshold`より大きい必要がある */
+  relearnFloor: number;
+};
+
 /** `StandingPartyScenarioConfig`配下に置くPhase 5専用設定(§7.1/§9)。`enabled: false`が既定 */
 export type InformationPropagationConfig = {
   enabled: boolean;
@@ -185,6 +231,7 @@ export type InformationPropagationConfig = {
   init: InformationInitConfig;
   limits: InformationPropagationLimits;
   contentUtterance: ContentUtteranceConfig;
+  transmission: InformationTransmissionConfig;
 };
 
 // --- validation -------------------------------------------------------------------------------
@@ -257,6 +304,57 @@ export function validateContentUtteranceConfig(config: ContentUtteranceConfig): 
 }
 
 /**
+ * Issue #231: `InformationTransmissionConfig`のvalidation(§4/§8.1の定義域表どおり)。NaN/Infinity・
+ * 定義域外・非整数のintegerフィールドを拒否し、`relearnFloor > forgetThreshold`(相互制約)を検証する。
+ */
+export function validateInformationTransmissionConfig(config: InformationTransmissionConfig): void {
+  assertUnit("transmission.comprehensionThreshold", config.comprehensionThreshold);
+  assertUnit("transmission.adoptionBaseRate", config.adoptionBaseRate);
+  for (const [name, value] of [
+    ["trustWeight", config.trustWeight],
+    ["tieWeight", config.tieWeight],
+    ["topicInterestWeight", config.topicInterestWeight],
+    ["priorConfidenceWeight", config.priorConfidenceWeight],
+    ["variantCompatibilityWeight", config.variantCompatibilityWeight],
+    ["claimVerifiabilityWeight", config.claimVerifiabilityWeight],
+    ["utteranceStrengthWeight", config.utteranceStrengthWeight],
+  ] as const) {
+    if (!Number.isFinite(value)) {
+      throw new Error(`informationState: transmission.${name} must be a finite number (got ${value})`);
+    }
+  }
+  for (const [name, value] of [
+    ["sourceRepetitionWeight", config.sourceRepetitionWeight],
+    ["sourceDiversityWeight", config.sourceDiversityWeight],
+  ] as const) {
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error(`informationState: transmission.${name} must be a finite number >= 0 (got ${value})`);
+    }
+  }
+  if (!Number.isInteger(config.sourceDiversitySaturationCount) || config.sourceDiversitySaturationCount < 1) {
+    throw new Error(
+      `informationState: transmission.sourceDiversitySaturationCount must be a positive integer (got ${config.sourceDiversitySaturationCount})`,
+    );
+  }
+  assertUnit("transmission.uncertainBandShare", config.uncertainBandShare);
+  if (!Number.isFinite(config.confidenceUpdateScale) || config.confidenceUpdateScale <= 0) {
+    throw new Error(
+      `informationState: transmission.confidenceUpdateScale must be a finite number > 0 (got ${config.confidenceUpdateScale})`,
+    );
+  }
+  assertUnit("transmission.memoryGainOnAdoption", config.memoryGainOnAdoption);
+  assertUnit("transmission.memoryGainOnHeard", config.memoryGainOnHeard);
+  assertUnit("transmission.memoryDecayPerTick", config.memoryDecayPerTick);
+  assertUnit("transmission.forgetThreshold", config.forgetThreshold);
+  assertUnit("transmission.relearnFloor", config.relearnFloor);
+  if (config.relearnFloor <= config.forgetThreshold) {
+    throw new Error(
+      `informationState: transmission.relearnFloor (${config.relearnFloor}) must be > forgetThreshold (${config.forgetThreshold})`,
+    );
+  }
+}
+
+/**
  * catalog(委譲)・fixture配置・分布config・上限を検証する。不正ID参照、NaN/Infinity、定義域外値、
  * 負のholder数を拒否する(受入条件)。
  */
@@ -264,6 +362,7 @@ export function validateInformationPropagationConfig(config: InformationPropagat
   validateTopicCatalog(config.topicCatalog);
   validateClaimCatalog(config.claimCatalog, config.topicCatalog);
   validateContentUtteranceConfig(config.contentUtterance);
+  validateInformationTransmissionConfig(config.transmission);
 
   const claimIds = new Set(config.claimCatalog.claims.map((claim) => claim.id));
 
@@ -332,6 +431,29 @@ export const DEFAULT_CONTENT_UTTERANCE_CONFIG: ContentUtteranceConfig = {
   clusterAudienceStrength: 1,
 };
 
+/** Issue #231: §8.1の初期推奨値。population約24・1000tickを想定した控えめな既定値 */
+export const DEFAULT_INFORMATION_TRANSMISSION_CONFIG: InformationTransmissionConfig = {
+  comprehensionThreshold: 0.4,
+  adoptionBaseRate: 0.25,
+  trustWeight: 0.3,
+  tieWeight: 0.25,
+  topicInterestWeight: 0.2,
+  priorConfidenceWeight: 0.1,
+  sourceRepetitionWeight: 0.1,
+  sourceDiversityWeight: 0.15,
+  sourceDiversitySaturationCount: 3,
+  variantCompatibilityWeight: 0.3,
+  claimVerifiabilityWeight: 0.1,
+  utteranceStrengthWeight: 0.1,
+  uncertainBandShare: 0.5,
+  confidenceUpdateScale: 0.5,
+  memoryGainOnAdoption: 0.35,
+  memoryGainOnHeard: 0.15,
+  memoryDecayPerTick: 0.01,
+  forgetThreshold: 0.15,
+  relearnFloor: 0.3,
+};
+
 /**
  * master flag OFF(既定)。無効時はcatalog/init/limitsを持つが、`createInitialInformationRuntimeState`は
  * `enabled`を見て呼び出し側(engine.ts)が完全にskipする(受入条件: Phase 5 disabled時に既存Agent、
@@ -344,6 +466,7 @@ export const DEFAULT_INFORMATION_PROPAGATION_CONFIG: InformationPropagationConfi
   init: DEFAULT_INFORMATION_INIT_CONFIG,
   limits: DEFAULT_INFORMATION_PROPAGATION_LIMITS,
   contentUtterance: DEFAULT_CONTENT_UTTERANCE_CONFIG,
+  transmission: DEFAULT_INFORMATION_TRANSMISSION_CONFIG,
 };
 
 validateInformationPropagationConfig(DEFAULT_INFORMATION_PROPAGATION_CONFIG);

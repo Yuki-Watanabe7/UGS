@@ -7,6 +7,7 @@ import {
   advanceActiveSpeechEffects,
   aggregateActiveEffects,
   DEFAULT_SPEECH_EFFECTS_CONFIG,
+  deriveAuditoryReceptions,
   deriveSpeechActiveEffects,
   deriveSpeechEffects,
   deriveSpeechInterpretations,
@@ -253,6 +254,33 @@ describe("deriveSpeechReceptions", () => {
     expect(receptions).toHaveLength(1);
     expect(receptions[0].distance).toBe(0);
     expect(receptions[0].heard).toBe(true);
+  });
+});
+
+describe("deriveAuditoryReceptions (Issue #231: distance/audibility helper extracted for Phase 5 reuse)", () => {
+  const broadcast = createSpeechEvent({
+    tick: 9,
+    speakerId: "founder",
+    intent: "shareInformation",
+    reason: "contentTurn",
+    audience: "nearby",
+    originX: 0,
+    originY: 0,
+  });
+
+  it("is not gated by SpeechEffectsConfig.enabled (unlike deriveSpeechReceptions)", () => {
+    const candidates = [makeCandidate({ id: "founder" }), makeCandidate({ id: "a", x: 50, y: 50 })];
+    expect(deriveAuditoryReceptions([broadcast], candidates)).not.toEqual([]);
+  });
+
+  it("produces byte-identical results to deriveSpeechReceptions(..., ENABLED) for the same inputs", () => {
+    const candidates = [
+      makeCandidate({ id: "founder" }),
+      makeCandidate({ id: "a", x: 50, y: 50 }),
+      makeCandidate({ id: "b", x: DEFAULT_SPEECH_RANGE + 50, y: 0 }),
+      makeCandidate({ id: "gone", x: 10, y: 0, state: "left" }),
+    ];
+    expect(deriveAuditoryReceptions([broadcast], candidates)).toEqual(deriveSpeechReceptions([broadcast], candidates, ENABLED));
   });
 });
 

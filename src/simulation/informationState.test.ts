@@ -12,6 +12,7 @@ import {
   listAgentsInterestedInTopic,
   traverseVariantLineage,
   validateInformationPropagationConfig,
+  validateInformationTransmissionConfig,
   withAgentClaimState,
   withAgentTopicState,
   type AgentInformationState,
@@ -95,6 +96,46 @@ describe("validateInformationPropagationConfig", () => {
       topicCatalog: { ...base.topicCatalog, topics: [...base.topicCatalog.topics, { ...base.topicCatalog.topics[0], id: base.topicCatalog.topics[0].id }] },
     };
     expect(() => validateInformationPropagationConfig(config)).toThrow();
+  });
+
+  it("delegates to transmission validation (rejects relearnFloor <= forgetThreshold)", () => {
+    const config: InformationPropagationConfig = {
+      ...base,
+      transmission: { ...base.transmission, forgetThreshold: 0.5, relearnFloor: 0.5 },
+    };
+    expect(() => validateInformationPropagationConfig(config)).toThrow();
+  });
+});
+
+describe("validateInformationTransmissionConfig", () => {
+  const base = DEFAULT_INFORMATION_PROPAGATION_CONFIG.transmission;
+
+  it("accepts the default config", () => {
+    expect(() => validateInformationTransmissionConfig(base)).not.toThrow();
+  });
+
+  it("rejects an out-of-range comprehensionThreshold", () => {
+    expect(() => validateInformationTransmissionConfig({ ...base, comprehensionThreshold: 1.5 })).toThrow();
+  });
+
+  it("rejects a non-finite weight", () => {
+    expect(() => validateInformationTransmissionConfig({ ...base, trustWeight: Number.NaN })).toThrow();
+  });
+
+  it("rejects a negative sourceRepetitionWeight", () => {
+    expect(() => validateInformationTransmissionConfig({ ...base, sourceRepetitionWeight: -0.1 })).toThrow();
+  });
+
+  it("rejects a non-integer sourceDiversitySaturationCount", () => {
+    expect(() => validateInformationTransmissionConfig({ ...base, sourceDiversitySaturationCount: 1.5 })).toThrow();
+  });
+
+  it("rejects a non-positive confidenceUpdateScale", () => {
+    expect(() => validateInformationTransmissionConfig({ ...base, confidenceUpdateScale: 0 })).toThrow();
+  });
+
+  it("rejects relearnFloor <= forgetThreshold", () => {
+    expect(() => validateInformationTransmissionConfig({ ...base, forgetThreshold: 0.3, relearnFloor: 0.3 })).toThrow();
   });
 });
 

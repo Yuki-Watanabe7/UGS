@@ -37,7 +37,7 @@ import type { SpeechEvent } from "./speech";
 import { createSpeechEvent, deriveSpeechEvents } from "./speech";
 import type { ContentUtteranceEvent } from "./contentUtterance";
 import { deriveContentUtterances } from "./contentUtterance";
-import type { SpeechActiveEffect, SpeechEffectsConfig } from "./speechEffects";
+import type { SpeechActiveEffect, SpeechEffectsConfig, SpeechReceptionEvent, SpeechTrustResolver } from "./speechEffects";
 import {
   advanceActiveSpeechEffects,
   deriveSpeechActiveEffects,
@@ -45,9 +45,16 @@ import {
   deriveSpeechInterpretations,
   deriveSpeechReceptions,
   registerActiveSpeechEffects,
+  relationshipTrust,
   resolveSpeechEffectsConfig,
   sumActiveEffectValue,
 } from "./speechEffects";
+import type {
+  InformationAdoptionEvent,
+  InformationMemoryUpdateEvent,
+  InformationReceptionEvent,
+} from "./informationTransmission";
+import { applyScheduledForgetting, deriveInformationTransmission } from "./informationTransmission";
 import {
   applyLightInvitationEffect,
   isUnderLightInvitationBoost,
@@ -2397,8 +2404,10 @@ export function stepSimulation(
     interventionRuntimeState,
     activeInterventionEffects: [...activeInterventionEffects, ...newInterventionEffects],
     speechLog: [],
-    // Issue #229 (Phase 5): このIssueでは発話・伝播・記憶更新を実装しないため、前tickの値をそのまま
-    // 引き継ぐだけ(#230以降がここへ実際の状態遷移を追加する)。
+    // Issue #231 (Phase 5): ここでは前tickの値をそのまま暫定的に引き継ぐだけ。実際のforget schedule
+    // 適用・内容発話生成・reception/adoption/memory更新は、既存Phase 1〜4処理・social SpeechEvent
+    // パイプラインが確定した後段(このtickの内容発話ブロック)でだけ行い、最終的な値は末尾のreturnで
+    // 上書きする(ADR §5のtick順序どおり)。
     informationRuntime: state.informationRuntime,
   };
 
@@ -2499,20 +2508,35 @@ export function stepSimulation(
   const tickEffects = deriveSpeechEffects(tickInterpretations, tickSpeechEvents, speechEffectsConfig);
   const tickActiveEffects = deriveSpeechActiveEffects(tickEffects, nextState.agents, speechEffectsConfig);
 
-  // Issue #230 (Phase 5, ADR #228 §5): 既存Phase 1〜4処理・社会的SpeechEventの生成/認知/解釈/効果登録が
-  // 全て終わった後段でだけ、confirmed clusterでの内容発話(topic/claim付き発言)を生成する。
-  // standingParty以外、またはinformationPropagation.enabled === falseの間は一切呼ばない
+  // Issue #230/#231 (Phase 5, ADR #228 §5): 既存Phase 1〜4処理・社会的SpeechEventの生成/認知/解釈/効果登録が
+  // 全て終わった後段でだけ、confirmed clusterでの内容発話(topic/claim付き発言)と、その受信・理解・採用・
+  // 記憶更新を行う。standingParty以外、またはinformationPropagation.enabled === falseの間は一切呼ばない
   // (受入条件: Phase 5 disabled時にPhase 4までの挙動・PRNG消費列が一切変わらない)。
   const contentUtteranceLogEntries: LogEntry[] = [];
   let tickContentUtterances: ContentUtteranceEvent[] = [];
   let tickContentSpeechEvents: SpeechEvent[] = [];
   let nextClusterTopicRuntime = state.clusterTopicRuntime;
+  let tickInformationReceptions: InformationReceptionEvent[] = [];
+  let tickInformationAdoptions: InformationAdoptionEvent[] = [];
+  let tickInformationMemoryUpdates: InformationMemoryUpdateEvent[] = [];
+  let tickContentSpeechReceptions: SpeechReceptionEvent[] = [];
+  let nextInformationRuntime = nextState.informationRuntime;
   if (formationPolicy.id === "standingParty" && standingPartyConfig.informationPropagation.enabled) {
+    // ADR §5 step 2: 「Phase 5開始スナップショットを確定」する前に、dueになったforget scheduleを適用する。
+    // これにより#230の話者候補選定(`isRemembered`)がこのtickの最新のforgotten状態を見る。
+    const forgetStep = applyScheduledForgetting(
+      nextState.informationRuntime ?? {},
+      tick,
+      standingPartyConfig.informationPropagation.transmission,
+    );
+    nextInformationRuntime = forgetStep.runtime;
+    tickInformationMemoryUpdates = [...tickInformationMemoryUpdates, ...forgetStep.memoryUpdates];
+
     const contentResult = deriveContentUtterances({
       tick,
       agents: nextState.agents,
       groupCandidates: nextState.groupCandidates,
-      informationRuntime: nextState.informationRuntime ?? {},
+      informationRuntime: nextInformationRuntime,
       clusterTopicRuntime: state.clusterTopicRuntime ?? {},
       topicCatalog: standingPartyConfig.informationPropagation.topicCatalog,
       claimCatalog: standingPartyConfig.informationPropagation.claimCatalog,
@@ -2525,6 +2549,32 @@ export function stepSimulation(
     for (const event of contentResult.events) {
       pushLog(contentUtteranceLogEntries, tick, event.message, event.tags ?? ["contentUtterance"], event.eventType, event.metadata);
     }
+
+    // Issue #231: trust/tieはPhase 4の解釈と同じresolverをread-onlyで再利用する(§1.1)。
+    // trust/tie無効時は、解釈パイプラインの無効時と同じ静的fallback(既存の`relationshipTrust`/補正なし)。
+    const informationTrustResolver: SpeechTrustResolver =
+      trustResolver ?? ((_receiverId, _speakerId, sameClique) => relationshipTrust(sameClique, effectiveParams.existingTieStrength));
+    const informationTieResolver: SpeechTrustResolver = tieResolver ?? (() => 0);
+
+    const transmissionResult = deriveInformationTransmission({
+      tick,
+      agents: nextState.agents,
+      groupCandidates: nextState.groupCandidates,
+      contentUtterances: tickContentUtterances,
+      contentSpeechEvents: tickContentSpeechEvents,
+      informationRuntime: nextInformationRuntime,
+      claimCatalog: standingPartyConfig.informationPropagation.claimCatalog,
+      limits: standingPartyConfig.informationPropagation.limits,
+      config: standingPartyConfig.informationPropagation.transmission,
+      runSeed,
+      resolveTrust: informationTrustResolver,
+      resolveTieCorrection: informationTieResolver,
+    });
+    tickContentSpeechReceptions = transmissionResult.speechReceptions;
+    tickInformationReceptions = transmissionResult.informationReceptions;
+    tickInformationAdoptions = transmissionResult.adoptions;
+    tickInformationMemoryUpdates = [...tickInformationMemoryUpdates, ...transmissionResult.memoryUpdates];
+    nextInformationRuntime = transmissionResult.informationRuntime;
   }
 
   return {
@@ -2536,7 +2586,12 @@ export function stepSimulation(
     speechLog: [...(state.speechLog ?? []), ...tickSpeechEvents, ...tickContentSpeechEvents],
     contentUtteranceLog: [...(state.contentUtteranceLog ?? []), ...tickContentUtterances],
     clusterTopicRuntime: nextClusterTopicRuntime,
-    speechReceptionLog: [...(state.speechReceptionLog ?? []), ...tickReceptions],
+    // Issue #231: 内容発話のcarrier SpeechEventに対する認知結果(§3.3)もsocial speechと同じログへ合流する。
+    speechReceptionLog: [...(state.speechReceptionLog ?? []), ...tickReceptions, ...tickContentSpeechReceptions],
+    informationReceptionLog: [...(state.informationReceptionLog ?? []), ...tickInformationReceptions],
+    informationAdoptionLog: [...(state.informationAdoptionLog ?? []), ...tickInformationAdoptions],
+    informationMemoryUpdateLog: [...(state.informationMemoryUpdateLog ?? []), ...tickInformationMemoryUpdates],
+    informationRuntime: nextInformationRuntime,
     speechInterpretationLog: [...(state.speechInterpretationLog ?? []), ...tickInterpretations],
     speechEffectLog: [...(state.speechEffectLog ?? []), ...tickEffects],
     speechEffectsEnabled: speechEffectsConfig.enabled,
