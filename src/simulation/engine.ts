@@ -68,6 +68,8 @@ import {
 } from "./interventions";
 import { SeededRandom } from "./random";
 import { createInitialInformationRuntimeState } from "./informationState";
+import { mergeGeneratedVariants } from "./claimVariant";
+import type { RetellingEvent } from "./retelling";
 import { WORLD_WIDTH, WORLD_HEIGHT, clamp, distance, createInitialAgents } from "./model";
 import { formatTick } from "./time";
 import {
@@ -2521,6 +2523,13 @@ export function stepSimulation(
   let tickInformationMemoryUpdates: InformationMemoryUpdateEvent[] = [];
   let tickContentSpeechReceptions: SpeechReceptionEvent[] = [];
   let nextInformationRuntime = nextState.informationRuntime;
+  // Issue #232: 静的fixture catalogへ、このrunでこれまでに生成されたvariantをmergeしたものを
+  // このtickの正本catalogとして使う(§6.3: 古いvariantを削除・つなぎ替えない、追記のみ)。
+  // `clusterTopicRuntime`/`informationRuntime`と同じ境界: disabled中は`undefined`のまま(receipt/log
+  // 配列とは異なり、record shapeのruntime stateは"空"と"未使用"を区別する既存方針に合わせる)。
+  let nextGeneratedClaimVariants = state.generatedClaimVariants;
+  let nextRetellingRuntime = state.retellingRuntime;
+  let tickRetellingEvents: RetellingEvent[] = [];
   if (formationPolicy.id === "standingParty" && standingPartyConfig.informationPropagation.enabled) {
     // ADR §5 step 2: 「Phase 5開始スナップショットを確定」する前に、dueになったforget scheduleを適用する。
     // これにより#230の話者候補選定(`isRemembered`)がこのtickの最新のforgotten状態を見る。
@@ -2532,6 +2541,11 @@ export function stepSimulation(
     nextInformationRuntime = forgetStep.runtime;
     tickInformationMemoryUpdates = [...tickInformationMemoryUpdates, ...forgetStep.memoryUpdates];
 
+    const effectiveClaimCatalog = mergeGeneratedVariants(
+      standingPartyConfig.informationPropagation.claimCatalog,
+      nextGeneratedClaimVariants ?? [],
+    );
+
     const contentResult = deriveContentUtterances({
       tick,
       agents: nextState.agents,
@@ -2539,13 +2553,22 @@ export function stepSimulation(
       informationRuntime: nextInformationRuntime,
       clusterTopicRuntime: state.clusterTopicRuntime ?? {},
       topicCatalog: standingPartyConfig.informationPropagation.topicCatalog,
-      claimCatalog: standingPartyConfig.informationPropagation.claimCatalog,
+      claimCatalog: effectiveClaimCatalog,
       config: standingPartyConfig.informationPropagation.contentUtterance,
+      limits: standingPartyConfig.informationPropagation.limits,
+      retellingConfig: standingPartyConfig.informationPropagation.retelling,
+      retellingRuntime: nextRetellingRuntime ?? {},
       runSeed,
     });
     tickContentUtterances = contentResult.utterances;
     tickContentSpeechEvents = contentResult.speechEvents;
     nextClusterTopicRuntime = contentResult.clusterTopicRuntime;
+    // Issue #232: 話者自身のretellingCount/lastRetoldTick更新をtransmission呼び出し前に反映する
+    // (§4.4: retelling count / lastRetoldTick更新はContentUtterance生成成功と同じcommitで行う)。
+    nextInformationRuntime = contentResult.informationRuntime;
+    nextGeneratedClaimVariants = [...(nextGeneratedClaimVariants ?? []), ...contentResult.generatedVariants];
+    nextRetellingRuntime = contentResult.retellingRuntime;
+    tickRetellingEvents = contentResult.retellingEvents;
     for (const event of contentResult.events) {
       pushLog(contentUtteranceLogEntries, tick, event.message, event.tags ?? ["contentUtterance"], event.eventType, event.metadata);
     }
@@ -2563,7 +2586,7 @@ export function stepSimulation(
       contentUtterances: tickContentUtterances,
       contentSpeechEvents: tickContentSpeechEvents,
       informationRuntime: nextInformationRuntime,
-      claimCatalog: standingPartyConfig.informationPropagation.claimCatalog,
+      claimCatalog: effectiveClaimCatalog,
       limits: standingPartyConfig.informationPropagation.limits,
       config: standingPartyConfig.informationPropagation.transmission,
       runSeed,
@@ -2585,6 +2608,9 @@ export function stepSimulation(
     // 後段でそのままspeechLogへ追記するだけ(ADR §5のtick順序: 既存パイプライン確定後に生成)。
     speechLog: [...(state.speechLog ?? []), ...tickSpeechEvents, ...tickContentSpeechEvents],
     contentUtteranceLog: [...(state.contentUtteranceLog ?? []), ...tickContentUtterances],
+    generatedClaimVariants: nextGeneratedClaimVariants,
+    retellingRuntime: nextRetellingRuntime,
+    retellingLog: [...(state.retellingLog ?? []), ...tickRetellingEvents],
     clusterTopicRuntime: nextClusterTopicRuntime,
     // Issue #231: 内容発話のcarrier SpeechEventに対する認知結果(§3.3)もsocial speechと同じログへ合流する。
     speechReceptionLog: [...(state.speechReceptionLog ?? []), ...tickReceptions, ...tickContentSpeechReceptions],

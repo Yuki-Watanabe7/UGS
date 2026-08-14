@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { deriveContentUtterances, type ContentUtteranceGenerationContext } from "./contentUtterance";
-import { DEFAULT_CONTENT_UTTERANCE_CONFIG } from "./informationState";
+import { DEFAULT_CONTENT_UTTERANCE_CONFIG, DEFAULT_INFORMATION_PROPAGATION_LIMITS, DEFAULT_RETELLING_CONFIG } from "./informationState";
 import type { AgentClaimState, AgentInformationState, ContentUtteranceConfig, InformationRuntimeState, SourceTrace } from "./informationState";
 import type { ClaimCatalog, InformationClaim, TopicCatalog } from "./informationModel";
 import { createRootVariant } from "./informationModel";
+import type { RetellingRuntimeState } from "./retelling";
 import type { Agent, GroupCandidate } from "./types";
 
 /**
@@ -136,6 +137,10 @@ function baseConfig(overrides: Partial<ContentUtteranceConfig> = {}): ContentUtt
   return { ...DEFAULT_CONTENT_UTTERANCE_CONFIG, utteranceIntervalTicks: 1, utteranceProbability: 1, ...overrides };
 }
 
+function baseRetellingRuntime(): RetellingRuntimeState {
+  return {};
+}
+
 function baseContext(overrides: Partial<ContentUtteranceGenerationContext> = {}): ContentUtteranceGenerationContext {
   return {
     tick: 1,
@@ -146,6 +151,9 @@ function baseContext(overrides: Partial<ContentUtteranceGenerationContext> = {})
     topicCatalog: TOPIC_CATALOG,
     claimCatalog: CLAIM_CATALOG,
     config: baseConfig(),
+    limits: DEFAULT_INFORMATION_PROPAGATION_LIMITS,
+    retellingConfig: DEFAULT_RETELLING_CONFIG,
+    retellingRuntime: baseRetellingRuntime(),
     runSeed: 1,
     ...overrides,
   };
@@ -219,6 +227,122 @@ describe("deriveContentUtterances: single eligible speaker/claim (deterministic 
       baseContext({ tick: 1, agents: [agent1, agent2], groupCandidates: [cluster], informationRuntime: heardRuntime }),
     );
     expect(result.utterances[0].reason).toBe("knownClaimShare");
+  });
+});
+
+describe("deriveContentUtterances: retelling (Issue #232)", () => {
+  const agent1 = makeAgent({ id: "agent-1", label: "Agent1", joinedGroupId: "group-1" });
+  const agent2 = makeAgent({ id: "agent-2", label: "Agent2", joinedGroupId: "group-1" });
+  const cluster = makeCluster({ memberIds: ["agent-1", "agent-2"] });
+
+  function heardRuntime(overrides: Partial<AgentClaimState> = {}): InformationRuntimeState {
+    return {
+      "agent-1": makeAgentInformationState("agent-1", {
+        claims: {
+          "claim:a": makeClaimState({
+            sourceTraces: [
+              makeSourceTrace({ id: "source-heard", kind: "heardUtterance", immediateSpeakerId: "agent-9", utteranceId: "u-1", receptionId: "r-1" }),
+            ],
+            ...overrides,
+          }),
+        },
+      }),
+      "agent-2": makeAgentInformationState("agent-2", {}),
+    };
+  }
+
+  it("does not trigger any RetellingEvent for an originalShare turn", () => {
+    const informationRuntime: InformationRuntimeState = {
+      "agent-1": makeAgentInformationState("agent-1", { claims: { "claim:a": makeClaimState({}) } }),
+      "agent-2": makeAgentInformationState("agent-2", {}),
+    };
+    const result = deriveContentUtterances(baseContext({ tick: 1, agents: [agent1, agent2], groupCandidates: [cluster], informationRuntime }));
+    expect(result.utterances[0].reason).toBe("originalShare");
+    expect(result.retellingEvents).toEqual([]);
+    expect(result.generatedVariants).toEqual([]);
+  });
+
+  it("records a faithful RetellingEvent and updates retellingCount/lastRetoldTick when mutation is disabled (default)", () => {
+    const informationRuntime = heardRuntime();
+    const result = deriveContentUtterances(
+      baseContext({ tick: 1, agents: [agent1, agent2], groupCandidates: [cluster], informationRuntime }),
+    );
+    expect(result.utterances[0].reason).toBe("knownClaimShare");
+    expect(result.utterances[0].variantId).toBe("claim:a:root");
+    expect(result.retellingEvents).toHaveLength(1);
+    expect(result.retellingEvents[0]).toMatchObject({ result: "faithful", speakerId: "agent-1", claimId: "claim:a", inputVariantId: "claim:a:root" });
+    expect(result.retellingEvents[0].contentUtteranceId).toBe(result.utterances[0].id);
+    expect(result.generatedVariants).toEqual([]);
+
+    const updatedClaimState = result.informationRuntime["agent-1"].claims["claim:a"];
+    expect(updatedClaimState.retellingCount).toBe(1);
+    expect(updatedClaimState.lastRetoldTick).toBe(1);
+  });
+
+  it("mutates the variant, marks reason=retelling, and records the new variant when forced to mutate", () => {
+    const informationRuntime = heardRuntime({ memoryStrength: 0.3, confidence: 0.3 });
+    const retellingConfig = { ...DEFAULT_RETELLING_CONFIG, mutationEnabled: true, baseMutationProbability: 1 };
+    const result = deriveContentUtterances(
+      baseContext({ tick: 1, agents: [agent1, agent2], groupCandidates: [cluster], informationRuntime, retellingConfig }),
+    );
+    expect(result.utterances[0].reason).toBe("retelling");
+    expect(result.utterances[0].variantId).not.toBe("claim:a:root");
+    expect(result.generatedVariants).toHaveLength(1);
+    expect(result.generatedVariants[0].parentVariantId).toBe("claim:a:root");
+    expect(result.retellingEvents[0].result).toBe("mutated");
+    expect(result.retellingEvents[0].mutationFactors.length).toBeGreaterThan(0);
+  });
+
+  it("reuses an already-generated variant across separate ticks (dedup, no duplicate id)", () => {
+    const informationRuntime = heardRuntime({ memoryStrength: 0.3, confidence: 0.3 });
+    const retellingConfig = {
+      ...DEFAULT_RETELLING_CONFIG,
+      mutationEnabled: true,
+      baseMutationProbability: 1,
+      retellingCooldownTicks: 0,
+    };
+    const first = deriveContentUtterances(
+      baseContext({ tick: 1, agents: [agent1, agent2], groupCandidates: [cluster], informationRuntime, retellingConfig }),
+    );
+    expect(first.generatedVariants).toHaveLength(1);
+
+    const runtimeAfterFirst: InformationRuntimeState = {
+      ...first.informationRuntime,
+      "agent-1": {
+        ...first.informationRuntime["agent-1"],
+        claims: { "claim:a": { ...first.informationRuntime["agent-1"].claims["claim:a"], activeVariantId: "claim:a:root" } },
+      },
+    };
+    const claimCatalogWithGenerated = { ...CLAIM_CATALOG, variants: [...CLAIM_CATALOG.variants, ...first.generatedVariants] };
+    const second = deriveContentUtterances(
+      baseContext({
+        tick: 10,
+        agents: [agent1, agent2],
+        groupCandidates: [cluster],
+        informationRuntime: runtimeAfterFirst,
+        claimCatalog: claimCatalogWithGenerated,
+        retellingConfig,
+      }),
+    );
+    expect(second.retellingEvents[0].result).toBe("variantReused");
+    expect(second.generatedVariants).toEqual([]);
+    expect(second.retellingEvents[0].outputVariantId).toBe(first.generatedVariants[0].id);
+  });
+
+  it("suppresses the utterance (blockedByLimit) once the semantic distance ceiling is exceeded, without breaking the cluster's turn loop bookkeeping", () => {
+    const informationRuntime = heardRuntime({ memoryStrength: 0.3, confidence: 0.3 });
+    const retellingConfig = { ...DEFAULT_RETELLING_CONFIG, mutationEnabled: true, baseMutationProbability: 1, semanticDistanceCeiling: 0 };
+    const result = deriveContentUtterances(
+      baseContext({ tick: 1, agents: [agent1, agent2], groupCandidates: [cluster], informationRuntime, retellingConfig }),
+    );
+    expect(result.utterances).toEqual([]);
+    expect(result.speechEvents).toEqual([]);
+    expect(result.retellingEvents).toHaveLength(1);
+    expect(result.retellingEvents[0].result).toBe("blockedByLimit");
+    expect(result.retellingEvents[0].contentUtteranceId).toBeUndefined();
+    expect(result.generatedVariants).toEqual([]);
+    // 話者自身のretellingCount/lastRetoldTickも更新されない(ContentUtterance生成成功時とだけ同時commit)
+    expect(result.informationRuntime["agent-1"].claims["claim:a"].retellingCount).toBe(0);
   });
 });
 
