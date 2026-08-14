@@ -30,6 +30,11 @@ import type { AlternativeClusterInterestFactor } from "./alternativeClusterInter
 import type { InformationRuntimeState } from "./informationState";
 import type { ClusterTopicRuntimeState } from "./conversationTopic";
 import type { ContentUtteranceEvent, ContentUtteranceReason } from "./contentUtterance";
+import type {
+  InformationAdoptionEvent,
+  InformationMemoryUpdateEvent,
+  InformationReceptionEvent,
+} from "./informationTransmission";
 
 /**
  * エージェントの行動状態。Phase 4の三層モデル(`socialExpression.ts`)では、この状態遷移・移動
@@ -998,6 +1003,21 @@ export type SimulationState = {
    * 読み取り側の状態遷移は実装しない。
    */
   contentUtteranceLog?: ContentUtteranceEvent[];
+  /**
+   * Issue #231 (Phase 5): 受け手別の受信(heard/comprehension)の時系列蓄積ログ。`informationRuntime`
+   * と同じ境界(informationPropagation.enabled === falseの間は常にundefined)。
+   */
+  informationReceptionLog?: InformationReceptionEvent[];
+  /**
+   * Issue #231 (Phase 5): receiver × claim × tickにつき1件のadoption decisionの時系列蓄積ログ。
+   * rejected/uncertain/alreadyKnownも含む(受入条件: 採用しなかった記録も欠落させない)。
+   */
+  informationAdoptionLog?: InformationAdoptionEvent[];
+  /**
+   * Issue #231 (Phase 5): awareness/memoryStrength/source traceが実際に更新された時系列蓄積ログ。
+   * scheduled forget(reason: "forgotten")もここに含まれる。
+   */
+  informationMemoryUpdateLog?: InformationMemoryUpdateEvent[];
 };
 
 /**

@@ -360,9 +360,13 @@ function buildReception(
 }
 
 /**
- * `speechEvents`(このtickまでに生成された発言)から、認知対象になった受け手ごとに
- * `SpeechReceptionEvent`を導出する純粋関数。`SimulationState`・rngのいずれも参照/変更しない
- * (`candidates`として渡された位置スナップショットのみを参照する)。
+ * `speechEvents`から、認知対象になった受け手ごとに`SpeechReceptionEvent`を導出する純粋関数。
+ * `SimulationState`・rngのいずれも参照/変更しない(`candidates`として渡された位置スナップショットの
+ * みを参照する)。`SpeechEffectsConfig`のenabled/disabledに関わらず常に計算する版
+ * (Issue #231、ADR §3.3): `informationTransmission.ts`がcontent utteranceのcarrier `SpeechEvent`へ
+ * 同じ距離/audibility判定を適用するために抽出した内部helper。`speechEffectsEnabled === false`でも
+ * Phase 5 enabledの内容発話には物理認知が必要であるため、gatingは呼び出し側(`deriveSpeechReceptions`/
+ * `informationTransmission.ts`)の責務にする。
  *
  * 到達判定の規則(Issue #94):
  * - 話者自身、および`state === "left"`のagentは候補から除外する。
@@ -382,13 +386,10 @@ function buildReception(
  * 同一`speechEvents`・同一`candidates`に対して常に同じ順序・内容の配列を返す(`candidates`の
  * 並び順をそのまま使うため、呼び出し側で安定した順序を渡すこと)。
  */
-export function deriveSpeechReceptions(
+export function deriveAuditoryReceptions(
   speechEvents: SpeechEvent[],
   candidates: SpeechReceiverCandidate[],
-  config: SpeechEffectsConfig,
 ): SpeechReceptionEvent[] {
-  if (!config.enabled) return [];
-
   const events: SpeechReceptionEvent[] = [];
   for (const speech of speechEvents) {
     const eligible = candidates.filter((candidate) => isEligibleReceiver(candidate, speech.speakerId));
@@ -407,6 +408,20 @@ export function deriveSpeechReceptions(
     }
   }
   return events;
+}
+
+/**
+ * `speechEvents`(このtickまでに生成された発言)から、認知対象になった受け手ごとに
+ * `SpeechReceptionEvent`を導出する純粋関数。`config.enabled`がfalseの間は空配列を返す
+ * (既存の後方互換デフォルト)。距離/audibility判定そのものは`deriveAuditoryReceptions`参照。
+ */
+export function deriveSpeechReceptions(
+  speechEvents: SpeechEvent[],
+  candidates: SpeechReceiverCandidate[],
+  config: SpeechEffectsConfig,
+): SpeechReceptionEvent[] {
+  if (!config.enabled) return [];
+  return deriveAuditoryReceptions(speechEvents, candidates);
 }
 
 /**
