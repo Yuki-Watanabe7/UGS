@@ -223,6 +223,40 @@ export type InformationTransmissionConfig = {
   relearnFloor: number;
 };
 
+/**
+ * Issue #232 (Phase 5): `claimVariant.ts`が使う、6種の有限`ClaimMutationKind`ごとの相対重み。
+ * kind選択はこの重みを「その手番でそのfactorを適用するBernoulli確率」として使う(§5.2の
+ * `mutation-factor`stage、factorごとに独立した最大1 drawという設計に合わせる)。[0, 1]。
+ */
+export type RetellingMutationFactorWeights = {
+  detailOmission: number;
+  certaintyShift: number;
+  magnitudeShift: number;
+  actorGeneralization: number;
+  sourceBlur: number;
+  emphasisShift: number;
+};
+
+/**
+ * Issue #232 (Phase 5): `retelling.ts`が使う、retelling decision・variant変容の設定。
+ * `maxVariantsPerClaim`/`maxLineageDepth`は既存`InformationPropagationLimits`を再利用し、
+ * ここでは重複定義しない。`mutationEnabled: false`(既定)の間は`retelling.ts`が忠実retelling
+ * 相当の`RetellingEvent`は生成しうるが、一切variantを変容させない(既存`activeVariantId`をそのまま話す)。
+ */
+export type RetellingConfig = {
+  /** false(既定)ならmutationを一切試みない。masterの`enabled`とは別flag(§7.1) */
+  mutationEnabled: boolean;
+  /** mutationを試みる基礎確率。[0, 1]、実際の値はdecision factorで加算補正される */
+  baseMutationProbability: number;
+  factorWeights: RetellingMutationFactorWeights;
+  /** 同一agentが同一claimを再度「変容込みで」語れるまでの最小間隔tick。integer >= 0 */
+  retellingCooldownTicks: number;
+  /** 同一cluster内で同一variantが語られてよい回数の上限(これに達すると忠実retellingへ固定する)。integer >= 1 */
+  sameClusterVariantRepeatLimit: number;
+  /** rootからの累積`canonicalDistance`がこれを超える新規variantは生成しない。finite > 0 */
+  semanticDistanceCeiling: number;
+};
+
 /** `StandingPartyScenarioConfig`配下に置くPhase 5専用設定(§7.1/§9)。`enabled: false`が既定 */
 export type InformationPropagationConfig = {
   enabled: boolean;
@@ -232,6 +266,7 @@ export type InformationPropagationConfig = {
   limits: InformationPropagationLimits;
   contentUtterance: ContentUtteranceConfig;
   transmission: InformationTransmissionConfig;
+  retelling: RetellingConfig;
 };
 
 // --- validation -------------------------------------------------------------------------------
@@ -355,6 +390,30 @@ export function validateInformationTransmissionConfig(config: InformationTransmi
 }
 
 /**
+ * Issue #232: `RetellingConfig`のvalidation。NaN/Infinity・定義域外・非整数のintegerフィールドを拒否する。
+ * `maxVariantsPerClaim`/`maxLineageDepth`は`InformationPropagationLimits`側で検証済みのためここでは扱わない。
+ */
+export function validateRetellingConfig(config: RetellingConfig): void {
+  assertUnit("retelling.baseMutationProbability", config.baseMutationProbability);
+  for (const [name, value] of Object.entries(config.factorWeights)) {
+    assertUnit(`retelling.factorWeights.${name}`, value);
+  }
+  if (!Number.isInteger(config.retellingCooldownTicks) || config.retellingCooldownTicks < 0) {
+    throw new Error(`informationState: retelling.retellingCooldownTicks must be a non-negative integer (got ${config.retellingCooldownTicks})`);
+  }
+  if (!Number.isInteger(config.sameClusterVariantRepeatLimit) || config.sameClusterVariantRepeatLimit < 1) {
+    throw new Error(
+      `informationState: retelling.sameClusterVariantRepeatLimit must be a positive integer (got ${config.sameClusterVariantRepeatLimit})`,
+    );
+  }
+  if (!Number.isFinite(config.semanticDistanceCeiling) || config.semanticDistanceCeiling <= 0) {
+    throw new Error(
+      `informationState: retelling.semanticDistanceCeiling must be a finite number > 0 (got ${config.semanticDistanceCeiling})`,
+    );
+  }
+}
+
+/**
  * catalog(委譲)・fixture配置・分布config・上限を検証する。不正ID参照、NaN/Infinity、定義域外値、
  * 負のholder数を拒否する(受入条件)。
  */
@@ -363,6 +422,7 @@ export function validateInformationPropagationConfig(config: InformationPropagat
   validateClaimCatalog(config.claimCatalog, config.topicCatalog);
   validateContentUtteranceConfig(config.contentUtterance);
   validateInformationTransmissionConfig(config.transmission);
+  validateRetellingConfig(config.retelling);
 
   const claimIds = new Set(config.claimCatalog.claims.map((claim) => claim.id));
 
@@ -454,6 +514,23 @@ export const DEFAULT_INFORMATION_TRANSMISSION_CONFIG: InformationTransmissionCon
   relearnFloor: 0.3,
 };
 
+/** Issue #232: §8.1の初期推奨値。`mutationEnabled: false`が既定(masterと同じ安全側デフォルト方針) */
+export const DEFAULT_RETELLING_CONFIG: RetellingConfig = {
+  mutationEnabled: false,
+  baseMutationProbability: 0.3,
+  factorWeights: {
+    detailOmission: 1,
+    certaintyShift: 1,
+    magnitudeShift: 1,
+    actorGeneralization: 1,
+    sourceBlur: 1,
+    emphasisShift: 1,
+  },
+  retellingCooldownTicks: 5,
+  sameClusterVariantRepeatLimit: 3,
+  semanticDistanceCeiling: 5,
+};
+
 /**
  * master flag OFF(既定)。無効時はcatalog/init/limitsを持つが、`createInitialInformationRuntimeState`は
  * `enabled`を見て呼び出し側(engine.ts)が完全にskipする(受入条件: Phase 5 disabled時に既存Agent、
@@ -467,6 +544,7 @@ export const DEFAULT_INFORMATION_PROPAGATION_CONFIG: InformationPropagationConfi
   limits: DEFAULT_INFORMATION_PROPAGATION_LIMITS,
   contentUtterance: DEFAULT_CONTENT_UTTERANCE_CONFIG,
   transmission: DEFAULT_INFORMATION_TRANSMISSION_CONFIG,
+  retelling: DEFAULT_RETELLING_CONFIG,
 };
 
 validateInformationPropagationConfig(DEFAULT_INFORMATION_PROPAGATION_CONFIG);

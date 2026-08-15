@@ -35,6 +35,8 @@ import type {
   InformationMemoryUpdateEvent,
   InformationReceptionEvent,
 } from "./informationTransmission";
+import type { ClaimVariant } from "./informationModel";
+import type { RetellingEvent, RetellingRuntimeState } from "./retelling";
 
 /**
  * エージェントの行動状態。Phase 4の三層モデル(`socialExpression.ts`)では、この状態遷移・移動
@@ -1018,6 +1020,24 @@ export type SimulationState = {
    * scheduled forget(reason: "forgotten")もここに含まれる。
    */
   informationMemoryUpdateLog?: InformationMemoryUpdateEvent[];
+  /**
+   * Issue #232 (Phase 5): このrunで生成された(canonical catalogのfixtureにない)`ClaimVariant`の蓄積。
+   * 静的fixture catalog(`standingPartyConfig.informationPropagation.claimCatalog`)は不変のまま、
+   * `engine.ts`が毎tick`mergeGeneratedVariants`でこれをmergeしてから`contentUtterance.ts`/`retelling.ts`
+   * へ渡す。`informationRuntime`と同じ境界(disabled/standingParty以外では常にundefined)。
+   * 古いvariantを削除・つなぎ替えることはない(§6.3受入条件)。
+   */
+  generatedClaimVariants?: ClaimVariant[];
+  /**
+   * Issue #232 (Phase 5): 同一cluster内で同一variantが語られた累計回数(`retelling.ts`の
+   * `sameClusterVariantRepeatLimit`判定に使う)。`clusterTopicRuntime`と同じ境界・寿命。
+   */
+  retellingRuntime?: RetellingRuntimeState;
+  /**
+   * Issue #232 (Phase 5): retelling decisionの結果(faithful/mutated/variantReused/blockedByLimit)の
+   * 時系列蓄積ログ。`contentUtteranceLog`と同じ「後から取り除かない」方針。
+   */
+  retellingLog?: RetellingEvent[];
 };
 
 /**

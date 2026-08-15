@@ -1,20 +1,31 @@
 /**
- * Issue #230 (Phase 5, roadmap #172): `docs/information-propagation-phase5-model.md`(#228 ADR)
- * §3〜§5の契約に基づく、active clusterでの発話機会・話者・topic・claim/variant選択と、
+ * Issue #230/#232 (Phase 5, roadmap #172): `docs/information-propagation-phase5-model.md`(#228 ADR)
+ * §3〜§6の契約に基づく、active clusterでの発話機会・話者・topic・claim/variant選択と、
  * `ContentUtteranceEvent` + carrier `SpeechEvent`の生成。
  *
  * このモジュールが行うのは「誰が・いつ・何のtopicを・どのclaim/variantとして話すか」の決定と
- * event生成だけである。受け手の認知・採用・記憶更新(`InformationReceptionEvent`以降)や
- * retelling/variant変容は対象外(#231/#232)。そのため`InformationRuntimeState`
- * (agentごとのtopic/claim状態)は読み取り専用参照のみで、一切書き換えない。
+ * event生成だけである。受け手の認知・採用・記憶更新(`InformationReceptionEvent`以降、#231)は対象外。
+ *
+ * Issue #232: 既知claim(`reason === "knownClaimShare"`)を話す手番では、variant選択の直後に
+ * `retelling.ts`のretelling decision/variant変容を挟む(ADR §5 step5)。そのため`InformationRuntimeState`
+ * は「話者自身の`retellingCount`/`lastRetoldTick`更新」だけを例外的に書き換えうる(§4.4: retelling count /
+ * lastRetoldTick更新はContentUtterance生成成功と同じcommitで行う) ―― adoption/memory(受信者側の
+ * acceptance/confidence/memoryStrength/awareness)は一切書き換えない(#231のまま)。
  *
  * RNGは本体`SeededRandom`を受け取らない。§5.2のとおり`runSeed`から論理decisionごとに
- * entity-key派生streamを作る(`deriveContentRandom`)ため、Phase 5 disabled/未該当tickでは
- * 呼び出し自体が発生せず、本体のPRNG消費列に一切影響しない。
+ * entity-key派生streamを作る(`deriveContentRandom`、`retelling.ts`側の派生streamも同様)ため、
+ * Phase 5 disabled/未該当tickでは呼び出し自体が発生せず、本体のPRNG消費列に一切影響しない。
  */
 import type { Agent, GroupCandidate } from "./types";
-import type { ClaimCatalog, InformationClaim, TopicCatalog, TopicDefinition } from "./informationModel";
-import type { AgentClaimState, ContentUtteranceConfig, InformationRuntimeState } from "./informationState";
+import type { ClaimCatalog, ClaimVariant, InformationClaim, TopicCatalog, TopicDefinition } from "./informationModel";
+import type {
+  AgentClaimState,
+  ContentUtteranceConfig,
+  InformationPropagationLimits,
+  InformationRuntimeState,
+  RetellingConfig,
+} from "./informationState";
+import { withAgentClaimState } from "./informationState";
 import type { ClusterTopicRuntimeState, ClusterTopicState } from "./conversationTopic";
 import {
   computeClusterTopicFatigue,
@@ -24,12 +35,15 @@ import {
   recordUtterance,
   syncClusterMembership,
 } from "./conversationTopic";
+import { mergeGeneratedVariants } from "./claimVariant";
+import type { RetellingEvent, RetellingRuntimeState } from "./retelling";
+import { deriveRetellingOutcome, withClusterVariantTellIncrement } from "./retelling";
 import type { SpeechEvent } from "./speech";
 import { createSpeechEvent } from "./speech";
 import { SeededRandom } from "./random";
 import type { InterventionEvent } from "./schoolInterventionRuntime";
 
-/** 発話の分類理由。#230時点では"retelling"(#232のvariant変容と結びつく明示的な再伝達)は生成しない */
+/** 発話の分類理由。"retelling"は#232のvariant変容が実際に発生した(`RetellingEvent.result === "mutated"`)手番の分類として使う */
 export type ContentUtteranceReason = "originalShare" | "knownClaimShare" | "retelling";
 
 export type ContentUtteranceEvent = {
@@ -54,8 +68,15 @@ export type ContentUtteranceGenerationContext = {
   informationRuntime: InformationRuntimeState;
   clusterTopicRuntime: ClusterTopicRuntimeState;
   topicCatalog: TopicCatalog;
+  /** 呼び出し側(`engine.ts`)が静的fixture catalogへこのrunで生成済みの全variantをmerge済みのもの */
   claimCatalog: ClaimCatalog;
   config: ContentUtteranceConfig;
+  /** Issue #232: `retelling.ts`のdedup/lineage上限判定に使う(`maxVariantsPerClaim`/`maxLineageDepth`) */
+  limits: InformationPropagationLimits;
+  /** Issue #232: retelling decision/mutationの設定 */
+  retellingConfig: RetellingConfig;
+  /** Issue #232: 同一cluster内の同一variant反復回数(cluster横断のrun-scoped state) */
+  retellingRuntime: RetellingRuntimeState;
   runSeed: number;
 };
 
@@ -64,6 +85,12 @@ export type ContentUtteranceGenerationResult = {
   speechEvents: SpeechEvent[];
   clusterTopicRuntime: ClusterTopicRuntimeState;
   events: InterventionEvent[];
+  /** Issue #232: 話者自身の`retellingCount`/`lastRetoldTick`だけを反映した更新後state(それ以外は入力と同一) */
+  informationRuntime: InformationRuntimeState;
+  /** Issue #232: このtickで新規生成された(dedupされなかった)`ClaimVariant`。呼び出し側がcatalogへmergeする */
+  generatedVariants: ClaimVariant[];
+  retellingEvents: RetellingEvent[];
+  retellingRuntime: RetellingRuntimeState;
 };
 
 const RNG_NAMESPACE = "standing-party-content-utterance-v1";
@@ -277,7 +304,14 @@ export function deriveContentUtterances(ctx: ContentUtteranceGenerationContext):
   const utterances: ContentUtteranceEvent[] = [];
   const speechEvents: SpeechEvent[] = [];
   const events: InterventionEvent[] = [];
+  const generatedVariants: ClaimVariant[] = [];
+  const retellingEvents: RetellingEvent[] = [];
   let runtime = ctx.clusterTopicRuntime;
+  // Issue #232: 話者自身の`retellingCount`/`lastRetoldTick`更新だけを反映する(受信者側のadoption/memoryは不可侵)
+  let nextInformationRuntime = ctx.informationRuntime;
+  // 同一tick内で先に生成したvariantを後続turnのdedup判定でも見えるようにする(§6.3、重複ID防止)
+  let effectiveCatalog = ctx.claimCatalog;
+  let nextRetellingRuntime = ctx.retellingRuntime;
 
   const confirmedClusters = sortById(ctx.groupCandidates.filter((c) => c.status === "confirmed"));
   const activeClusterIds = new Set(confirmedClusters.map((c) => c.id));
@@ -359,8 +393,57 @@ export function deriveContentUtterances(ctx: ContentUtteranceGenerationContext):
         break;
       }
 
-      const variantId = claimState.activeVariantId ?? claimDefinition.rootVariantId;
-      const reason = determineReason(claimState);
+      const parentVariantId = claimState.activeVariantId ?? claimDefinition.rootVariantId;
+      let reason = determineReason(claimState);
+
+      // Issue #232 (ADR §5 step5): 既に受信/記憶を経た既知claimを話す手番だけがretelling対象。
+      // 自分が最初に持っていた情報を初めて話す(originalShare)場合はretellingではない(§4.4)。
+      let variantId = parentVariantId;
+      // contentUtteranceIdはSpeechEvent/ContentUtteranceEventのIDが決まってから埋める(下でpatchする)
+      let pendingRetellingEvent: RetellingEvent | undefined;
+      if (reason === "knownClaimShare") {
+        const parentVariant = effectiveCatalog.variants.find((v) => v.id === parentVariantId);
+        if (parentVariant) {
+          const outcome = deriveRetellingOutcome({
+            tick: ctx.tick,
+            clusterId: cluster.id,
+            speakerId: speaker.id,
+            claim: claimDefinition,
+            parentVariant,
+            claimState,
+            profile: nextInformationRuntime[speaker.id]?.profile ?? { retellingTendency: 0, memoryRetention: 0, baselineTopicInterest: {} },
+            clusterCurrentTopicId: clusterState.currentTopicId,
+            catalog: effectiveCatalog,
+            limits: ctx.limits,
+            config: ctx.retellingConfig,
+            retellingRuntime: nextRetellingRuntime,
+            runSeed: ctx.runSeed,
+          });
+
+          if (outcome.suppressed) {
+            // ADR §4.4: blockedByLimitはContentUtteranceを生成しない。この手番は発話なしで終える。
+            retellingEvents.push(outcome.event);
+            continue;
+          }
+
+          variantId = outcome.variantId;
+          if (outcome.generatedVariant) {
+            generatedVariants.push(outcome.generatedVariant);
+            effectiveCatalog = mergeGeneratedVariants(effectiveCatalog, [outcome.generatedVariant]);
+          }
+          // 実際に語られたvariantがparentと異なる(mutated/variantReused)場合だけ"retelling"として分類する
+          if (variantId !== parentVariantId) reason = "retelling";
+
+          nextInformationRuntime = withAgentClaimState(nextInformationRuntime, speaker.id, {
+            ...claimState,
+            retellingCount: claimState.retellingCount + 1,
+            lastRetoldTick: ctx.tick,
+          });
+
+          pendingRetellingEvent = outcome.event;
+        }
+      }
+
       const transition = topicTransition(clusterState.currentTopicId, topicCandidate.topic.id, clusterState.topicStartedTick !== undefined);
 
       const speechEvent = createSpeechEvent({
@@ -392,6 +475,12 @@ export function deriveContentUtterances(ctx: ContentUtteranceGenerationContext):
       };
       utterances.push(utterance);
 
+      if (pendingRetellingEvent) {
+        retellingEvents.push({ ...pendingRetellingEvent, contentUtteranceId: utterance.id });
+      }
+
+      nextRetellingRuntime = withClusterVariantTellIncrement(nextRetellingRuntime, cluster.id, variantId);
+
       clusterState = recordUtterance(clusterState, {
         topicId: topicCandidate.topic.id,
         speakerId: speaker.id,
@@ -419,5 +508,14 @@ export function deriveContentUtterances(ctx: ContentUtteranceGenerationContext):
     runtime = { ...runtime, [cluster.id]: clusterState };
   }
 
-  return { utterances, speechEvents, clusterTopicRuntime: runtime, events };
+  return {
+    utterances,
+    speechEvents,
+    clusterTopicRuntime: runtime,
+    events,
+    informationRuntime: nextInformationRuntime,
+    generatedVariants,
+    retellingEvents,
+    retellingRuntime: nextRetellingRuntime,
+  };
 }

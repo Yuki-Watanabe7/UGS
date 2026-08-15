@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_INFORMATION_PROPAGATION_CONFIG,
+  DEFAULT_RETELLING_CONFIG,
   addSourceTrace,
   applyInitialGrant,
   clampUnit,
@@ -13,10 +14,12 @@ import {
   traverseVariantLineage,
   validateInformationPropagationConfig,
   validateInformationTransmissionConfig,
+  validateRetellingConfig,
   withAgentClaimState,
   withAgentTopicState,
   type AgentInformationState,
   type InformationPropagationConfig,
+  type RetellingConfig,
   type SourceTrace,
 } from "./informationState";
 import { STANDING_PARTY_CLAIM_CATALOG, STANDING_PARTY_TOPIC_CATALOG, createRootVariant } from "./informationModel";
@@ -104,6 +107,47 @@ describe("validateInformationPropagationConfig", () => {
       transmission: { ...base.transmission, forgetThreshold: 0.5, relearnFloor: 0.5 },
     };
     expect(() => validateInformationPropagationConfig(config)).toThrow();
+  });
+
+  it("delegates to retelling validation (rejects a negative retellingCooldownTicks)", () => {
+    const config: InformationPropagationConfig = {
+      ...base,
+      retelling: { ...base.retelling, retellingCooldownTicks: -1 },
+    };
+    expect(() => validateInformationPropagationConfig(config)).toThrow();
+  });
+});
+
+describe("validateRetellingConfig", () => {
+  const base: RetellingConfig = DEFAULT_RETELLING_CONFIG;
+
+  it("accepts the default config", () => {
+    expect(() => validateRetellingConfig(base)).not.toThrow();
+  });
+
+  it("rejects an out-of-range baseMutationProbability", () => {
+    expect(() => validateRetellingConfig({ ...base, baseMutationProbability: 1.5 })).toThrow();
+  });
+
+  it("rejects an out-of-range factor weight", () => {
+    expect(() => validateRetellingConfig({ ...base, factorWeights: { ...base.factorWeights, sourceBlur: -0.1 } })).toThrow();
+  });
+
+  it("rejects a non-integer retellingCooldownTicks", () => {
+    expect(() => validateRetellingConfig({ ...base, retellingCooldownTicks: 1.5 })).toThrow();
+  });
+
+  it("rejects a negative retellingCooldownTicks", () => {
+    expect(() => validateRetellingConfig({ ...base, retellingCooldownTicks: -1 })).toThrow();
+  });
+
+  it("rejects a non-positive sameClusterVariantRepeatLimit", () => {
+    expect(() => validateRetellingConfig({ ...base, sameClusterVariantRepeatLimit: 0 })).toThrow();
+  });
+
+  it("rejects a non-positive semanticDistanceCeiling", () => {
+    expect(() => validateRetellingConfig({ ...base, semanticDistanceCeiling: 0 })).toThrow();
+    expect(() => validateRetellingConfig({ ...base, semanticDistanceCeiling: Number.NaN })).toThrow();
   });
 });
 
