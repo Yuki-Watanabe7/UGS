@@ -84,6 +84,12 @@ const CLUSTER_DEPARTURE_REASON_LABEL: Record<ClusterTransitionPrimaryReason, str
   stayedByAttachment: "今の輪への愛着",
   stayedByDepartureConcern: "離脱による影響への配慮",
   stayedByMixedInhibition: "愛着+配慮(複合)",
+  topicMismatch: "話題が合わない",
+  topicFatigue: "話題への飽き",
+  informationSeeking: "情報を求めての移動",
+  novelInformationOpportunity: "未知の情報への強い関心",
+  mixedConversationAndInformation: "会話満足度+情報探索(複合)",
+  stayedDespiteInformationInterest: "情報への関心はあるが留まった",
 };
 
 /** Issue #189: 自発的離脱(責務9)とクラスタ解散によるrelease(責務10)の表示上の区別 */

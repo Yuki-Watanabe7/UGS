@@ -182,6 +182,12 @@ export type ConversationSatisfactionUpdateContext = {
   cliqueRatio: number;
   /** `SimParams.existingTieStrength` */
   existingTieStrength: number;
+  /**
+   * Issue #233 (Phase 5): `topicCompatibility.ts`の`deriveSatisfactionContribution`が返す、
+   * 符号付きの満足度寄与。呼び出し側(engine.ts)がPhase 5 enabled/topic既知の場合のみ設定する。
+   * 未設定(既定)なら寄与0 ―― topic未設定/Phase 5 disabled時に既存式と同一結果になる(受入条件)。
+   */
+  topicContribution?: number;
 };
 
 /** 各寄与要因を含む更新結果(要件7節: 少なくともこれらを返す) */
@@ -201,6 +207,8 @@ export type ConversationSatisfactionUpdateResult = {
   sizeContribution: number;
   /** 同clique構成による補正分(>= 0) */
   cliqueContribution: number;
+  /** Issue #233 (Phase 5): topic compatibility由来の寄与(符号付き)。未設定入力なら常に0 */
+  topicContribution: number;
 };
 
 /**
@@ -222,8 +230,14 @@ export function updateConversationSatisfaction(
   );
   const sizeContribution = sizeAdjustment(ctx.observedMemberCount, config);
   const cliqueContribution = cliqueAdjustment(ctx.cliqueRatio, ctx.existingTieStrength, config);
+  const topicContribution = ctx.topicContribution ?? 0;
   const nextSatisfaction = clamp01(
-    ctx.previousSatisfaction + decayContribution + newMemberContribution + sizeContribution + cliqueContribution,
+    ctx.previousSatisfaction +
+      decayContribution +
+      newMemberContribution +
+      sizeContribution +
+      cliqueContribution +
+      topicContribution,
   );
   return {
     previousSatisfaction: ctx.previousSatisfaction,
@@ -232,5 +246,6 @@ export function updateConversationSatisfaction(
     newMemberContribution,
     sizeContribution,
     cliqueContribution,
+    topicContribution,
   };
 }

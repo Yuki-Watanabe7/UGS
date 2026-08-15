@@ -15,6 +15,7 @@ import { computeClusterTransitionDecision } from "./clusterTransitionDecision";
 import type { ClusterTransitionConfig, ClusterTransitionDecision } from "./clusterTransitionDecision";
 import type { AlternativeClusterInterest } from "./alternativeClusterInterest";
 import type { DepartureInhibition } from "./currentClusterAttachment";
+import type { TopicCompatibility, TopicIntegrationConfig } from "./topicCompatibility";
 
 /**
  * Issue #130 (Phase 1): シナリオごとに差し替え可能な「グループ形成・終了ルール」の集合。
@@ -209,6 +210,15 @@ export type ClusterDepartureContext = {
     minTargetInterestScore: number;
     /** #199の愛着・離脱配慮の合成結果 */
     inhibition: DepartureInhibition;
+    /**
+     * Issue #233 (Phase 5): `clusterTransitionDecision.ts`の`topicSignal`をそのまま中継する。
+     * 未設定(既定)ならPhase 5のreason差し替えは一切行われない(後方互換)。
+     */
+    topicSignal?: {
+      config: TopicIntegrationConfig;
+      currentCompatibility?: TopicCompatibility;
+      alternativeInformationOpportunityContribution?: number;
+    };
   };
 };
 
@@ -626,6 +636,7 @@ function createStandingPartyPolicy(
         bestAlternativeInterest: ctx.transition.bestAlternativeInterest,
         minTargetInterestScore: ctx.transition.minTargetInterestScore,
         inhibition: ctx.transition.inhibition,
+        topicSignal: ctx.transition.topicSignal,
       });
 
       return {

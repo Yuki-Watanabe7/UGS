@@ -68,8 +68,13 @@ import {
 } from "./interventions";
 import { SeededRandom } from "./random";
 import { createInitialInformationRuntimeState } from "./informationState";
+import type { InformationRuntimeState } from "./informationState";
 import { mergeGeneratedVariants } from "./claimVariant";
 import type { RetellingEvent } from "./retelling";
+import type { ClusterTopicRuntimeState } from "./conversationTopic";
+import type { ClaimCatalog, TopicCatalog } from "./informationModel";
+import { computeTopicCompatibility, deriveSatisfactionContribution } from "./topicCompatibility";
+import type { TopicCompatibility, TopicIntegrationConfig } from "./topicCompatibility";
 import { WORLD_WIDTH, WORLD_HEIGHT, clamp, distance, createInitialAgents } from "./model";
 import { formatTick } from "./time";
 import {
@@ -485,6 +490,41 @@ function startConversationEpisode(
 }
 
 /**
+ * Issue #233 (Phase 5): topic compatibility計算に必要な、standingParty runtimeの読み取り専用な束。
+ * `updateConversationEpisode`(満足度への統合)と、step 5b(transition reasonの精緻化)の両方から
+ * 同じ値を使って`computeTopicCompatibilityForCandidate`を呼ぶための共有型。
+ */
+type TopicIntegrationRuntimeContext = {
+  config: TopicIntegrationConfig;
+  clusterTopicRuntime: ClusterTopicRuntimeState;
+  informationRuntime: InformationRuntimeState;
+  topicCatalog: TopicCatalog;
+  claimCatalog: ClaimCatalog;
+  fatigueGain: number;
+  fatigueDecay: number;
+};
+
+/** `agent`から見た`candidateId`のtopic compatibility(`topicCompatibility.ts`)を導出する */
+function computeTopicCompatibilityForCandidate(
+  agent: Agent,
+  candidateId: string,
+  tick: number,
+  topicIntegration: TopicIntegrationRuntimeContext,
+): TopicCompatibility {
+  return computeTopicCompatibility({
+    config: topicIntegration.config.compatibility,
+    tick,
+    clusterId: candidateId,
+    clusterTopic: topicIntegration.clusterTopicRuntime[candidateId],
+    topicCatalog: topicIntegration.topicCatalog,
+    claimCatalog: topicIntegration.claimCatalog,
+    agentInformation: topicIntegration.informationRuntime[agent.id],
+    fatigueGain: topicIntegration.fatigueGain,
+    fatigueDecay: topicIntegration.fatigueDecay,
+  });
+}
+
+/**
  * Issue #186 (Phase 2): `joined`かつ有効なclusterに所属している間、毎tick呼び出して滞在時間
  * (`lastUpdatedTick`)とmember構成の直近観測値を最新化する。
  *
@@ -512,6 +552,7 @@ function updateConversationEpisode(
   priorCandidates: GroupCandidate[],
   satisfactionConfig: ConversationSatisfactionConfig = DEFAULT_CONVERSATION_SATISFACTION_CONFIG,
   attachmentConfig: CurrentClusterAttachmentConfig = DEFAULT_CURRENT_CLUSTER_ATTACHMENT_CONFIG,
+  topicIntegration?: TopicIntegrationRuntimeContext,
 ): void {
   if (!agent.currentEpisode || agent.currentEpisode.clusterId !== candidate.id) return;
   const episode = agent.currentEpisode;
@@ -522,6 +563,15 @@ function updateConversationEpisode(
       const priorCandidate = priorCandidates.find((c) => c.id === candidate.id);
       const observedMemberCount = priorCandidate?.memberIds.length ?? episode.lastObservedMemberCount;
       if (episode.conversationSatisfaction !== undefined) {
+        // Issue #233 (Phase 5): `topicIntegration`未設定(Phase 5 disabled、または
+        // informationPropagation自体が無効)なら`topicContribution`は常にundefined ――
+        // `updateConversationSatisfaction`は寄与0として扱う(既存式と同一結果、受入条件)。
+        const topicContribution = topicIntegration
+          ? deriveSatisfactionContribution(
+              computeTopicCompatibilityForCandidate(agent, candidate.id, tick, topicIntegration),
+              topicIntegration.config,
+            )
+          : undefined;
         const result = updateConversationSatisfaction({
           config: satisfactionConfig,
           previousSatisfaction: episode.conversationSatisfaction,
@@ -529,6 +579,7 @@ function updateConversationEpisode(
           observedMemberCount,
           cliqueRatio: computeCliqueMateRatio(agent.id, agent.cliqueId, candidate.memberIds, agents),
           existingTieStrength: params.existingTieStrength,
+          topicContribution,
         });
         episode.conversationSatisfaction = result.nextSatisfaction;
       }
@@ -1068,6 +1119,17 @@ function describeClusterDepartureReasonPhrase(primaryReason: ClusterTransitionPr
       return "気になる別の輪へ向かうため、";
     case "mixedDepartureAndAlternativeInterest":
       return "今の会話への物足りなさと、気になる別の輪の両方から、";
+    // Issue #233 (Phase 5): topic/情報探索が主因の離脱。「つまらない話」等の断定表現は避け、
+    // 「話題」「情報」という事実だけを述べる。
+    case "topicMismatch":
+      return "今の話題が合わないと感じ、";
+    case "topicFatigue":
+      return "同じ話題が続いたことから、";
+    case "informationSeeking":
+    case "novelInformationOpportunity":
+      return "気になる情報を求めて、";
+    case "mixedConversationAndInformation":
+      return "今の会話への物足りなさと、気になる情報の両方から、";
     default:
       return "";
   }
@@ -1085,6 +1147,9 @@ function describeTransitionInhibitionReasonPhrase(primaryReason: ClusterTransiti
       return "自分が抜けると輪に与える影響を考えて、";
     case "stayedByMixedInhibition":
       return "今の輪への愛着と、抜けることへの配慮の両方から、";
+    // Issue #233 (Phase 5): 情報への関心はあったが、愛着・配慮がそれを上回って留まった場合。
+    case "stayedDespiteInformationInterest":
+      return "気になる情報はあったが、今の輪への愛着から、";
     default:
       return "";
   }
@@ -1209,6 +1274,25 @@ export function stepSimulation(
   const formationPolicy = resolveFormationPolicy(resolvedFormation);
   // Issue #189 (Phase 2): standingParty以外では常にDEFAULT(既存挙動と一致)。
   const standingPartyConfig = resolvedFormation?.standingPartyConfig ?? DEFAULT_STANDING_PARTY_SCENARIO_CONFIG;
+  // Issue #233 (Phase 5): topic統合は`topicIntegration.enabled`かつ`informationPropagation.enabled`
+  // (topic runtime state自体が存在する)の両方が真の場合のみ有効にする。無効時は`topicRuntimeContext`
+  // を一切構築せず、`updateConversationEpisode`/`AlternativeClusterInterestContext`/
+  // `computeClusterTransitionDecision`のいずれもPhase 5関連の追加計算を行わない(既存挙動と同一)。
+  const topicIntegrationEnabled = standingPartyConfig.topicIntegration.enabled && standingPartyConfig.informationPropagation.enabled;
+  const topicRuntimeContext: TopicIntegrationRuntimeContext | undefined = topicIntegrationEnabled
+    ? {
+        config: standingPartyConfig.topicIntegration,
+        clusterTopicRuntime: state.clusterTopicRuntime ?? {},
+        informationRuntime: state.informationRuntime ?? {},
+        topicCatalog: standingPartyConfig.informationPropagation.topicCatalog,
+        claimCatalog: mergeGeneratedVariants(
+          standingPartyConfig.informationPropagation.claimCatalog,
+          state.generatedClaimVariants ?? [],
+        ),
+        fatigueGain: standingPartyConfig.informationPropagation.contentUtterance.fatigueGain,
+        fatigueDecay: standingPartyConfig.informationPropagation.contentUtterance.fatigueDecay,
+      }
+    : undefined;
   // Phase 3効果も同様に、未指定時は直前のstateの設定を引き継ぐ(呼び出し側の渡し忘れで
   // 途中からOFFに戻ってしまわないようにする)。
   const speechEffectsConfig = resolveSpeechEffectsConfig(
@@ -1729,6 +1813,7 @@ export function stepSimulation(
       state.groupCandidates,
       standingPartyConfig.conversationSatisfaction,
       standingPartyConfig.attachment,
+      topicRuntimeContext,
     );
 
     const ticksInCluster = agent.clusterJoinedAtTick !== undefined ? tick - agent.clusterJoinedAtTick : 0;
@@ -1754,6 +1839,19 @@ export function stepSimulation(
               existingTieStrength: effectiveParams.existingTieStrength,
               resolveCapacity: (c) => formationPolicy.resolveGroupCapacity(c, effectiveParams),
               tieCorrections: incomingTieCorrections,
+              // Issue #233 (Phase 5): topic統合が有効な場合のみ、observation可能な情報探索関心
+              // (`informationOpportunity` factor)を追加で評価させる。未設定なら既存挙動と同一。
+              topicIntegration: topicRuntimeContext
+                ? {
+                    config: topicRuntimeContext.config,
+                    clusterTopicRuntime: topicRuntimeContext.clusterTopicRuntime,
+                    topicCatalog: topicRuntimeContext.topicCatalog,
+                    claimCatalog: topicRuntimeContext.claimCatalog,
+                    agentInformation: topicRuntimeContext.informationRuntime[agent.id],
+                    fatigueGain: topicRuntimeContext.fatigueGain,
+                    fatigueDecay: topicRuntimeContext.fatigueDecay,
+                  }
+                : undefined,
             };
             const interests = deriveAlternativeClusterInterests(agent, state.groupCandidates, interestCtx);
             // 生の最良値(閾値未満でも渡す)。`switchToTargetCluster`候補判定の閾値適用は
@@ -1776,11 +1874,23 @@ export function stepSimulation(
               influenceAvoidance: agent.influenceAvoidance,
             });
 
+            // Issue #233 (Phase 5): 現在clusterのtopic compatibilityと、選ばれたbest alternativeの
+            // informationOpportunity寄与から、`clusterTransitionDecision.ts`のreason精緻化用信号を作る。
+            const topicSignal = topicRuntimeContext
+              ? {
+                  config: topicRuntimeContext.config,
+                  currentCompatibility: computeTopicCompatibilityForCandidate(agent, candidate.id, tick, topicRuntimeContext),
+                  alternativeInformationOpportunityContribution:
+                    bestAlternativeInterest?.factors.find((f) => f.kind === "informationOpportunity")?.contribution ?? 0,
+                }
+              : undefined;
+
             return {
               config: standingPartyConfig.transition,
               bestAlternativeInterest,
               minTargetInterestScore: standingPartyConfig.alternativeInterest.minTargetInterestScore,
               inhibition,
+              topicSignal,
             };
           })()
         : undefined;

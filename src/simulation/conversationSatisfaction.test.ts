@@ -178,6 +178,29 @@ describe("更新 (updateConversationSatisfaction)", () => {
     });
     expect(after.sizeContribution).toBeGreaterThan(before.sizeContribution);
   });
+
+  it("Issue #233 (Phase 5): topicContribution未指定なら常に0で、既存式と同一結果になる(受入条件)", () => {
+    const withoutTopic = updateConversationSatisfaction(NEUTRAL);
+    const withUndefinedTopic = updateConversationSatisfaction({ ...NEUTRAL, topicContribution: undefined });
+    expect(withoutTopic.topicContribution).toBe(0);
+    expect(withUndefinedTopic).toEqual(withoutTopic);
+  });
+
+  it("Issue #233 (Phase 5): topicContributionが指定されればnextSatisfactionへ加算される(同一状態でtopic一致のみ差替え)", () => {
+    const positive = updateConversationSatisfaction({ ...NEUTRAL, topicContribution: 0.08 });
+    const negative = updateConversationSatisfaction({ ...NEUTRAL, topicContribution: -0.08 });
+    const neutral = updateConversationSatisfaction(NEUTRAL);
+    expect(positive.nextSatisfaction).toBeGreaterThan(neutral.nextSatisfaction);
+    expect(negative.nextSatisfaction).toBeLessThan(neutral.nextSatisfaction);
+    expect(positive.topicContribution).toBe(0.08);
+  });
+
+  it("Issue #233 (Phase 5): topicContributionが極端でも満足度は[0,1]に収まる", () => {
+    const result = updateConversationSatisfaction({ ...NEUTRAL, previousSatisfaction: 0.05, topicContribution: -10 });
+    expect(result.nextSatisfaction).toBe(0);
+    const resultHigh = updateConversationSatisfaction({ ...NEUTRAL, previousSatisfaction: 0.95, topicContribution: 10 });
+    expect(resultHigh.nextSatisfaction).toBe(1);
+  });
 });
 
 describe("validateConversationSatisfactionConfig", () => {

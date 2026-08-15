@@ -25,6 +25,11 @@ import type { Agent, GroupCandidate } from "./types";
 import type { GroupCapacity } from "./formationPolicy";
 import { clamp, distance } from "./model";
 import { MAX_TIE_CORRECTION, tiePairKey, type TieCorrectionState } from "./relationshipTie";
+import type { ClusterTopicRuntimeState } from "./conversationTopic";
+import type { ClaimCatalog, TopicCatalog } from "./informationModel";
+import type { AgentInformationState } from "./informationState";
+import type { TopicIntegrationConfig } from "./topicCompatibility";
+import { computeTopicCompatibility, noveltyRatioOf } from "./topicCompatibility";
 
 export type AlternativeClusterInterestFactorKind =
   | "distance"
@@ -33,7 +38,8 @@ export type AlternativeClusterInterestFactorKind =
   | "cliqueCompatibility"
   | "outsiderBarrier"
   | "recentlyDeparted"
-  | "capacityPressure";
+  | "capacityPressure"
+  | "informationOpportunity";
 
 export type AlternativeClusterInterestFactor = {
   kind: AlternativeClusterInterestFactorKind;
@@ -73,6 +79,22 @@ export type AlternativeClusterInterestContext = {
    * 未指定/該当なしは常に中立(0)として扱う。
    */
   tieCorrections?: TieCorrectionState;
+  /**
+   * Issue #233 (Phase 5): 情報探索関心(`informationOpportunity` factor)の評価に使う、observation
+   * 可能な情報だけの束。未設定(既定)ならこのfactorは一切計算されない(既存挙動と同一、後方互換)。
+   * `agentInformation`はこのagent自身の情報state ―― target側の非公開claim stateは一切渡さない
+   * (ADR 5節と同じ「観察可能情報の制限」)。
+   */
+  topicIntegration?: {
+    config: TopicIntegrationConfig;
+    /** target clusterの公開topic runtime state(clusterId -> state) */
+    clusterTopicRuntime: ClusterTopicRuntimeState;
+    topicCatalog: TopicCatalog;
+    claimCatalog: ClaimCatalog;
+    agentInformation: AgentInformationState | undefined;
+    fatigueGain: number;
+    fatigueDecay: number;
+  };
 };
 
 export type AlternativeClusterInterestConfig = {
@@ -299,11 +321,36 @@ function scoreObservedCandidate(
     }
   }
 
+  // Issue #233 (Phase 5): `ctx.topicIntegration`未設定なら一切計算しない(既存挙動と完全に同一、
+  // rawScoreへの寄与も常に0)。target clusterの公開topic runtime stateとagent自身のinformation state
+  // だけを使う(他agentの非公開claim stateは一切参照しない)。
+  let informationOpportunityContribution = 0;
+  if (ctx.topicIntegration) {
+    const { config: topicConfig, clusterTopicRuntime, topicCatalog, claimCatalog, agentInformation, fatigueGain, fatigueDecay } =
+      ctx.topicIntegration;
+    const compatibility = computeTopicCompatibility({
+      config: topicConfig.compatibility,
+      tick: ctx.tick,
+      clusterId: candidate.id,
+      clusterTopic: clusterTopicRuntime[candidate.id],
+      topicCatalog,
+      claimCatalog,
+      agentInformation,
+      fatigueGain,
+      fatigueDecay,
+    });
+    informationOpportunityContribution = topicConfig.informationSeekingWeight * noveltyRatioOf(compatibility);
+    if (informationOpportunityContribution > 0) {
+      factors.push({ kind: "informationOpportunity", contribution: informationOpportunityContribution });
+    }
+  }
+
   const rawScore =
     distanceContribution +
     joinabilityContribution +
     cliqueCompatibilityContribution +
-    knownParticipantContribution -
+    knownParticipantContribution +
+    informationOpportunityContribution -
     outsiderBarrierContribution -
     capacityPressureContribution -
     recentlyDepartedContribution;

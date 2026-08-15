@@ -6,6 +6,10 @@ import {
   INTIMATE_STANDING_PARTY_CONFIG,
   OUTWARD_INTEREST_STANDING_PARTY_CONFIG,
   CURRENT_CIRCLE_ATTACHMENT_STANDING_PARTY_CONFIG,
+  INFO_RICH_STANDING_PARTY_CONFIG,
+  TOPIC_SEGMENTED_STANDING_PARTY_CONFIG,
+  RUMOR_MUTATION_STANDING_PARTY_CONFIG,
+  INFO_SEEKING_STANDING_PARTY_CONFIG,
 } from "./standingPartyScenarioConfig";
 import type { StandingPartyScenarioConfig } from "./standingPartyScenarioConfig";
 
@@ -212,6 +216,86 @@ export const PRESETS: ScenarioPreset[] = [
     },
     formationScenarioId: "standingParty",
     formationStandingPartyConfig: CURRENT_CIRCLE_ATTACHMENT_STANDING_PARTY_CONFIG,
+  },
+  {
+    id: "standing-party-info-rich",
+    name: "立食パーティー(情報が広がりやすい交流会)",
+    description:
+      "標準ケースと同じ会場規模・既存の関係性の強さ・Phase 2/3パラメータのまま、topicの発話・採用・" +
+      "再伝達(Phase 5)が活発に起こる場。話の内容(closing timeやおすすめの話等)が輪をまたいで" +
+      "広がりやすく、話題への一致・新規性が会話満足度・輪の移動へも反映される。" +
+      "「良い/悪い」を意味する名称ではなく、情報伝播の速さを比較するための仮説的な設定。",
+    params: {
+      ...DEFAULT_PARAMS,
+      populationSize: 24,
+      groupConfirmSize: 3,
+      numLeaders: 4,
+      overallWillingness: 0.65,
+      lateJoinEase: 0.5,
+      existingTieStrength: 0.25,
+    },
+    formationScenarioId: "standingParty",
+    formationStandingPartyConfig: INFO_RICH_STANDING_PARTY_CONFIG,
+  },
+  {
+    id: "standing-party-topic-segmented",
+    name: "立食パーティー(輪ごとに話題が分かれる場)",
+    description:
+      "標準ケースと同じ会場規模・既存の関係性の強さ・Phase 2/3パラメータのまま、各clusterのtopicが" +
+      "長く維持され(topic persistence)、自分の関心と今の輪の話題が合っているかどうか(interest match)が" +
+      "会話満足度へより強く反映される場(Phase 5)。「良い/悪い」を意味する名称ではなく、輪ごとの話題の" +
+      "分化を比較するための仮説的な設定。",
+    params: {
+      ...DEFAULT_PARAMS,
+      populationSize: 24,
+      groupConfirmSize: 3,
+      numLeaders: 4,
+      overallWillingness: 0.65,
+      lateJoinEase: 0.5,
+      existingTieStrength: 0.25,
+    },
+    formationScenarioId: "standingParty",
+    formationStandingPartyConfig: TOPIC_SEGMENTED_STANDING_PARTY_CONFIG,
+  },
+  {
+    id: "standing-party-rumor-mutation",
+    name: "立食パーティー(口コミが変容しやすい場)",
+    description:
+      "標準ケースと同じ会場規模・既存の関係性の強さ・Phase 2/3パラメータのまま、再伝達のたびに話の内容が" +
+      "変容しやすい場(Phase 5、mutation率が高い)。ただしvariant数・lineage深さ・意味距離の上限制御" +
+      "(既存の暴走防止キャップ)は緩めていない。「良い/悪い」を意味する名称ではなく、口コミの変容を" +
+      "比較するための仮説的な設定。",
+    params: {
+      ...DEFAULT_PARAMS,
+      populationSize: 24,
+      groupConfirmSize: 3,
+      numLeaders: 4,
+      overallWillingness: 0.65,
+      lateJoinEase: 0.5,
+      existingTieStrength: 0.25,
+    },
+    formationScenarioId: "standingParty",
+    formationStandingPartyConfig: RUMOR_MUTATION_STANDING_PARTY_CONFIG,
+  },
+  {
+    id: "standing-party-info-seeking",
+    name: "立食パーティー(情報探索型の参加者が多い場)",
+    description:
+      "標準ケースと同じ会場規模・既存の関係性の強さのまま、他クラスタで聞けそうな未知の情報(Phase 5)への" +
+      "関心が、既存の社交的関心とは別枠で強く働く場。目的地付き移動(switchToTargetCluster)として、" +
+      "情報を求めての輪の移動が観察しやすい。「良い/悪い」を意味する名称ではなく、情報探索行動の" +
+      "強さを比較するための仮説的な設定。",
+    params: {
+      ...DEFAULT_PARAMS,
+      populationSize: 24,
+      groupConfirmSize: 3,
+      numLeaders: 4,
+      overallWillingness: 0.65,
+      lateJoinEase: 0.5,
+      existingTieStrength: 0.25,
+    },
+    formationScenarioId: "standingParty",
+    formationStandingPartyConfig: INFO_SEEKING_STANDING_PARTY_CONFIG,
   },
   {
     id: "classroom-pair",

@@ -16,6 +16,7 @@ import type { ClusterDepartureFactor, ClusterDeparturePrimaryReason, ClusterTran
 import type { ClusterDepartureDecisionResult } from "./clusterDepartureDecision";
 import type { AlternativeClusterInterest } from "./alternativeClusterInterest";
 import type { DepartureInhibition } from "./currentClusterAttachment";
+import type { TopicCompatibility, TopicIntegrationConfig } from "./topicCompatibility";
 
 export type { ClusterTransitionAction, ClusterTransitionPrimaryReason };
 
@@ -136,6 +137,18 @@ export type ClusterTransitionDecisionInput = {
   minTargetInterestScore: number;
   /** 愛着・離脱配慮(#199)の合成結果 */
   inhibition: DepartureInhibition;
+  /**
+   * Issue #233 (Phase 5): `primaryReason`をtopic/情報探索由来のreasonへ差し替えるための追加信号。
+   * 未設定(既定)ならこの関数の他のいかなる計算・PRNG系列にも影響しない ―― `primaryReason`の
+   * 差し替え判定だけに使う純粋な後段処理(`refineReasonForTopicSignal`)。
+   */
+  topicSignal?: {
+    config: TopicIntegrationConfig;
+    /** 現在clusterのtopic compatibility(`topicCompatibility.ts`)。topic未設定ならundefinedでよい */
+    currentCompatibility?: TopicCompatibility;
+    /** `bestAlternativeInterest.factors`中の`informationOpportunity`寄与(無ければ0扱い) */
+    alternativeInformationOpportunityContribution?: number;
+  };
 };
 
 /**
@@ -181,6 +194,64 @@ function deriveTransitionPrimaryReason(params: {
     return "stayedByMixedInhibition";
   }
   return params.attachmentContribution > params.concernContribution ? "stayedByAttachment" : "stayedByDepartureConcern";
+}
+
+/**
+ * Issue #233 (Phase 5): `deriveTransitionPrimaryReason`が返した基本reasonを、topic/情報探索要因が
+ * 主要因だった場合に限り、より具体的な6値へ差し替える(issue要件4節)。`topicSignal`未設定、または
+ * どの分岐条件にも合致しない場合は元のreasonをそのまま返す(後方互換・byte-identical)。
+ *
+ * - `lowConversationSatisfaction` → 現在clusterの負のtopic factor合計が`topicMismatchThreshold`以上
+ *   なら`topicMismatch`(fatigue/repetition/停滞が主)か`topicFatigue`(それ以外の不一致が主)。
+ * - `alternativeClusterInterest` → informationOpportunity寄与が閾値以上なら`informationSeeking`
+ *   (`novelInformationOpportunityThreshold`以上なら`novelInformationOpportunity`)。
+ * - `mixedDepartureAndAlternativeInterest` → 両側がtopic要因主導なら`mixedConversationAndInformation`。
+ * - `stayedBy*` → informationOpportunity寄与が閾値以上(=抑制がなければ情報探索で離れていたはず)なら
+ *   `stayedDespiteInformationInterest`(attachment/departure concernが情報探索移動を抑制した、要件4節)。
+ */
+function refineReasonForTopicSignal(
+  primaryReason: ClusterTransitionPrimaryReason | undefined,
+  topicSignal: ClusterTransitionDecisionInput["topicSignal"],
+): ClusterTransitionPrimaryReason | undefined {
+  if (!topicSignal || primaryReason === undefined) return primaryReason;
+  const { config, currentCompatibility, alternativeInformationOpportunityContribution } = topicSignal;
+  const infoContribution = alternativeInformationOpportunityContribution ?? 0;
+  const hasStrongInfoOpportunity = infoContribution >= config.minInformationOpportunityScore;
+
+  if (primaryReason === "lowConversationSatisfaction" && currentCompatibility) {
+    const negativeFactors = currentCompatibility.factors.filter((factor) => factor.contribution < 0);
+    const negativeTotal = negativeFactors.reduce((sum, factor) => sum - factor.contribution, 0);
+    if (negativeTotal >= config.topicMismatchThreshold) {
+      const fatigueLikeTotal = negativeFactors
+        .filter((factor) => factor.kind === "fatigue" || factor.kind === "repetition")
+        .reduce((sum, factor) => sum - factor.contribution, 0);
+      return fatigueLikeTotal >= negativeTotal / 2 ? "topicFatigue" : "topicMismatch";
+    }
+    return primaryReason;
+  }
+
+  if (primaryReason === "alternativeClusterInterest" && hasStrongInfoOpportunity) {
+    return infoContribution >= config.novelInformationOpportunityThreshold ? "novelInformationOpportunity" : "informationSeeking";
+  }
+
+  if (primaryReason === "mixedDepartureAndAlternativeInterest" && hasStrongInfoOpportunity && currentCompatibility) {
+    const negativeTotal = currentCompatibility.factors
+      .filter((factor) => factor.contribution < 0)
+      .reduce((sum, factor) => sum - factor.contribution, 0);
+    if (negativeTotal >= config.topicMismatchThreshold) return "mixedConversationAndInformation";
+    return primaryReason;
+  }
+
+  if (
+    (primaryReason === "stayedByAttachment" ||
+      primaryReason === "stayedByDepartureConcern" ||
+      primaryReason === "stayedByMixedInhibition") &&
+    hasStrongInfoOpportunity
+  ) {
+    return "stayedDespiteInformationInterest";
+  }
+
+  return primaryReason;
 }
 
 /**
@@ -235,7 +306,7 @@ export function computeClusterTransitionDecision(input: ClusterTransitionDecisio
 
   const attachmentContribution = inhibition.factors.find((f) => f.kind === "episodeAttachment")?.contribution ?? 0;
 
-  const primaryReason = deriveTransitionPrimaryReason({
+  const baseReason = deriveTransitionPrimaryReason({
     departurePull,
     inhibitionTotal,
     p2,
@@ -245,6 +316,7 @@ export function computeClusterTransitionDecision(input: ClusterTransitionDecisio
     concernContribution: inhibition.concern,
     mixedReasonMargin: config.mixedReasonMargin,
   });
+  const primaryReason = refineReasonForTopicSignal(baseReason, input.topicSignal);
 
   return {
     eligible: true,
