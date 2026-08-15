@@ -47,6 +47,12 @@ import {
   validateInformationPropagationConfig,
   type InformationPropagationConfig,
 } from "./informationState";
+import {
+  DEFAULT_TOPIC_COMPATIBILITY_CONFIG,
+  DEFAULT_TOPIC_INTEGRATION_CONFIG,
+  validateTopicIntegrationConfig,
+  type TopicIntegrationConfig,
+} from "./topicCompatibility";
 
 /** 社交的回遊傾向(`Agent.socialCirculationTendency`)を一様分布で生成する範囲 `[0,1]` */
 export type SocialCirculationTendencyRange = {
@@ -74,6 +80,14 @@ export type StandingPartyScenarioConfig = {
    * `SimulationState.informationRuntime`は常にundefinedのまま(既存Agent/state/event/PRNG系列を変えない)。
    */
   informationPropagation: InformationPropagationConfig;
+  /**
+   * Issue #233 (Phase 5): topic/情報state統合(会話満足度・他クラスタ関心・transition decisionへの
+   * 反映)。`enabled: false`(既定)の間は`engine.ts`が`topicCompatibility.ts`由来の計算を一切行わず、
+   * `conversationSatisfaction`/`alternativeInterest`/`transition`の結果・PRNG系列を変えない
+   * (informationPropagationと同じ後方互換の方針)。`informationPropagation.enabled === false`のときも
+   * 同様にno-op(topic runtime state自体が存在しないため)。
+   */
+  topicIntegration: TopicIntegrationConfig;
 };
 
 export const DEFAULT_CIRCULATION_TENDENCY_RANGE: SocialCirculationTendencyRange = { min: 0, max: 1 };
@@ -86,6 +100,7 @@ export const DEFAULT_STANDING_PARTY_SCENARIO_CONFIG: StandingPartyScenarioConfig
   attachment: DEFAULT_CURRENT_CLUSTER_ATTACHMENT_CONFIG,
   transition: DEFAULT_CLUSTER_TRANSITION_CONFIG,
   informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
+  topicIntegration: DEFAULT_TOPIC_INTEGRATION_CONFIG,
 };
 
 function assertRange01(name: string, value: number): void {
@@ -106,6 +121,7 @@ export function validateStandingPartyScenarioConfig(config: StandingPartyScenari
   validateCurrentClusterAttachmentConfig(config.attachment);
   validateClusterTransitionConfig(config.transition);
   validateInformationPropagationConfig(config.informationPropagation);
+  validateTopicIntegrationConfig(config.topicIntegration);
   assertRange01("circulationTendencyRange.min", config.circulationTendencyRange.min);
   assertRange01("circulationTendencyRange.max", config.circulationTendencyRange.max);
   if (config.circulationTendencyRange.min > config.circulationTendencyRange.max) {
@@ -143,6 +159,7 @@ export const NETWORKING_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = {
   attachment: DEFAULT_CURRENT_CLUSTER_ATTACHMENT_CONFIG,
   transition: DEFAULT_CLUSTER_TRANSITION_CONFIG,
   informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
+  topicIntegration: DEFAULT_TOPIC_INTEGRATION_CONFIG,
 };
 
 /**
@@ -171,6 +188,7 @@ export const INTIMATE_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = {
   attachment: DEFAULT_CURRENT_CLUSTER_ATTACHMENT_CONFIG,
   transition: DEFAULT_CLUSTER_TRANSITION_CONFIG,
   informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
+  topicIntegration: DEFAULT_TOPIC_INTEGRATION_CONFIG,
 };
 
 validateStandingPartyScenarioConfig(NETWORKING_STANDING_PARTY_CONFIG);
@@ -221,6 +239,7 @@ export const OUTWARD_INTEREST_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig
     targetShareGain: 0.35,
   },
   informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
+  topicIntegration: DEFAULT_TOPIC_INTEGRATION_CONFIG,
 };
 
 /**
@@ -253,7 +272,166 @@ export const CURRENT_CIRCLE_ATTACHMENT_STANDING_PARTY_CONFIG: StandingPartyScena
     enabled: true,
   },
   informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
+  topicIntegration: DEFAULT_TOPIC_INTEGRATION_CONFIG,
 };
 
 validateStandingPartyScenarioConfig(OUTWARD_INTEREST_STANDING_PARTY_CONFIG);
 validateStandingPartyScenarioConfig(CURRENT_CIRCLE_ATTACHMENT_STANDING_PARTY_CONFIG);
+
+// --- Issue #233 (Phase 5) 比較プリセット -------------------------------------------------------
+
+/** 4種のfixture claim全てに、少数(2人)の初期保有者を自動配置する共通init(§7要件の土台) */
+const PHASE5_AUTO_HOLDER_COUNTS: Record<string, number> = {
+  "claim:event-program:closing-time": 2,
+  "claim:venue-logistics:coat-check": 2,
+  "claim:food-and-drink:menu-highlight": 2,
+  "claim:hobby:favorite-recommendation": 2,
+};
+
+/** 情報探索プリセット向け: あえて1人だけに絞り、未知claim比率(novelty)を高く保つ */
+const PHASE5_SPARSE_AUTO_HOLDER_COUNTS: Record<string, number> = {
+  "claim:event-program:closing-time": 1,
+  "claim:venue-logistics:coat-check": 1,
+  "claim:food-and-drink:menu-highlight": 1,
+  "claim:hobby:favorite-recommendation": 1,
+};
+
+/**
+ * 比較プリセット「情報が広がりやすい交流会」(issue #233要件7節)。standard-partyと同じPhase 2/3設定のまま、
+ * Phase 5(topic発話・採用・再伝達)を積極的に働かせる。
+ * - `contentUtterance`: 発話機会の間隔を短く・確率を高くし、cluster内でtopicの話が頻繁に起こるようにする
+ *   (要件: topic発話が高い)。
+ * - `transmission`: 採用基礎率・trust/tie/topic interest寄与を高めにし、聞いた話が採用されやすくする
+ *   (要件: 採用が高い)。
+ * - `retelling`: mutationは有効にしつつ基礎確率は控えめに保ち、「再伝達自体は高頻度に起こるが、
+ *   内容の変容は本プリセットの主眼ではない」ことを`retellingCooldownTicks`を短くすることで表す
+ *   (要件: 再伝達が高い)。
+ * - `topicIntegration`: 既定のまま有効化し、topic統合の効果自体もあわせて観察できるようにする。
+ */
+export const INFO_RICH_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = {
+  ...DEFAULT_STANDING_PARTY_SCENARIO_CONFIG,
+  informationPropagation: {
+    ...DEFAULT_INFORMATION_PROPAGATION_CONFIG,
+    enabled: true,
+    init: { ...DEFAULT_INFORMATION_PROPAGATION_CONFIG.init, autoHolderCounts: PHASE5_AUTO_HOLDER_COUNTS },
+    contentUtterance: {
+      ...DEFAULT_INFORMATION_PROPAGATION_CONFIG.contentUtterance,
+      utteranceIntervalTicks: 2,
+      utteranceProbability: 0.85,
+      maxUtterancesPerClusterPerTick: 2,
+      claimRepeatCooldownTicks: 3,
+    },
+    transmission: {
+      ...DEFAULT_INFORMATION_PROPAGATION_CONFIG.transmission,
+      adoptionBaseRate: 0.45,
+      trustWeight: 0.4,
+      tieWeight: 0.35,
+      topicInterestWeight: 0.3,
+    },
+    retelling: {
+      ...DEFAULT_INFORMATION_PROPAGATION_CONFIG.retelling,
+      mutationEnabled: true,
+      retellingCooldownTicks: 2,
+    },
+  },
+  topicIntegration: { ...DEFAULT_TOPIC_INTEGRATION_CONFIG, enabled: true },
+};
+
+/**
+ * 比較プリセット「輪ごとに話題が分かれる場」(issue #233要件7節)。
+ * - `contentUtterance.topicPersistence`/`minTopicDurationTicks`を上げ、一度定着した話題が
+ *   clusterごとに維持されやすくする(要件: topic persistenceが強い)。
+ * - `topicIntegration.compatibility`のinterest/related重みを上げ、「今のclusterの話題が自分の関心と
+ *   合っているか」がより強く満足度・移動へ効くようにする(要件: interest matchが強い)。
+ */
+export const TOPIC_SEGMENTED_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = {
+  ...DEFAULT_STANDING_PARTY_SCENARIO_CONFIG,
+  informationPropagation: {
+    ...DEFAULT_INFORMATION_PROPAGATION_CONFIG,
+    enabled: true,
+    init: { ...DEFAULT_INFORMATION_PROPAGATION_CONFIG.init, autoHolderCounts: PHASE5_AUTO_HOLDER_COUNTS },
+    contentUtterance: {
+      ...DEFAULT_INFORMATION_PROPAGATION_CONFIG.contentUtterance,
+      topicPersistence: 0.9,
+      minTopicDurationTicks: 8,
+    },
+  },
+  topicIntegration: {
+    ...DEFAULT_TOPIC_INTEGRATION_CONFIG,
+    enabled: true,
+    compatibility: {
+      ...DEFAULT_TOPIC_COMPATIBILITY_CONFIG,
+      interestMatchWeight: 0.25,
+      relatedTopicMatchWeight: 0.15,
+    },
+  },
+};
+
+/**
+ * 比較プリセット「口コミが変容しやすい場」(issue #233要件7節)。
+ * - `retelling.mutationEnabled: true`かつ`baseMutationProbability`を高くする(要件: mutation率が高い)。
+ * - `semanticDistanceCeiling`/`sameClusterVariantRepeatLimit`/`limits.maxVariantsPerClaim`は既定の
+ *   上限制御をそのまま残す(要件: 上限制御あり ―― 暴走を防ぐキャップ自体は緩めない)。
+ */
+export const RUMOR_MUTATION_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = {
+  ...DEFAULT_STANDING_PARTY_SCENARIO_CONFIG,
+  informationPropagation: {
+    ...DEFAULT_INFORMATION_PROPAGATION_CONFIG,
+    enabled: true,
+    init: { ...DEFAULT_INFORMATION_PROPAGATION_CONFIG.init, autoHolderCounts: PHASE5_AUTO_HOLDER_COUNTS },
+    contentUtterance: {
+      ...DEFAULT_INFORMATION_PROPAGATION_CONFIG.contentUtterance,
+      utteranceIntervalTicks: 3,
+      utteranceProbability: 0.7,
+    },
+    retelling: {
+      ...DEFAULT_INFORMATION_PROPAGATION_CONFIG.retelling,
+      mutationEnabled: true,
+      baseMutationProbability: 0.7,
+      retellingCooldownTicks: 3,
+    },
+  },
+  topicIntegration: { ...DEFAULT_TOPIC_INTEGRATION_CONFIG, enabled: true },
+};
+
+/**
+ * 比較プリセット「情報探索型の参加者が多い場」(issue #233要件7節)。
+ * - `init.autoHolderCounts`を少数(1人)に絞り、未知claim比率(novelty)を高く保つことで
+ *   情報探索の動機自体が生まれやすい状況にする。
+ * - `topicIntegration.informationSeekingWeight`/`minInformationOpportunityScore`を、既存social要因
+ *   (`alternativeInterest`)より強調される値に調整する(要件: information seeking movementが強い、
+ *   既存social circulationとは別parameterで扱う)。
+ * - `transition.enabled: true`にし、`alternativeInterest`を`OUTWARD_INTEREST_STANDING_PARTY_CONFIG`と
+ *   同程度に広げることで、実際に目的地付き移動(`switchToTargetCluster`)として観察できるようにする。
+ */
+export const INFO_SEEKING_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = {
+  ...DEFAULT_STANDING_PARTY_SCENARIO_CONFIG,
+  alternativeInterest: {
+    ...DEFAULT_ALTERNATIVE_CLUSTER_INTEREST_CONFIG,
+    observationRadius: 260,
+    minTargetInterestScore: 0.22,
+  },
+  transition: {
+    ...DEFAULT_CLUSTER_TRANSITION_CONFIG,
+    enabled: true,
+    targetShareBase: 0.6,
+    targetShareGain: 0.35,
+  },
+  informationPropagation: {
+    ...DEFAULT_INFORMATION_PROPAGATION_CONFIG,
+    enabled: true,
+    init: { ...DEFAULT_INFORMATION_PROPAGATION_CONFIG.init, autoHolderCounts: PHASE5_SPARSE_AUTO_HOLDER_COUNTS },
+  },
+  topicIntegration: {
+    ...DEFAULT_TOPIC_INTEGRATION_CONFIG,
+    enabled: true,
+    informationSeekingWeight: 0.35,
+    minInformationOpportunityScore: 0.05,
+    novelInformationOpportunityThreshold: 0.12,
+  },
+};
+
+validateStandingPartyScenarioConfig(INFO_RICH_STANDING_PARTY_CONFIG);
+validateStandingPartyScenarioConfig(TOPIC_SEGMENTED_STANDING_PARTY_CONFIG);
+validateStandingPartyScenarioConfig(RUMOR_MUTATION_STANDING_PARTY_CONFIG);
+validateStandingPartyScenarioConfig(INFO_SEEKING_STANDING_PARTY_CONFIG);

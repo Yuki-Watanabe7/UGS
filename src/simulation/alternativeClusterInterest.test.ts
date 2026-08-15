@@ -10,6 +10,8 @@ import {
   type AlternativeClusterInterestContext,
 } from "./alternativeClusterInterest";
 import { tiePairKey, type TieCorrectionState } from "./relationshipTie";
+import { DEFAULT_TOPIC_INTEGRATION_CONFIG } from "./topicCompatibility";
+import { createInitialClusterTopicState } from "./conversationTopic";
 
 /**
  * Issue #198 (Phase 3, P3-A): `deriveAlternativeClusterInterests`/`selectBestAlternativeCluster`の
@@ -298,6 +300,122 @@ describe("deriveAlternativeClusterInterests: maxTrackedCandidates truncation", (
     const reversed = deriveAlternativeClusterInterests(agent, [...candidates].reverse(), makeContext({ config }));
     expect(new Set(forward.map((r) => r.targetClusterId))).toEqual(new Set(["d10", "d20"]));
     expect(new Set(reversed.map((r) => r.targetClusterId))).toEqual(new Set(["d10", "d20"]));
+  });
+});
+
+describe("deriveAlternativeClusterInterests: informationOpportunity factor (Issue #233, Phase 5)", () => {
+  const TOPIC_CATALOG = {
+    id: "test-topics",
+    topics: [{ id: "topic:a", labelKey: "a", descriptionKey: "a", relatedTopicIds: [], baseSalience: 0.5 }],
+  };
+  const CLAIM_CATALOG = {
+    id: "test-claims",
+    claims: [
+      {
+        id: "claim:a1",
+        topicId: "topic:a",
+        rootVariantId: "claim:a1:root",
+        contentKey: "a1",
+        canonicalMeaning: { subjectKey: "x", predicateKey: "y", qualifiers: {} },
+        originalSource: { id: "source:organizer", kind: "organizer" as const },
+        verifiability: "verifiable" as const,
+        verificationStatus: "unknown" as const,
+        initialConfidence: 0.8,
+      },
+    ],
+    variants: [
+      {
+        id: "claim:a1:root",
+        canonicalClaimId: "claim:a1",
+        topicId: "topic:a",
+        parentVariantId: undefined,
+        meaning: { subjectKey: "x", predicateKey: "y", qualifiers: {} },
+        semanticFingerprint: "fp1",
+        mutationFactors: [],
+        hopDistance: 0,
+        canonicalDistance: 0,
+        lineageDepth: 0,
+        generatedAtTick: 0,
+      },
+    ],
+  };
+
+  function topicIntegrationCtx() {
+    return {
+      config: DEFAULT_TOPIC_INTEGRATION_CONFIG,
+      clusterTopicRuntime: {
+        "cluster-x": { ...createInitialClusterTopicState("cluster-x"), currentTopicId: "topic:a", topicStartedTick: 0 },
+      },
+      topicCatalog: TOPIC_CATALOG,
+      claimCatalog: CLAIM_CATALOG,
+      agentInformation: {
+        agentId: "observer",
+        profile: { retellingTendency: 0.5, memoryRetention: 0.5, baselineTopicInterest: {} },
+        topics: {},
+        claims: {}, // 何も知らない -> unknownClaimCount === 1 -> novelty最大
+      },
+      fatigueGain: 0.2,
+      fatigueDecay: 0.05,
+    };
+  }
+
+  it("topicIntegration未設定なら既存挙動と同一(informationOpportunity factorが一切現れない)", () => {
+    const agent = makeAgent({ x: 0, y: 0 });
+    const candidate = makeCandidate({ id: "cluster-x", x: 50, y: 0, status: "confirmed", memberIds: [] });
+    const result = deriveAlternativeClusterInterests(agent, [candidate], makeContext());
+    expect(result[0].factors.find((f) => f.kind === "informationOpportunity")).toBeUndefined();
+  });
+
+  it("未知claimが多いtargetほどinformationOpportunityの寄与が大きい", () => {
+    const agent = makeAgent({ x: 0, y: 0 });
+    const candidate = makeCandidate({ id: "cluster-x", x: 50, y: 0, status: "confirmed", memberIds: [] });
+    const ctx = makeContext({ topicIntegration: topicIntegrationCtx() });
+    const result = deriveAlternativeClusterInterests(agent, [candidate], ctx);
+    const factor = result[0].factors.find((f) => f.kind === "informationOpportunity");
+    expect(factor).toBeDefined();
+    expect(factor!.contribution).toBeGreaterThan(0);
+  });
+
+  it("そのtopicのclaimを既に全て知っていればinformationOpportunityの寄与は0", () => {
+    const agent = makeAgent({ x: 0, y: 0 });
+    const candidate = makeCandidate({ id: "cluster-x", x: 50, y: 0, status: "confirmed", memberIds: [] });
+    const integration = topicIntegrationCtx();
+    integration.agentInformation = {
+      ...integration.agentInformation,
+      claims: {
+        "claim:a1": {
+          claimId: "claim:a1",
+          awareness: "understood",
+          acceptance: "adopted",
+          confidence: 0.8,
+          memoryStrength: 0.8,
+          firstEncounteredTick: 0,
+          lastEncounteredTick: 0,
+          heardCount: 1,
+          understoodCount: 1,
+          adoptionCount: 1,
+          activeVariantId: "claim:a1:root",
+          encounteredVariantIds: ["claim:a1:root"],
+          sourceTraces: [],
+          retellingCount: 0,
+          lastMemoryEvaluationTick: 0,
+        },
+      },
+    };
+    const ctx = makeContext({ topicIntegration: integration });
+    const result = deriveAlternativeClusterInterests(agent, [candidate], ctx);
+    const factor = result[0].factors.find((f) => f.kind === "informationOpportunity");
+    expect(factor).toBeUndefined();
+  });
+
+  it("他agentの非公開claim stateを一切参照しない(agentInformationは呼び出し側が渡した自分自身の値のみ使う)", () => {
+    // memberIds上のagentのclaim state自体を`ctx.agents`から読めないことを確認する ―― targetの
+    // memberはmakeAgentで作るがinformationRuntimeには一切登場させない(存在しなくても計算が成立する)。
+    const agent = makeAgent({ x: 0, y: 0 });
+    const member = makeAgent({ id: "member-1", x: 50, y: 0 });
+    const candidate = makeCandidate({ id: "cluster-x", x: 50, y: 0, status: "confirmed", memberIds: ["member-1"] });
+    const ctx = makeContext({ agents: [agent, member], topicIntegration: topicIntegrationCtx() });
+    expect(() => deriveAlternativeClusterInterests(agent, [candidate], ctx)).not.toThrow();
   });
 });
 

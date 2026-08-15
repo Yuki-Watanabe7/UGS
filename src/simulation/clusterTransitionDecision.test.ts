@@ -9,6 +9,7 @@ import {
 import type { ClusterDepartureDecisionResult } from "./clusterDepartureDecision";
 import type { AlternativeClusterInterest } from "./alternativeClusterInterest";
 import type { DepartureInhibition } from "./currentClusterAttachment";
+import { DEFAULT_TOPIC_INTEGRATION_CONFIG, type TopicCompatibility } from "./topicCompatibility";
 
 /**
  * Issue #200 (Phase 3): `computeClusterTransitionDecision`(責務9のクラスタ遷移decision本体)の
@@ -38,6 +39,7 @@ function decide(overrides: Partial<ClusterTransitionDecisionInput> = {}) {
     bestAlternativeInterest: overrides.bestAlternativeInterest,
     minTargetInterestScore: overrides.minTargetInterestScore ?? 0.35,
     inhibition: overrides.inhibition ?? makeInhibition(),
+    topicSignal: overrides.topicSignal,
   });
 }
 
@@ -346,5 +348,124 @@ describe("computeClusterTransitionDecision: 決定性・非干渉", () => {
     expect(departure).toEqual(departureCopy);
     expect(inhibition).toEqual(inhibitionCopy);
     expect(bestAlternativeInterest).toEqual(interestCopy);
+  });
+});
+
+describe("computeClusterTransitionDecision: topicSignal (Issue #233, Phase 5)", () => {
+  function makeCompatibility(overrides: Partial<TopicCompatibility> = {}): TopicCompatibility {
+    return { clusterId: "current", topicId: "topic:a", score: 0.5, factors: [], unknownClaimCount: 0, knownClaimCount: 0, observedAtTick: 0, ...overrides };
+  }
+
+  it("topicSignal未設定なら既存挙動と同一(受入条件: byte-identical)", () => {
+    const withoutSignal = decide({ departure: makeDeparture({ probability: 0.8, primaryReason: "lowConversationSatisfaction" }) });
+    expect(withoutSignal.primaryReason).toBe("lowConversationSatisfaction");
+  });
+
+  it("離脱側支配・fatigue/repetitionが負のtopic factorの主因ならtopicFatigue", () => {
+    const result = decide({
+      departure: makeDeparture({ probability: 0.8, primaryReason: "lowConversationSatisfaction" }),
+      topicSignal: {
+        config: DEFAULT_TOPIC_INTEGRATION_CONFIG,
+        currentCompatibility: makeCompatibility({ factors: [{ kind: "fatigue", contribution: -0.1 }] }),
+      },
+    });
+    expect(result.primaryReason).toBe("topicFatigue");
+  });
+
+  it("離脱側支配・fatigue/repetition以外が負のtopic factorの主因ならtopicMismatch", () => {
+    const result = decide({
+      departure: makeDeparture({ probability: 0.8, primaryReason: "lowConversationSatisfaction" }),
+      topicSignal: {
+        config: DEFAULT_TOPIC_INTEGRATION_CONFIG,
+        currentCompatibility: makeCompatibility({ factors: [{ kind: "topicChange", contribution: -0.1 }] }),
+      },
+    });
+    expect(result.primaryReason).toBe("topicMismatch");
+  });
+
+  it("負のtopic factor合計がtopicMismatchThreshold未満なら差し替えない", () => {
+    const result = decide({
+      departure: makeDeparture({ probability: 0.8, primaryReason: "lowConversationSatisfaction" }),
+      topicSignal: {
+        config: DEFAULT_TOPIC_INTEGRATION_CONFIG,
+        currentCompatibility: makeCompatibility({ factors: [{ kind: "fatigue", contribution: -0.01 }] }),
+      },
+    });
+    expect(result.primaryReason).toBe("lowConversationSatisfaction");
+  });
+
+  it("離脱側支配・関心寄与のみ主因で情報機会が強い(閾値未満)ならinformationSeeking", () => {
+    const result = decide({
+      departure: makeDeparture({ probability: 0 }),
+      bestAlternativeInterest: makeInterest({ score: 1 }),
+      topicSignal: {
+        config: DEFAULT_TOPIC_INTEGRATION_CONFIG,
+        alternativeInformationOpportunityContribution: 0.1,
+      },
+    });
+    expect(result.primaryReason).toBe("informationSeeking");
+  });
+
+  it("情報機会がnovelInformationOpportunityThreshold以上ならnovelInformationOpportunity", () => {
+    const result = decide({
+      departure: makeDeparture({ probability: 0 }),
+      bestAlternativeInterest: makeInterest({ score: 1 }),
+      topicSignal: {
+        config: DEFAULT_TOPIC_INTEGRATION_CONFIG,
+        alternativeInformationOpportunityContribution: 0.2,
+      },
+    });
+    expect(result.primaryReason).toBe("novelInformationOpportunity");
+  });
+
+  it("情報機会がminInformationOpportunityScore未満ならalternativeClusterInterestのまま", () => {
+    const result = decide({
+      departure: makeDeparture({ probability: 0 }),
+      bestAlternativeInterest: makeInterest({ score: 1 }),
+      topicSignal: {
+        config: DEFAULT_TOPIC_INTEGRATION_CONFIG,
+        alternativeInformationOpportunityContribution: 0.01,
+      },
+    });
+    expect(result.primaryReason).toBe("alternativeClusterInterest");
+  });
+
+  it("mixedDepartureAndAlternativeInterestかつtopic/情報要因が両方強ければmixedConversationAndInformation", () => {
+    const config: ClusterTransitionConfig = { ...CONFIG, interestToDepartureGain: 1, mixedReasonMargin: 0.05 };
+    const result = decide({
+      config,
+      departure: makeDeparture({ probability: 0.5, primaryReason: "socialCirculation" }),
+      bestAlternativeInterest: makeInterest({ score: 0.5 }),
+      topicSignal: {
+        config: DEFAULT_TOPIC_INTEGRATION_CONFIG,
+        currentCompatibility: makeCompatibility({ factors: [{ kind: "fatigue", contribution: -0.1 }] }),
+        alternativeInformationOpportunityContribution: 0.1,
+      },
+    });
+    expect(result.primaryReason).toBe("mixedConversationAndInformation");
+  });
+
+  it("stay側支配・情報機会が強ければstayedDespiteInformationInterest(愛着/配慮が情報探索移動を抑制した扱い)", () => {
+    const result = decide({
+      departure: makeDeparture({ probability: 0.05 }),
+      inhibition: makeInhibition({ total: 0.5, concern: 0, factors: [{ kind: "episodeAttachment", contribution: 0.5 }] }),
+      topicSignal: {
+        config: DEFAULT_TOPIC_INTEGRATION_CONFIG,
+        alternativeInformationOpportunityContribution: 0.1,
+      },
+    });
+    expect(result.primaryReason).toBe("stayedDespiteInformationInterest");
+  });
+
+  it("stay側支配・情報機会が弱ければ元のstayedBy*のまま", () => {
+    const result = decide({
+      departure: makeDeparture({ probability: 0.05 }),
+      inhibition: makeInhibition({ total: 0.5, concern: 0, factors: [{ kind: "episodeAttachment", contribution: 0.5 }] }),
+      topicSignal: {
+        config: DEFAULT_TOPIC_INTEGRATION_CONFIG,
+        alternativeInformationOpportunityContribution: 0,
+      },
+    });
+    expect(result.primaryReason).toBe("stayedByAttachment");
   });
 });

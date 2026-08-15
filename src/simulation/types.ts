@@ -209,7 +209,19 @@ export type ClusterTransitionPrimaryReason =
   | "mixedDepartureAndAlternativeInterest"
   | "stayedByAttachment"
   | "stayedByDepartureConcern"
-  | "stayedByMixedInhibition";
+  | "stayedByMixedInhibition"
+  /**
+   * Issue #233 (Phase 5): topic/情報state統合(`topicCompatibility.ts`)由来の追加reason。
+   * `lowConversationSatisfaction`/`alternativeClusterInterest`/inhibition系reasonのうち、
+   * topic要因が主要因だった場合に限り、この6値へ差し替えられる(`clusterTransitionDecision.ts`の
+   * `refineReasonForTopicSignal`)。`topicSignal`未設定(Phase 5 disabled)の間は一切生成されない。
+   */
+  | "topicMismatch"
+  | "topicFatigue"
+  | "informationSeeking"
+  | "novelInformationOpportunity"
+  | "mixedConversationAndInformation"
+  | "stayedDespiteInformationInterest";
 
 /**
  * Issue #176: `clusterDepartureStarted`/`clusterDepartureCompleted`の`metadata.departureReason`に
