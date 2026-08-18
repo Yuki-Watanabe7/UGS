@@ -30,6 +30,10 @@ describe("scenario category configuration", () => {
       "standing-party-intimate",
       "standing-party-outward-interest",
       "standing-party-current-circle",
+      "standing-party-info-rich",
+      "standing-party-topic-segmented",
+      "standing-party-rumor-mutation",
+      "standing-party-info-seeking",
     ]);
   });
 
