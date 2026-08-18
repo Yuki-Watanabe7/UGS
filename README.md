@@ -1077,15 +1077,18 @@ desktop/iPhone Playwright E2Eを整備しました。新しいシミュレーシ
 [`docs/standing-party-phase4-verification.md`](docs/standing-party-phase4-verification.md)
 を参照してください。
 
-### Phase 5の話題・情報・口コミ伝播設計(#228)
+### Phase 5の話題・情報・口コミ伝播(#228〜#235)
 
-社会的行為としての`SpeechIntent`と、伝達内容であるTopic / Claim / Variantを分離し、
-heard / understood / adopted / remembered / retold、source provenance、同一tickの更新順、
-独立派生RNG、memory / variant / event上限、満足度・cluster移動feedbackの境界を
-[`docs/information-propagation-phase5-model.md`](docs/information-propagation-phase5-model.md)に定義しています。
-現時点では設計文書のみで、既存runtimeの挙動は変更していません。Phase 5 runtimeはPhase 4の
-contact networkをdecision入力にせず、liveなcluster membership・内容発話・agent情報状態だけを参照します。
-contactとの照合は将来のread-only分析で事後的に行います。
+社会的行為としての`SpeechIntent`と、伝達内容であるTopic / canonical Claim / ClaimVariantを分離し、
+内容発話、heard / understood / adopted / remembered / retold、source provenance、同一tickの集約、
+独立派生RNG、memory / variant / source traceの上限、会話満足度・cluster移動への限定的feedbackを実装しています。
+設計上の正本は[`docs/information-propagation-phase5-model.md`](docs/information-propagation-phase5-model.md)です。
+
+Phase 5 presetでは右sidebarの「情報伝播の観察・分析」から、agentごとのclaim状態、実際に聞かれた
+伝播edge、variant lineage、ID鎖のtimeline、分母付き統計を確認できます。接触networkの同席線は伝播edgeと
+別物であり、contactを発話・採用の入力には使いません。JSON / CSV export、filter、panel開閉もruntimeや
+PRNGを変えません。検証範囲・受入条件対応表・benchmark手順は
+[`docs/standing-party-phase5-verification.md`](docs/standing-party-phase5-verification.md)を参照してください。
 
 ## シミュレーションルールの概要
 

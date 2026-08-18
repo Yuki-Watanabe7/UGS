@@ -101,8 +101,8 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
     homeDescription:
       "会場のあちこちで複数の会話の輪が並行して形成される立食パーティーで、誰がどの輪を見つけ、誰が輪を探し続けるかを観察します。",
     observationTargets:
-      "複数の輪の並行形成、輪への接近、様子見、会話満足度・社交的回遊傾向・他クラスタ関心・愛着による輪の離脱と目的地付き移動",
-    availableScenarios: "標準・ネットワーキング型・懇親型・交流先へ移りやすい場・今の輪への配慮が強い場の5種類",
+      "複数の輪の並行形成、輪への接近、様子見、会話満足度・社交的回遊傾向・他クラスタ関心・愛着による輪の離脱と目的地付き移動、話題・情報伝播",
+    availableScenarios: "標準・交流比較に加え、情報伝播・topic分化・口コミ変容・情報探索を観察する9種類",
     introSummary:
       "会場のあちこちで複数の会話の輪が生まれ、人が輪を移りながら会話を続ける過程を観察します。輪の形成後も離脱・再探索・再参加と、縮小・解散が起こります。",
     introDetails: [
@@ -133,8 +133,8 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
       },
       {
         id: "standing-party-future-extension",
-        title: "今後の拡張",
-        body: "Phase 5で話題や情報伝播のモデルを追加する場合も、この説明内で前提と観察ポイントを補足します。現在は会話の輪の形成・離脱・移動を主な観察対象としています。",
+        title: "話題・情報伝播の見方",
+        body: "情報伝播の比較presetでは、右sidebarの「情報伝播の観察・分析」から topic / claim / variant、実際に聞かれた伝播edge、lineage、timeline、統計を確認できます。接触networkの同席線と伝播edgeは別物で、表示・filter・exportはsimulation本体を変更しません。confidenceやtrustは仮説的な内部値であり、正しさや人格を評価するものではありません。",
       },
     ],
     presetIds: [
@@ -143,6 +143,10 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
       "standing-party-intimate",
       "standing-party-outward-interest",
       "standing-party-current-circle",
+      "standing-party-info-rich",
+      "standing-party-topic-segmented",
+      "standing-party-rumor-mutation",
+      "standing-party-info-seeking",
     ],
     initialPresetId: "standing-party",
     presentation: STANDING_PARTY_PRESENTATION,
