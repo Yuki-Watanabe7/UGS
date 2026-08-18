@@ -9,6 +9,18 @@ import {
   buildStandingPartyRunStatistics,
   type BuildStandingPartyRunStatisticsOptions,
 } from "./standingPartyAnalysis";
+import {
+  buildInformationPropagationAnalysis,
+  INFORMATION_PROPAGATION_ANALYSIS_SCHEMA_VERSION,
+  type InformationPropagationAnalysis,
+} from "./informationAnalysis";
+import type { ContentUtteranceEvent } from "./contentUtterance";
+import type {
+  InformationAdoptionEvent,
+  InformationMemoryUpdateEvent,
+  InformationReceptionEvent,
+} from "./informationTransmission";
+import type { RetellingEvent } from "./retelling";
 import type { StandingPartyScenarioConfig } from "./standingPartyScenarioConfig";
 import type {
   ContactIntervalRecord,
@@ -27,7 +39,7 @@ import type {
 import { STANDING_PARTY_ANALYSIS_SCHEMA_VERSION } from "./types";
 
 /** Issue #217: export bundle の schema。分析 snapshot の schemaVersion とは別系統。 */
-export const STANDING_PARTY_ANALYSIS_EXPORT_SCHEMA_VERSION = "standing-party-analysis-export/1";
+export const STANDING_PARTY_ANALYSIS_EXPORT_SCHEMA_VERSION = "standing-party-analysis-export/2";
 
 /** Issue #217 本文の別名。実装正本は`StandingPartyConversationHistory`。 */
 export type InteractionHistorySnapshot = StandingPartyConversationHistory;
@@ -73,6 +85,29 @@ export type StandingPartyAnalysisExport = {
   history: InteractionHistorySnapshot;
   contactNetwork: ContactNetworkSnapshot;
   statistics: StandingPartyRunStatistics;
+  /** Issue #234: Phase 5 event/stateを含む、read-onlyのversioned analysis snapshot。 */
+  informationPropagation: InformationPropagationExport;
+};
+
+export type InformationPropagationExport = {
+  schemaVersion: typeof INFORMATION_PROPAGATION_ANALYSIS_SCHEMA_VERSION;
+  /** master OFFのrunではfalse。sub-configを含むためexport単体で観察条件を再現できる。 */
+  config: StandingPartyScenarioConfig["informationPropagation"] | null;
+  topics: InformationPropagationAnalysis["topics"];
+  claims: InformationPropagationAnalysis["claims"];
+  variants: InformationPropagationAnalysis["variants"];
+  agentInformation: InformationPropagationAnalysis["agentSnapshots"];
+  clusterTopics: InformationPropagationAnalysis["clusterSnapshots"];
+  utterances: ContentUtteranceEvent[];
+  receptions: InformationReceptionEvent[];
+  adoptionDecisions: InformationAdoptionEvent[];
+  memoryUpdates: InformationMemoryUpdateEvent[];
+  retellings: RetellingEvent[];
+  transmissions: InformationPropagationAnalysis["transmissions"];
+  propagationEdges: InformationPropagationAnalysis["propagationEdges"];
+  lineage: InformationPropagationAnalysis["lineage"];
+  timeline: InformationPropagationAnalysis["timeline"];
+  statistics: InformationPropagationAnalysis["statistics"];
 };
 
 export type BuildStandingPartyAnalysisExportOptions = StandingPartyStatisticsFilter & {
@@ -179,6 +214,18 @@ export function buildStandingPartyAnalysisExport(
   };
   const statistics = options.statistics ?? buildStandingPartyRunStatistics(state, statsOptions);
   const simParams = options.simParams;
+  const informationConfig = options.standingPartyConfig?.informationPropagation;
+  const informationAnalysis = buildInformationPropagationAnalysis(state, {
+    config: informationConfig,
+    filter: {
+      fromTick: options.fromTick,
+      toTick: options.toTick,
+      agentIds: options.agentIds,
+      clusterIds: options.clusterIds,
+      observerJoinerMode: options.observerJoinerMode,
+    },
+    asOfTick,
+  });
 
   return {
     schemaVersion: STANDING_PARTY_ANALYSIS_EXPORT_SCHEMA_VERSION,
@@ -222,6 +269,25 @@ export function buildStandingPartyAnalysisExport(
     history,
     contactNetwork: network,
     statistics,
+    informationPropagation: {
+      schemaVersion: INFORMATION_PROPAGATION_ANALYSIS_SCHEMA_VERSION,
+      config: informationConfig ?? null,
+      topics: informationAnalysis.topics,
+      claims: informationAnalysis.claims,
+      variants: informationAnalysis.variants,
+      agentInformation: informationAnalysis.agentSnapshots,
+      clusterTopics: informationAnalysis.clusterSnapshots,
+      utterances: [...(state.contentUtteranceLog ?? [])],
+      receptions: [...(state.informationReceptionLog ?? [])],
+      adoptionDecisions: [...(state.informationAdoptionLog ?? [])],
+      memoryUpdates: [...(state.informationMemoryUpdateLog ?? [])],
+      retellings: [...(state.retellingLog ?? [])],
+      transmissions: informationAnalysis.transmissions,
+      propagationEdges: informationAnalysis.propagationEdges,
+      lineage: informationAnalysis.lineage,
+      timeline: informationAnalysis.timeline,
+      statistics: informationAnalysis.statistics,
+    },
   };
 }
 
@@ -453,6 +519,99 @@ export function transitionsToCsv(transitions: readonly ClusterTransitionRecord[]
   );
 }
 
+/** Issue #234: catalogはpresentation文言ではなく、versioned domain ID/構造だけを出力する。 */
+export function informationTopicsToCsv(bundle: InformationPropagationExport): string {
+  return rowsToCsv(
+    ["topicId", "labelKey", "descriptionKey", "relatedTopicIds", "baseSalience"],
+    bundle.topics.map((topic) => [topic.id, topic.labelKey, topic.descriptionKey, topic.relatedTopicIds.join("|"), topic.baseSalience]),
+  );
+}
+
+export function informationClaimsToCsv(bundle: InformationPropagationExport): string {
+  return rowsToCsv(
+    ["claimId", "topicId", "rootVariantId", "contentKey", "originalSourceId", "originalSourceKind", "originalSourceAgentId", "verifiability", "verificationStatus", "initialConfidence"],
+    bundle.claims.map((claim) => [
+      claim.id, claim.topicId, claim.rootVariantId, claim.contentKey, claim.originalSource.id,
+      claim.originalSource.kind, claim.originalSource.agentId, claim.verifiability, claim.verificationStatus, claim.initialConfidence,
+    ]),
+  );
+}
+
+export function informationVariantsToCsv(bundle: InformationPropagationExport): string {
+  return rowsToCsv(
+    ["variantId", "claimId", "topicId", "parentVariantId", "hopDistance", "canonicalDistance", "lineageDepth", "generatedAtTick", "generatorAgentId", "retellingEventId", "mutationFactors"],
+    bundle.variants.map((variant) => [
+      variant.id, variant.canonicalClaimId, variant.topicId, variant.parentVariantId, variant.hopDistance,
+      variant.canonicalDistance, variant.lineageDepth, variant.generatedAtTick, variant.generatorAgentId,
+      variant.retellingEventId, JSON.stringify(variant.mutationFactors),
+    ]),
+  );
+}
+
+export function agentInformationToCsv(bundle: InformationPropagationExport): string {
+  return rowsToCsv(
+    ["agentId", "label", "isObserverJoiner", "claimId", "topicId", "awareness", "acceptance", "confidence", "memoryStrength", "activeVariantId", "firstEncounteredTick", "lastEncounteredTick", "firstHeardTick", "lastHeardTick", "heardCount", "understoodCount", "adoptionCount", "retellingCount", "lastRetoldTick", "sourceTraces"],
+    bundle.agentInformation.flatMap((agent) => agent.claims.map((claim) => [
+      agent.agentId, agent.label, agent.isObserverJoiner, claim.claimId, claim.topicId, claim.awareness,
+      claim.acceptance, claim.confidence, claim.memoryStrength, claim.activeVariantId, claim.firstEncounteredTick,
+      claim.lastEncounteredTick, claim.firstHeardTick, claim.lastHeardTick, claim.heardCount, claim.understoodCount,
+      claim.adoptionCount, claim.retellingCount, claim.lastRetoldTick, JSON.stringify(claim.sourceTraces),
+    ])),
+  );
+}
+
+export function informationUtterancesToCsv(utterances: readonly ContentUtteranceEvent[]): string {
+  return rowsToCsv(
+    ["contentUtteranceId", "tick", "speechEventId", "speakerId", "clusterId", "topicId", "claimId", "variantId", "reason", "sourceTraceIds"],
+    utterances.map((event) => [event.id, event.tick, event.speechEventId, event.speakerId, event.clusterId, event.topicId, event.claimId, event.variantId, event.reason, event.sourceTraceIds.join("|")]),
+  );
+}
+
+export function informationReceptionsToCsv(receptions: readonly InformationReceptionEvent[]): string {
+  return rowsToCsv(
+    ["receptionId", "tick", "contentUtteranceId", "speechReceptionEventId", "speakerId", "receiverId", "clusterId", "claimId", "variantId", "heard", "comprehension", "comprehensionFactors"],
+    receptions.map((event) => [event.id, event.tick, event.contentUtteranceId, event.speechReceptionEventId, event.speakerId, event.receiverId, event.clusterId, event.claimId, event.variantId, event.heard, event.comprehension, JSON.stringify(event.comprehensionFactors)]),
+  );
+}
+
+export function informationAdoptionsToCsv(events: readonly InformationAdoptionEvent[]): string {
+  return rowsToCsv(
+    ["adoptionEventId", "tick", "receiverId", "claimId", "consideredVariantIds", "receptionEventIds", "result", "previousConfidence", "nextConfidence", "confidenceDelta", "probability", "draw", "factors"],
+    events.map((event) => [event.id, event.tick, event.receiverId, event.claimId, event.consideredVariantIds.join("|"), event.receptionEventIds.join("|"), event.result, event.previousConfidence, event.nextConfidence, event.confidenceDelta, event.probability, event.draw, JSON.stringify(event.factors)]),
+  );
+}
+
+export function informationMemoryUpdatesToCsv(events: readonly InformationMemoryUpdateEvent[]): string {
+  return rowsToCsv(
+    ["memoryUpdateEventId", "tick", "receiverId", "claimId", "adoptionEventId", "receptionEventIds", "reason", "previousAwareness", "nextAwareness", "previousMemoryStrength", "nextMemoryStrength", "sourceTraceIdsAdded"],
+    events.map((event) => [event.id, event.tick, event.receiverId, event.claimId, event.adoptionEventId, event.receptionEventIds.join("|"), event.reason, event.previousAwareness, event.nextAwareness, event.previousMemoryStrength, event.nextMemoryStrength, event.sourceTraceIdsAdded.join("|")]),
+  );
+}
+
+export function informationRetellingsToCsv(events: readonly RetellingEvent[]): string {
+  return rowsToCsv(
+    ["retellingEventId", "tick", "clusterId", "speakerId", "claimId", "inputVariantId", "outputVariantId", "contentUtteranceId", "result", "probability", "draw", "blockedReason", "sourceReceptionIds", "sourceTraceIds", "mutationFactors"],
+    events.map((event) => [event.id, event.tick, event.clusterId, event.speakerId, event.claimId, event.inputVariantId, event.outputVariantId, event.contentUtteranceId, event.result, event.probability, event.draw, event.blockedReason, event.sourceReceptionIds.join("|"), event.sourceTraceIds.join("|"), JSON.stringify(event.mutationFactors)]),
+  );
+}
+
+export function informationTransmissionsToCsv(bundle: InformationPropagationExport): string {
+  return rowsToCsv(
+    ["transmissionId", "tick", "speakerId", "receiverId", "clusterId", "topicId", "claimId", "variantId", "speechEventId", "contentUtteranceId", "speechReceptionEventId", "informationReceptionEventId", "adoptionEventId", "memoryUpdateEventId", "result", "confidenceDelta", "retellingEventId", "retellingResult"],
+    bundle.transmissions.map((event) => [event.id, event.tick, event.speakerId, event.receiverId, event.clusterId, event.topicId, event.claimId, event.variantId, event.speechEventId, event.contentUtteranceId, event.speechReceptionEventId, event.informationReceptionEventId, event.adoptionEventId, event.memoryUpdateEventId, event.result, event.confidenceDelta, event.retellingEventId, event.retellingResult]),
+  );
+}
+
+export function informationStatisticsToCsv(bundle: InformationPropagationExport): string {
+  return rowsToCsv(
+    ["level", "topicId", "claimId", "awareCount", "adoptedCount", "rememberedCount", "firstSpreadTick", "uniqueSpeakerCount", "uniqueReceiverCount"],
+    [
+      ...bundle.statistics.topic.map((stat) => ["topic", stat.topicId, "", stat.awareCount, stat.adoptedCount, stat.rememberedCount, stat.firstSpreadTick, "", ""]),
+      ...bundle.statistics.claims.map((stat) => ["claim", stat.topicId, stat.claimId, stat.awareCount, stat.adoptedCount, stat.rememberedCount, stat.firstSpreadTick, stat.uniqueSpeakerCount, stat.uniqueReceiverCount]),
+    ],
+  );
+}
+
 /**
  * Issue #217: CSV 一式。列名・tick単位・active/censored・reason code をヘッダと列で明示。
  */
@@ -483,6 +642,50 @@ export function buildStandingPartyAnalysisCsvFiles(
     {
       filename: "standing-party-transitions.csv",
       content: transitionsToCsv(bundle.history.transitions),
+    },
+    {
+      filename: "standing-party-information-topics.csv",
+      content: informationTopicsToCsv(bundle.informationPropagation),
+    },
+    {
+      filename: "standing-party-information-claims.csv",
+      content: informationClaimsToCsv(bundle.informationPropagation),
+    },
+    {
+      filename: "standing-party-information-variants.csv",
+      content: informationVariantsToCsv(bundle.informationPropagation),
+    },
+    {
+      filename: "standing-party-agent-information.csv",
+      content: agentInformationToCsv(bundle.informationPropagation),
+    },
+    {
+      filename: "standing-party-information-utterances.csv",
+      content: informationUtterancesToCsv(bundle.informationPropagation.utterances),
+    },
+    {
+      filename: "standing-party-information-receptions.csv",
+      content: informationReceptionsToCsv(bundle.informationPropagation.receptions),
+    },
+    {
+      filename: "standing-party-information-adoptions.csv",
+      content: informationAdoptionsToCsv(bundle.informationPropagation.adoptionDecisions),
+    },
+    {
+      filename: "standing-party-information-memory-updates.csv",
+      content: informationMemoryUpdatesToCsv(bundle.informationPropagation.memoryUpdates),
+    },
+    {
+      filename: "standing-party-information-transmissions.csv",
+      content: informationTransmissionsToCsv(bundle.informationPropagation),
+    },
+    {
+      filename: "standing-party-information-retellings.csv",
+      content: informationRetellingsToCsv(bundle.informationPropagation.retellings),
+    },
+    {
+      filename: "standing-party-information-statistics.csv",
+      content: informationStatisticsToCsv(bundle.informationPropagation),
     },
   ];
 }

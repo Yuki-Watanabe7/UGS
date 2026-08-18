@@ -28,6 +28,8 @@ import { StandingPartyAdvancedSettings } from "./components/StandingPartyAdvance
 import { ConversationHistoryTimeline } from "./components/ConversationHistoryTimeline";
 import { ContactNetworkGraph } from "./components/ContactNetworkGraph";
 import { StandingPartyAnalyticsDashboard } from "./components/StandingPartyAnalyticsDashboard";
+import { InformationPropagationPanel } from "./components/InformationPropagationPanel";
+import { buildInformationPropagationAnalysis } from "./simulation/informationAnalysis";
 import {
   DEFAULT_STANDING_PARTY_SCENARIO_CONFIG,
   validateStandingPartyScenarioConfig,
@@ -309,6 +311,18 @@ function SimulationApp({ scenario }: Props) {
     [resetSimulation, seed, params, presetId, presentation, standingPartyConfig],
   );
 
+  // Issue #234: Canvasにはread model由来の短いtopic識別子だけを渡す。表示設定はruntimeへ戻さない。
+  const canvasClusterTopics = useMemo(
+    () => presentation.id === "standingParty"
+      ? buildInformationPropagationAnalysis(simState, { config: appliedStandingPartyConfig.informationPropagation }).clusterSnapshots.map((snapshot) => ({
+          clusterId: snapshot.clusterId,
+          currentTopicId: snapshot.currentTopicId,
+          changedAtCurrentTick: snapshot.changedAtCurrentTick,
+        }))
+      : undefined,
+    [presentation.id, simState, appliedStandingPartyConfig],
+  );
+
   return (
     <div className="app-root">
       <header className="app-header">
@@ -431,6 +445,7 @@ function SimulationApp({ scenario }: Props) {
             tick={simState.tick}
             selectedAgentId={selectedAgentId}
             selectedClusterId={presentation.id === "standingParty" ? selectedClusterId : undefined}
+            clusterTopics={canvasClusterTopics}
           />
         </section>
 
@@ -487,6 +502,18 @@ function SimulationApp({ scenario }: Props) {
                 selectedClusterId={selectedClusterId}
                 onSelectedClusterIdChange={setSelectedClusterId}
                 linkedTickWindow={historyTickWindow}
+              />
+              <InformationPropagationPanel
+                state={simState}
+                config={appliedStandingPartyConfig.informationPropagation}
+                selectedAgentId={selectedAgentId}
+                onSelectedAgentIdChange={setSelectedAgentId}
+                onSelectedClusterIdChange={setSelectedClusterId}
+                onTimelineFocus={(focus) => {
+                  if (focus.agentId !== undefined) setSelectedAgentId(focus.agentId);
+                  if (focus.clusterId !== undefined) setSelectedClusterId(focus.clusterId);
+                  setHistoryTickWindow({ fromTick: focus.fromTick, toTick: focus.toTick });
+                }}
               />
             </>
           )}

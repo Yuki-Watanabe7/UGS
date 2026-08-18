@@ -35,6 +35,8 @@ const observerJoiner = {
 
 各URLは直接アクセス・再読み込み・共有が可能です。シミュレーション画面上部の「シナリオ選択へ」からトップページへ戻れます。
 
+立食パーティーのPhase 5比較プリセットでは、右側の「情報伝播の観察・分析」panelから topic / claim / variant の状態、実際の伝播矢印、variant lineage、timeline、分母付き記述統計を確認できます。接触networkの同席線と情報伝播の矢印は別物です。操作とexportはシミュレーション本体・PRNGを変更しません。詳しくは [`docs/phase5-information-analysis.md`](docs/phase5-information-analysis.md) を参照してください。
+
 画面の操作項目・発言・心の声・ログ・集計ラベルは、内部の状態遷移やイベント識別子とは分離した
 シナリオ別presentation設定から解決します。学校画面では学校向け語彙と利用可能な操作だけを表示し、
 二次会画面の既存表示は維持します。設計上の責務境界は
