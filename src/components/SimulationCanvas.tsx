@@ -84,6 +84,8 @@ type Props = {
    * history-selection highlightを付ける(表示専用。simulation stateは変更しない)。
    */
   selectedClusterId?: string;
+  /** Issue #234: Phase 5 read modelが導出した、active clusterごとの最小topic表示。 */
+  clusterTopics?: Array<{ clusterId: string; currentTopicId?: string; changedAtCurrentTick?: boolean }>;
 };
 
 function stateColor(agent: Agent, showClassroomAssignmentState: boolean): string {
@@ -421,6 +423,8 @@ type CandidateGlyphProps = {
   transitionRole?: "source" | "target";
   /** Issue #215: 履歴タイムライン等でこのclusterが選択されているとき true */
   historySelected?: boolean;
+  currentTopicId?: string;
+  topicChanged?: boolean;
 };
 
 function CandidateGlyph({
@@ -432,6 +436,8 @@ function CandidateGlyph({
   presentation,
   transitionRole,
   historySelected = false,
+  currentTopicId,
+  topicChanged = false,
 }: CandidateGlyphProps) {
   const fading =
     candidate.status === "dissolving" ||
@@ -504,6 +510,16 @@ function CandidateGlyph({
       {standingPartyActive && (
         <text x={visual.center.x} y={capacityY} className="candidate-capacity-label standing-party-capacity-label">
           現在{candidate.memberIds.length}人・人数は変動します
+        </text>
+      )}
+      {standingPartyActive && currentTopicId && (
+        <text
+          x={visual.center.x}
+          y={capacityY + 14}
+          className={`candidate-topic-label${topicChanged ? " candidate-topic-label--changed" : ""}`}
+          aria-label={`現在の話題 ${currentTopicId}${topicChanged ? "。このtickに変化" : ""}`}
+        >
+          話題: {currentTopicId}{topicChanged ? " *" : ""}
         </text>
       )}
     </g>
@@ -593,6 +609,7 @@ export function SimulationCanvas({
   tick,
   selectedAgentId,
   selectedClusterId,
+  clusterTopics,
 }: Props) {
   const presentation = getScenarioPresentation(formationScenarioId, formationClassroomGroupSize);
   const isClassroomPair = presentation.id === "classroomPair";
@@ -642,6 +659,7 @@ export function SimulationCanvas({
     slotAssignments: slotRegistryRef.current.assignments,
     viewportWidth,
   });
+  const topicByClusterId = new Map(clusterTopics?.map((topic) => [topic.clusterId, topic]));
   const visualAgents = agents
     .map((agent) => {
       const visual = visualLayout.agents.get(agent.id);
@@ -756,6 +774,8 @@ export function SimulationCanvas({
                       : undefined
                 }
                 historySelected={isStandingParty && selectedClusterId === candidate.id}
+                currentTopicId={topicByClusterId.get(candidate.id)?.currentTopicId}
+                topicChanged={topicByClusterId.get(candidate.id)?.changedAtCurrentTick}
               />
             ))}
             {simulationAgents.map((agent) => (

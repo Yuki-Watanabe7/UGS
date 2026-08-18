@@ -138,6 +138,8 @@ describe("analysisExport (Issue #217)", () => {
     expect(bundle.history.schemaVersion).toBe(STANDING_PARTY_ANALYSIS_SCHEMA_VERSION);
     expect(bundle.contactNetwork.schemaVersion).toBe(STANDING_PARTY_ANALYSIS_SCHEMA_VERSION);
     expect(bundle.statistics.schemaVersion).toBe(STANDING_PARTY_ANALYSIS_SCHEMA_VERSION);
+    expect(bundle.informationPropagation.schemaVersion).toBe("information-propagation-analysis/1");
+    expect(bundle.informationPropagation.config).toEqual(DEFAULT_STANDING_PARTY_SCENARIO_CONFIG.informationPropagation);
     expect(bundle.history.episodes.length).toBeGreaterThan(0);
   });
 
@@ -159,12 +161,25 @@ describe("analysisExport (Issue #217)", () => {
       "standing-party-agent-statistics.csv",
       "standing-party-cluster-statistics.csv",
       "standing-party-transitions.csv",
+      "standing-party-information-topics.csv",
+      "standing-party-information-claims.csv",
+      "standing-party-information-variants.csv",
+      "standing-party-agent-information.csv",
+      "standing-party-information-utterances.csv",
+      "standing-party-information-receptions.csv",
+      "standing-party-information-adoptions.csv",
+      "standing-party-information-memory-updates.csv",
+      "standing-party-information-transmissions.csv",
+      "standing-party-information-retellings.csv",
+      "standing-party-information-statistics.csv",
     ]);
     expect(files[0]!.content).toContain("episodeId,agentId,clusterId");
     expect(files[0]!.content).toContain("activeOrCensored");
     expect(files[1]!.content).toContain("contactIntervalId");
     expect(files[3]!.content).toContain("isObserverJoiner");
     expect(files[4]!.content).toContain("lifetimeTicks");
+    expect(files[9]!.content).toContain("agentId,label,isObserverJoiner,claimId");
+    expect(files[14]!.content).toContain("transmissionId,tick,speakerId,receiverId");
   });
 
   it("exportはSimulationStateをmutationしない", () => {
