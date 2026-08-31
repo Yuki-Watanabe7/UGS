@@ -7,10 +7,12 @@
  * cluster候補選択の一般化(P6-D)、`assertStandingPartyInvariants`への空間不変条件の統合(P6-E)、
  * 空間指標の実装(P6-F)はいずれも対象外(issue #247「対象外」節、ADR§12の後続Issue)。
  *
- * `SpatialDynamicsConfig`/`SpatialRuntimeState`はcluster movementとagent roaming(Issue #248、
- * `roaming.ts`)の両方が共有する型のため本ファイルに置く。roaming固有のconfig項目・runtime state型
- * (`RoamingRuntimeState`)は`roaming.ts`が定義し、ここでは`SpatialRuntimeState.roaming`として
- * 参照するのみ(型のみのimportのため循環参照にならない)。
+ * `SpatialDynamicsConfig`/`SpatialRuntimeState`はcluster movement・agent roaming(Issue #248、
+ * `roaming.ts`)・local crowding avoidance(Issue #249、`spatialOccupancy.ts`)が共有する型のため
+ * 本ファイルに置く。roaming固有のconfig項目・runtime state型(`RoamingRuntimeState`)は`roaming.ts`が
+ * 定義し、ここでは`SpatialRuntimeState.roaming`として参照するのみ(型のみのimportのため循環参照に
+ * ならない)。crowding固有の`crowd*`config項目は本ファイルに置くが、その消費者(`computeCrowdingVector`)
+ * は`spatialOccupancy.ts`が定義する(roamingと同じ「config置き場と実装ファイルを分ける」方針)。
  *
  * 決定性: cluster movement(斥力・wall avoidance・velocity更新・member追従)はrngを一切消費しない
  * (ADR§2.5「cluster movementはrngを消費しない」)。同一入力からは常に同一出力になる純粋関数のみで
@@ -80,6 +82,24 @@ export type SpatialDynamicsConfig = {
   agentWallMaxContribution: number;
   /** roaming + agent wall avoidanceを合成した後の、1tickあたりの最大移動量(ADR§1.4の`maxAgentSpeed`) */
   maxAgentSpeed: number;
+
+  // --- Issue #249 (Phase 6): 局所crowding avoidance(`spatialOccupancy.ts`が参照する) ---------------
+
+  /** crowding avoidanceそのものの有効/無効。`enabled: true`でもこれをfalseにすればroaming + wall avoidance
+   * のみになる(`clusterRepulsionEnabled`/`roamingEnabled`と対になる、成分単位の切替) */
+  crowdingEnabled: boolean;
+  /** crowding fieldの近傍探索範囲(ADR§4.2 `crowdSampleRadius`)。これ以上離れたagent/cluster中心は寄与0 */
+  crowdSampleRadius: number;
+  /** 方向サンプリング数`K`(ADR§4.2、既定8)。多いほど滑らかだが計算量が増える */
+  crowdSampleDirections: number;
+  /** `localDensity`がこの値以下なら寄与を厳密に0にする閾値。超過分だけ滑らかに寄与が増える(issue実装範囲3節) */
+  crowdDensityThreshold: number;
+  /** 閾値超過分に対する押し出しの強さの基準値 */
+  crowdRepulsionStrength: number;
+  /** crowding由来の寄与(vectorX/vectorY)の上限。roaming/wallと同じくclampして発散を防ぐ */
+  crowdMaxContribution: number;
+  /** cluster中心1つを密度sourceとして数える際の重み(ADR§4.3、既定1.5。輪は点でなく面を占めるため) */
+  crowdClusterCenterWeight: number;
 };
 
 export const DEFAULT_SPATIAL_DYNAMICS_CONFIG: SpatialDynamicsConfig = {
@@ -108,6 +128,14 @@ export const DEFAULT_SPATIAL_DYNAMICS_CONFIG: SpatialDynamicsConfig = {
   agentWallAvoidanceStrength: 1.2,
   agentWallMaxContribution: 2,
   maxAgentSpeed: 5,
+
+  crowdingEnabled: true,
+  crowdSampleRadius: 70,
+  crowdSampleDirections: 8,
+  crowdDensityThreshold: 1.5,
+  crowdRepulsionStrength: 1.2,
+  crowdMaxContribution: 2,
+  crowdClusterCenterWeight: 1.5,
 };
 
 function assertFinite(name: string, value: number): void {
@@ -197,6 +225,19 @@ export function validateSpatialDynamicsConfig(config: SpatialDynamicsConfig): vo
   assertNonNegative("agentWallAvoidanceStrength", config.agentWallAvoidanceStrength);
   assertPositive("agentWallMaxContribution", config.agentWallMaxContribution);
   assertPositive("maxAgentSpeed", config.maxAgentSpeed);
+
+  // Issue #249 (Phase 6): 局所crowding avoidance
+  assertPositive("crowdSampleRadius", config.crowdSampleRadius);
+  assertFinite("crowdSampleDirections", config.crowdSampleDirections);
+  if (!Number.isInteger(config.crowdSampleDirections) || config.crowdSampleDirections < 1) {
+    throw new Error(
+      `spatialDynamics config: crowdSampleDirections must be a positive integer (got ${config.crowdSampleDirections})`,
+    );
+  }
+  assertNonNegative("crowdDensityThreshold", config.crowdDensityThreshold);
+  assertNonNegative("crowdRepulsionStrength", config.crowdRepulsionStrength);
+  assertPositive("crowdMaxContribution", config.crowdMaxContribution);
+  assertNonNegative("crowdClusterCenterWeight", config.crowdClusterCenterWeight);
 }
 
 validateSpatialDynamicsConfig(DEFAULT_SPATIAL_DYNAMICS_CONFIG);

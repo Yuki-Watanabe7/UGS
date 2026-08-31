@@ -99,6 +99,7 @@ import { applyClusterSpatialDynamics, pruneSpatialRuntimeState } from "./spatial
 import type { SpatialRuntimeState } from "./spatialDynamics";
 import { advanceRoamingHeading, applyAgentRoamingStep, roamingIntensity } from "./roaming";
 import type { RoamingRuntimeState } from "./roaming";
+import { computeCrowdingVector } from "./spatialOccupancy";
 // Issue #115: 発言生成の後段調整(乖離を反映した対外発言の選択)のためだけの依存。
 // socialExpression.ts側もattractiveness等のためにengine.tsをimportする循環参照になるが、
 // どちらもモジュール初期化時には相手側の値を評価しない(関数呼び出し時のみ参照する)ため安全。
@@ -2115,6 +2116,12 @@ export function stepSimulation(
   if (roamingActive) {
     const previousRoaming: RoamingRuntimeState = spatialRuntimeState?.roaming ?? {};
     const nextRoaming: RoamingRuntimeState = {};
+    // Issue #249 (ADR §6.3): crowding fieldの入力agent位置はこのtickでstep 6が始まる時点の
+    // スナップショットに固定し、ループ内で先に処理されたagentの新座標が後続agentの密度計算へ
+    // 影響しないようにする(agents配列順への依存を作らない)。cluster中心はS1〜S4で既に確定済み
+    // (this tick最終座標)であり、追加のスナップショットは不要(candidatesをそのまま参照する)。
+    const crowdingActive = spatialDynamicsConfig.crowdingEnabled;
+    const crowdingSnapshot: Agent[] | undefined = crowdingActive ? agents.map((a) => ({ ...a })) : undefined;
     for (const agent of agents) {
       if (agent.state !== "undecided") continue;
       const heading = advanceRoamingHeading(previousRoaming[agent.id], agent.id, tick, runSeed, spatialDynamicsConfig);
@@ -2122,7 +2129,18 @@ export function stepSimulation(
       // Issue #201 (ADR §3.4): pendingClusterTransitionを持つ間はroaming寄与を0にする(targetへの
       // 移動意図を最優先する既存契約を壊さない)。wall avoidanceは寄与0でも引き続き適用される。
       const intensity = agent.pendingClusterTransition ? 0 : roamingIntensity(agent, spatialDynamicsConfig);
-      applyAgentRoamingStep(agent, heading, intensity, spatialDynamicsConfig);
+      // Issue #249 (ADR §4): crowding avoidanceはundecided(roaming)にのみ適用する
+      // (approaching/forming/joined/leavingへは適用外、issue実装範囲5節)。
+      const crowd = crowdingSnapshot
+        ? computeCrowdingVector(agent, crowdingSnapshot, candidates, spatialDynamicsConfig)
+        : undefined;
+      applyAgentRoamingStep(
+        agent,
+        heading,
+        intensity,
+        spatialDynamicsConfig,
+        crowd ? { fx: crowd.vectorX, fy: crowd.vectorY } : undefined,
+      );
     }
     // 現tickで実際にundecidedだったagentの集合だけを次stateへ持ち越す。join/approaching/leaving等へ
     // 遷移したagentのroaming entryはここで自然に脱落する(孤児entryを残さない、ADR §9.2)。
