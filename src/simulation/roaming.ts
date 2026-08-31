@@ -3,9 +3,14 @@
  * (Issue #246 ADR)の§3(persistent roaming)+§1.4(agent movement vectorの合成・agent wall avoidance)に
  * 基づく、target未確定(`state === "undecided"`)なagentのheading保持型movementの純粋関数群。
  *
- * 本Issueのスコープは同ADR§12のP6-C相当のうち roaming + agent wall avoidance のみ。local crowding
- * field(#249)、候補選択の一般化(#250)は対象外(issue #248「対象外」節)。cluster側の斥力・wall
- * avoidance・member追従は#247実装済みの`spatialDynamics.ts`が担う(責務分離、ADR§1.3)。
+ * 本Issueのスコープは同ADR§12のP6-C相当のうち roaming + agent wall avoidance のみ。候補選択の
+ * 一般化(#250)は対象外(issue #248「対象外」節)。cluster側の斥力・wall avoidance・member追従は
+ * #247実装済みの`spatialDynamics.ts`が担う(責務分離、ADR§1.3)。
+ *
+ * `applyAgentRoamingStep`の`crowd`引数(Issue #249、`spatialOccupancy.ts`の`computeCrowdingVector`)は
+ * roaming + wall avoidanceの合成へ第3成分として加わる(ADR§6.1「6. undecidedのroaming + crowding +
+ * wall avoidance」がstep 6として1つの置換であるため、crowding計算自体は`spatialOccupancy.ts`に
+ * 分離しつつ、合成・座標更新はここに残す)。
  *
  * 決定性: heading初期化・更新は主系列`SeededRandom`と独立した派生stream(`createSpatialRandom`)のみを
  * 消費する(ADR§9.3)。roaming vector・wall avoidance・vector合成そのものはrngを一切消費しない。
@@ -155,22 +160,27 @@ export function computeRoamingVector(
   return { dx: Math.cos(headingRadians) * speed, dy: Math.sin(headingRadians) * speed };
 }
 
+const ZERO_CROWD_CONTRIBUTION = { fx: 0, fy: 0 };
+
 /**
  * ADR§1.4の合成順序(成分ごとにclamp → 加算 → 合成vectorを速度上限でclamp → 座標をworld境界へclamp)に
  * 従い、1体のundecided agentを1tick分動かす。`intensity`を`0`にすればroaming寄与だけが消え、
  * wall avoidanceは引き続き適用される(ADR§3.4「pendingClusterTransitionを持つ間はroaming寄与を0にする」)。
+ * `crowd`(Issue #249、`spatialOccupancy.ts`の`computeCrowdingVector`の出力)は既にそちら側で
+ * `crowdMaxContribution`によりclamp済みの成分として渡される(成分ごとのclampを二重にしない)。
  */
 export function applyAgentRoamingStep(
   agent: Agent,
   heading: RoamingState,
   intensity: number,
   config: SpatialDynamicsConfig,
+  crowd: { fx: number; fy: number } = ZERO_CROWD_CONTRIBUTION,
 ): void {
   const roam = computeRoamingVector(heading.headingRadians, intensity, config);
   const wall = computeAgentWallAvoidanceForce(agent, config);
 
-  let dx = roam.dx + wall.fx;
-  let dy = roam.dy + wall.fy;
+  let dx = roam.dx + crowd.fx + wall.fx;
+  let dy = roam.dy + crowd.fy + wall.fy;
   const speed = Math.hypot(dx, dy);
   if (speed > config.maxAgentSpeed && speed > 0) {
     const scale = config.maxAgentSpeed / speed;
