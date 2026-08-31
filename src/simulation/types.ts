@@ -1052,9 +1052,10 @@ export type SimulationState = {
    */
   retellingLog?: RetellingEvent[];
   /**
-   * Issue #247 (Phase 6): confirmed cluster間の斥力・wall avoidanceによるcluster center velocity
-   * (`docs/spatial-dynamics-phase6-model.md` §9.2)。`interventionRuntimeState`(#156)と同じ
-   * fall backパターンで扱う。`standingPartyConfig.spatialDynamics.enabled`が真、かつ
+   * Issue #247 (Phase 6): confirmed cluster間の斥力・wall avoidanceによるcluster center velocity。
+   * Issue #248 (Phase 6): undecided agentのpersistent roaming heading(`roaming`フィールド)も同じ
+   * containerへ載せる(`docs/spatial-dynamics-phase6-model.md` §9.2)。`interventionRuntimeState`(#156)と
+   * 同じfall backパターンで扱う。`standingPartyConfig.spatialDynamics.enabled`が真、かつ
    * `formationScenarioId === "standingParty"`の間だけ`engine.ts`が更新し、それ以外(disabled/
    * afterParty/classroomPair)では常にundefinedのまま(既存Phase 1〜5のstate・event・PRNG系列を
    * 一切変えない)。

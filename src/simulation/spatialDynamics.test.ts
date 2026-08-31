@@ -307,6 +307,7 @@ describe("spatialDynamics: pruneSpatialRuntimeState", () => {
         // "c"はもう`candidates`配列に存在しない(除去済み)孤児entry
         c: { vx: 1, vy: 1 },
       },
+      roaming: {},
     };
     const pruned = pruneSpatialRuntimeState(runtimeState, [stillActive, nowDissolving]);
     expect(Object.keys(pruned.clusterVelocity)).toEqual(["a"]);
