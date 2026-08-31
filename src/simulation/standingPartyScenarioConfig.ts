@@ -53,6 +53,11 @@ import {
   validateTopicIntegrationConfig,
   type TopicIntegrationConfig,
 } from "./topicCompatibility";
+import {
+  DEFAULT_SPATIAL_DYNAMICS_CONFIG,
+  validateSpatialDynamicsConfig,
+  type SpatialDynamicsConfig,
+} from "./spatialDynamics";
 
 /** 社交的回遊傾向(`Agent.socialCirculationTendency`)を一様分布で生成する範囲 `[0,1]` */
 export type SocialCirculationTendencyRange = {
@@ -88,6 +93,12 @@ export type StandingPartyScenarioConfig = {
    * 同様にno-op(topic runtime state自体が存在しないため)。
    */
   topicIntegration: TopicIntegrationConfig;
+  /**
+   * Issue #247 (Phase 6): confirmed cluster間の斥力・wall avoidanceによる中心移動と、joined member
+   * 追従(`docs/spatial-dynamics-phase6-model.md` §2, §9.1)。`enabled: false`(既定)の間は
+   * `engine.ts`がこの設定を一切参照せず、既存のPhase 1〜5 state・event・PRNG系列をbyte-identicalに保つ。
+   */
+  spatialDynamics: SpatialDynamicsConfig;
 };
 
 export const DEFAULT_CIRCULATION_TENDENCY_RANGE: SocialCirculationTendencyRange = { min: 0, max: 1 };
@@ -101,6 +112,7 @@ export const DEFAULT_STANDING_PARTY_SCENARIO_CONFIG: StandingPartyScenarioConfig
   transition: DEFAULT_CLUSTER_TRANSITION_CONFIG,
   informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
   topicIntegration: DEFAULT_TOPIC_INTEGRATION_CONFIG,
+  spatialDynamics: DEFAULT_SPATIAL_DYNAMICS_CONFIG,
 };
 
 function assertRange01(name: string, value: number): void {
@@ -122,6 +134,7 @@ export function validateStandingPartyScenarioConfig(config: StandingPartyScenari
   validateClusterTransitionConfig(config.transition);
   validateInformationPropagationConfig(config.informationPropagation);
   validateTopicIntegrationConfig(config.topicIntegration);
+  validateSpatialDynamicsConfig(config.spatialDynamics);
   assertRange01("circulationTendencyRange.min", config.circulationTendencyRange.min);
   assertRange01("circulationTendencyRange.max", config.circulationTendencyRange.max);
   if (config.circulationTendencyRange.min > config.circulationTendencyRange.max) {
@@ -160,6 +173,7 @@ export const NETWORKING_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = {
   transition: DEFAULT_CLUSTER_TRANSITION_CONFIG,
   informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
   topicIntegration: DEFAULT_TOPIC_INTEGRATION_CONFIG,
+  spatialDynamics: DEFAULT_SPATIAL_DYNAMICS_CONFIG,
 };
 
 /**
@@ -189,6 +203,7 @@ export const INTIMATE_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = {
   transition: DEFAULT_CLUSTER_TRANSITION_CONFIG,
   informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
   topicIntegration: DEFAULT_TOPIC_INTEGRATION_CONFIG,
+  spatialDynamics: DEFAULT_SPATIAL_DYNAMICS_CONFIG,
 };
 
 validateStandingPartyScenarioConfig(NETWORKING_STANDING_PARTY_CONFIG);
@@ -240,6 +255,7 @@ export const OUTWARD_INTEREST_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig
   },
   informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
   topicIntegration: DEFAULT_TOPIC_INTEGRATION_CONFIG,
+  spatialDynamics: DEFAULT_SPATIAL_DYNAMICS_CONFIG,
 };
 
 /**
@@ -273,6 +289,7 @@ export const CURRENT_CIRCLE_ATTACHMENT_STANDING_PARTY_CONFIG: StandingPartyScena
   },
   informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
   topicIntegration: DEFAULT_TOPIC_INTEGRATION_CONFIG,
+  spatialDynamics: DEFAULT_SPATIAL_DYNAMICS_CONFIG,
 };
 
 validateStandingPartyScenarioConfig(OUTWARD_INTEREST_STANDING_PARTY_CONFIG);
