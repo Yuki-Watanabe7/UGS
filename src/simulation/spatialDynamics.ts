@@ -3,10 +3,14 @@
  * (Issue #246 ADR)の§2(cluster空間力学)に基づく、confirmed cluster間の斥力・wall avoidanceと、
  * それによるcluster center移動・joined member追従の純粋関数群。
  *
- * 本Issueのスコープは同ADR§12のP6-A(config/runtime state)+P6-B(cluster movement)のみ。
- * agent roaming/local crowding field(P6-C)、cluster候補選択の一般化(P6-D)、
- * `assertStandingPartyInvariants`への空間不変条件の統合(P6-E)、空間指標の実装(P6-F)は
- * いずれも対象外(issue #247「対象外」節、ADR§12の後続Issue)。
+ * 本ファイルの実装スコープは同ADR§12のP6-A(config/runtime state)+P6-B(cluster movement)。
+ * cluster候補選択の一般化(P6-D)、`assertStandingPartyInvariants`への空間不変条件の統合(P6-E)、
+ * 空間指標の実装(P6-F)はいずれも対象外(issue #247「対象外」節、ADR§12の後続Issue)。
+ *
+ * `SpatialDynamicsConfig`/`SpatialRuntimeState`はcluster movementとagent roaming(Issue #248、
+ * `roaming.ts`)の両方が共有する型のため本ファイルに置く。roaming固有のconfig項目・runtime state型
+ * (`RoamingRuntimeState`)は`roaming.ts`が定義し、ここでは`SpatialRuntimeState.roaming`として
+ * 参照するのみ(型のみのimportのため循環参照にならない)。
  *
  * 決定性: cluster movement(斥力・wall avoidance・velocity更新・member追従)はrngを一切消費しない
  * (ADR§2.5「cluster movementはrngを消費しない」)。同一入力からは常に同一出力になる純粋関数のみで
@@ -14,6 +18,7 @@
  */
 import type { Agent, GroupCandidate } from "./types";
 import { clamp, distance, WORLD_WIDTH, WORLD_HEIGHT } from "./model";
+import type { RoamingRuntimeState } from "./roaming";
 
 // --- config -----------------------------------------------------------------------------------
 
@@ -48,6 +53,33 @@ export type SpatialDynamicsConfig = {
   wallAvoidanceStrength: number;
   /** wall avoidance由来の寄与の上限(角で両軸が加算されても発散しないようclampする) */
   wallMaxContribution: number;
+
+  // --- Issue #248 (Phase 6): undecided agentのpersistent roaming + agent側wall avoidance -------
+  // (`roaming.ts`が参照する。cluster側`wallAvoidance*`とは速度スケールが異なるため独立させる)
+
+  /** roaming(persistent heading移動)そのものの有効/無効。`enabled: true`でもこれをfalseにすれば
+   * 既存の独立ランダムwalk(`WANDER_SPEED`)のままになる(`clusterRepulsionEnabled`と対になる切替) */
+  roamingEnabled: boolean;
+  /** heading保持中の基準速度(ADR§3.2)。`WANDER_SPEED`より大きく、`APPROACH_SPEED`より十分小さい値に保つ */
+  roamingSpeed: number;
+  /** headingを一定期間維持するtick数の下限(ADR§3.2) */
+  roamingHeadingHoldTicksMin: number;
+  /** headingを一定期間維持するtick数の上限(`roamingHeadingHoldTicksMin`以上) */
+  roamingHeadingHoldTicksMax: number;
+  /** heading更新時、前回headingからの摂動幅(radians)。全方位への再抽選ではなくこの範囲内での揺らぎ */
+  roamingHeadingNoiseRadians: number;
+  /** `roamingIntensity()`の基準値(`socialCirculationTendency`を無視した場合の強度) */
+  roamingIntensityBase: number;
+  /** `socialCirculationTendency`をroaming強度へ再利用する重み。`0`なら無関係(意味は変更しない、ADR§3.3) */
+  roamingCirculationWeight: number;
+  /** agent側wall avoidanceが効き始める、境界からの距離 */
+  agentWallAvoidanceDistance: number;
+  /** agent側wall avoidanceの強さの基準値 */
+  agentWallAvoidanceStrength: number;
+  /** agent側wall avoidance由来の寄与の上限 */
+  agentWallMaxContribution: number;
+  /** roaming + agent wall avoidanceを合成した後の、1tickあたりの最大移動量(ADR§1.4の`maxAgentSpeed`) */
+  maxAgentSpeed: number;
 };
 
 export const DEFAULT_SPATIAL_DYNAMICS_CONFIG: SpatialDynamicsConfig = {
@@ -64,6 +96,18 @@ export const DEFAULT_SPATIAL_DYNAMICS_CONFIG: SpatialDynamicsConfig = {
   wallAvoidanceDistance: 40,
   wallAvoidanceStrength: 1.2,
   wallMaxContribution: 2,
+
+  roamingEnabled: true,
+  roamingSpeed: 3,
+  roamingHeadingHoldTicksMin: 8,
+  roamingHeadingHoldTicksMax: 20,
+  roamingHeadingNoiseRadians: 0.9,
+  roamingIntensityBase: 0.6,
+  roamingCirculationWeight: 0.4,
+  agentWallAvoidanceDistance: 40,
+  agentWallAvoidanceStrength: 1.2,
+  agentWallMaxContribution: 2,
+  maxAgentSpeed: 5,
 };
 
 function assertFinite(name: string, value: number): void {
@@ -121,6 +165,38 @@ export function validateSpatialDynamicsConfig(config: SpatialDynamicsConfig): vo
   assertPositive("wallAvoidanceDistance", config.wallAvoidanceDistance);
   assertNonNegative("wallAvoidanceStrength", config.wallAvoidanceStrength);
   assertPositive("wallMaxContribution", config.wallMaxContribution);
+
+  // Issue #248 (Phase 6): roaming + agent側wall avoidance
+  assertPositive("roamingSpeed", config.roamingSpeed);
+  assertFinite("roamingHeadingHoldTicksMin", config.roamingHeadingHoldTicksMin);
+  if (!Number.isInteger(config.roamingHeadingHoldTicksMin) || config.roamingHeadingHoldTicksMin < 1) {
+    throw new Error(
+      `spatialDynamics config: roamingHeadingHoldTicksMin must be a positive integer (got ${config.roamingHeadingHoldTicksMin})`,
+    );
+  }
+  assertFinite("roamingHeadingHoldTicksMax", config.roamingHeadingHoldTicksMax);
+  if (!Number.isInteger(config.roamingHeadingHoldTicksMax)) {
+    throw new Error(
+      `spatialDynamics config: roamingHeadingHoldTicksMax must be an integer (got ${config.roamingHeadingHoldTicksMax})`,
+    );
+  }
+  if (config.roamingHeadingHoldTicksMax < config.roamingHeadingHoldTicksMin) {
+    throw new Error(
+      `spatialDynamics config: roamingHeadingHoldTicksMax (${config.roamingHeadingHoldTicksMax}) must be >= roamingHeadingHoldTicksMin (${config.roamingHeadingHoldTicksMin})`,
+    );
+  }
+  assertFinite("roamingHeadingNoiseRadians", config.roamingHeadingNoiseRadians);
+  if (config.roamingHeadingNoiseRadians < 0 || config.roamingHeadingNoiseRadians > Math.PI) {
+    throw new Error(
+      `spatialDynamics config: roamingHeadingNoiseRadians must be within [0, π] (got ${config.roamingHeadingNoiseRadians})`,
+    );
+  }
+  assertRange01("roamingIntensityBase", config.roamingIntensityBase);
+  assertRange01("roamingCirculationWeight", config.roamingCirculationWeight);
+  assertPositive("agentWallAvoidanceDistance", config.agentWallAvoidanceDistance);
+  assertNonNegative("agentWallAvoidanceStrength", config.agentWallAvoidanceStrength);
+  assertPositive("agentWallMaxContribution", config.agentWallMaxContribution);
+  assertPositive("maxAgentSpeed", config.maxAgentSpeed);
 }
 
 validateSpatialDynamicsConfig(DEFAULT_SPATIAL_DYNAMICS_CONFIG);
@@ -133,13 +209,16 @@ export type ClusterVelocity = { vx: number; vy: number };
  * `SimulationState.spatialRuntimeState`(ADR§9.2)。`interventionRuntimeState`(#156)と同じ
  * 「tick間のfall backパターン」に従い、呼び出し側が毎tick渡し忘れても直前の値を引き継ぐ。
  * disabled中は`undefined`のまま(既存の記録shapeで「空」と「未使用」を区別する方針を踏襲)。
+ * `roaming`(Issue #248)はagentId -> heading。`roaming.ts`が実際の生成・更新ロジックを持つ
+ * (責務分離、cluster movementとagent roamingで別ファイル)。
  */
 export type SpatialRuntimeState = {
   clusterVelocity: Record<string, ClusterVelocity>;
+  roaming: RoamingRuntimeState;
 };
 
 export function createInitialSpatialRuntimeState(): SpatialRuntimeState {
-  return { clusterVelocity: {} };
+  return { clusterVelocity: {}, roaming: {} };
 }
 
 const ZERO_VELOCITY: ClusterVelocity = { vx: 0, vy: 0 };
@@ -166,7 +245,9 @@ export function pruneSpatialRuntimeState(
   for (const [id, velocity] of Object.entries(runtimeState.clusterVelocity)) {
     if (activeIds.has(id)) clusterVelocity[id] = velocity;
   }
-  return { clusterVelocity };
+  // roaming(Issue #248)は`roaming.ts`側の呼び出し元(engine.ts step 6)がそのtickのundecided agent
+  // 集合から都度組み直すため、ここでは素通しする(cluster側cleanupがagent roaming stateへ影響しない)。
+  return { clusterVelocity, roaming: runtimeState.roaming };
 }
 
 // --- 決定的な完全重複時fallback -----------------------------------------------------------------

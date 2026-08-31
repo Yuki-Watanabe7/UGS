@@ -97,6 +97,8 @@ import type { AlternativeClusterInterestContext } from "./alternativeClusterInte
 import { DEFAULT_STANDING_PARTY_SCENARIO_CONFIG } from "./standingPartyScenarioConfig";
 import { applyClusterSpatialDynamics, pruneSpatialRuntimeState } from "./spatialDynamics";
 import type { SpatialRuntimeState } from "./spatialDynamics";
+import { advanceRoamingHeading, applyAgentRoamingStep, roamingIntensity } from "./roaming";
+import type { RoamingRuntimeState } from "./roaming";
 // Issue #115: 発言生成の後段調整(乖離を反映した対外発言の選択)のためだけの依存。
 // socialExpression.ts側もattractiveness等のためにengine.tsをimportする循環参照になるが、
 // どちらもモジュール初期化時には相手側の値を評価しない(関数呼び出し時のみ参照する)ため安全。
@@ -1388,7 +1390,7 @@ export function stepSimulation(
       spatialDynamicsConfig,
       spatialRuntimeState?.clusterVelocity ?? {},
     );
-    spatialRuntimeState = { clusterVelocity };
+    spatialRuntimeState = { clusterVelocity, roaming: spatialRuntimeState?.roaming ?? {} };
   }
 
   // 1. 核形成: undecidedな人が forming になるかどうか
@@ -2105,10 +2107,32 @@ export function stepSimulation(
   }
 
   // 6. undecided な人はゆるく漂う (何もしていないわけではないことを示す)
-  for (const agent of agents) {
-    if (agent.state !== "undecided") continue;
-    agent.x = clamp(agent.x + rng.range(-WANDER_SPEED, WANDER_SPEED), 5, WORLD_WIDTH - 5);
-    agent.y = clamp(agent.y + rng.range(-WANDER_SPEED, WANDER_SPEED), 5, WORLD_HEIGHT - 5);
+  // Issue #248 (Phase 6, docs/spatial-dynamics-phase6-model.md §3/§1.4): spatialDynamics有効時は、
+  // 毎tick独立ランダムwalkの代わりにpersistent heading roaming + agent側wall avoidanceへ差し替える。
+  // standingParty以外、`spatialDynamics.enabled === false`、または`roamingEnabled === false`の間は
+  // 既存の独立ランダムwalkをそのまま使う(既存state・event・PRNG系列を一切変えない、ADR §9.4)。
+  const roamingActive = spatialDynamicsEnabled && spatialDynamicsConfig.roamingEnabled;
+  if (roamingActive) {
+    const previousRoaming: RoamingRuntimeState = spatialRuntimeState?.roaming ?? {};
+    const nextRoaming: RoamingRuntimeState = {};
+    for (const agent of agents) {
+      if (agent.state !== "undecided") continue;
+      const heading = advanceRoamingHeading(previousRoaming[agent.id], agent.id, tick, runSeed, spatialDynamicsConfig);
+      nextRoaming[agent.id] = heading;
+      // Issue #201 (ADR §3.4): pendingClusterTransitionを持つ間はroaming寄与を0にする(targetへの
+      // 移動意図を最優先する既存契約を壊さない)。wall avoidanceは寄与0でも引き続き適用される。
+      const intensity = agent.pendingClusterTransition ? 0 : roamingIntensity(agent, spatialDynamicsConfig);
+      applyAgentRoamingStep(agent, heading, intensity, spatialDynamicsConfig);
+    }
+    // 現tickで実際にundecidedだったagentの集合だけを次stateへ持ち越す。join/approaching/leaving等へ
+    // 遷移したagentのroaming entryはここで自然に脱落する(孤児entryを残さない、ADR §9.2)。
+    spatialRuntimeState = { clusterVelocity: spatialRuntimeState?.clusterVelocity ?? {}, roaming: nextRoaming };
+  } else {
+    for (const agent of agents) {
+      if (agent.state !== "undecided") continue;
+      agent.x = clamp(agent.x + rng.range(-WANDER_SPEED, WANDER_SPEED), 5, WORLD_WIDTH - 5);
+      agent.y = clamp(agent.y + rng.range(-WANDER_SPEED, WANDER_SPEED), 5, WORLD_HEIGHT - 5);
+    }
   }
 
   // 7. ストレス蓄積とleave判定
