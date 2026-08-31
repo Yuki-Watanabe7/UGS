@@ -1090,6 +1090,17 @@ Phase 5 presetでは右sidebarの「情報伝播の観察・分析」から、ag
 PRNGを変えません。検証範囲・受入条件対応表・benchmark手順は
 [`docs/standing-party-phase5-verification.md`](docs/standing-party-phase5-verification.md)を参照してください。
 
+### Phase 6の空間回遊・分散ダイナミクス設計(#246)
+
+Phase 5までの立食パーティーは、成立済みclusterの中心が動かず、未所属agentの移動が無方向の
+ランダムwalkで、再探索が最寄り候補1件しか見ないため、会場の狭い領域へ局所固定されやすい構造でした。
+「輪へ集まる力」と「会場を広く使う力」を別要因として定義し、cluster間斥力、未所属agentの
+persistent roaming、局所crowding avoidance、wall avoidance、候補選択の一般化、tick更新順序、
+座標の不変条件、spatial coverage等の定量指標、feature flagとseed再現性の方針を
+[`docs/spatial-dynamics-phase6-model.md`](docs/spatial-dynamics-phase6-model.md)に定義しています。
+現時点では設計文書のみで、既存runtimeの挙動は変更していません。空間力は移動vectorと候補選択scoreを
+通じてのみ社会的判断と接続し、`attractiveness()`や離脱hazardの式そのものへは加算しません。
+
 ## シミュレーションルールの概要
 
 行動ルールは `src/simulation/engine.ts` に集約されています。主なルール:
