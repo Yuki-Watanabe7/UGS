@@ -37,6 +37,7 @@ import type {
 } from "./informationTransmission";
 import type { ClaimVariant } from "./informationModel";
 import type { RetellingEvent, RetellingRuntimeState } from "./retelling";
+import type { SpatialRuntimeState } from "./spatialDynamics";
 
 /**
  * エージェントの行動状態。Phase 4の三層モデル(`socialExpression.ts`)では、この状態遷移・移動
@@ -1050,6 +1051,15 @@ export type SimulationState = {
    * 時系列蓄積ログ。`contentUtteranceLog`と同じ「後から取り除かない」方針。
    */
   retellingLog?: RetellingEvent[];
+  /**
+   * Issue #247 (Phase 6): confirmed cluster間の斥力・wall avoidanceによるcluster center velocity
+   * (`docs/spatial-dynamics-phase6-model.md` §9.2)。`interventionRuntimeState`(#156)と同じ
+   * fall backパターンで扱う。`standingPartyConfig.spatialDynamics.enabled`が真、かつ
+   * `formationScenarioId === "standingParty"`の間だけ`engine.ts`が更新し、それ以外(disabled/
+   * afterParty/classroomPair)では常にundefinedのまま(既存Phase 1〜5のstate・event・PRNG系列を
+   * 一切変えない)。
+   */
+  spatialRuntimeState?: SpatialRuntimeState;
 };
 
 /**

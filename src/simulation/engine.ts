@@ -95,6 +95,8 @@ import type { CurrentClusterAttachmentConfig } from "./currentClusterAttachment"
 import { deriveAlternativeClusterInterests, selectBestAlternativeCluster } from "./alternativeClusterInterest";
 import type { AlternativeClusterInterestContext } from "./alternativeClusterInterest";
 import { DEFAULT_STANDING_PARTY_SCENARIO_CONFIG } from "./standingPartyScenarioConfig";
+import { applyClusterSpatialDynamics, pruneSpatialRuntimeState } from "./spatialDynamics";
+import type { SpatialRuntimeState } from "./spatialDynamics";
 // Issue #115: 発言生成の後段調整(乖離を反映した対外発言の選択)のためだけの依存。
 // socialExpression.ts側もattractiveness等のためにengine.tsをimportする循環参照になるが、
 // どちらもモジュール初期化時には相手側の値を評価しない(関数呼び出し時のみ参照する)ため安全。
@@ -1371,6 +1373,24 @@ export function stepSimulation(
 
   fireIntervention("beforeTick");
 
+  // Issue #247 (Phase 6 P6-B, docs/spatial-dynamics-phase6-model.md §6.1 S1〜S4): confirmed cluster間の
+  // 斥力・wall avoidanceによる中心移動と、joined memberの追従補正。standingParty以外、または
+  // `spatialDynamics.enabled === false`の間は完全にno-op(既存state・event・PRNG系列を一切変えない、
+  // ADR §9.4)。ここで確定した中心座標を、この後のstep 1(核形成)以降のtick全体が参照する
+  // (ADR §6.2「S2〜S4をstep 1の前に置く」)。cluster movement自体はrngを一切消費しない(ADR §2.5)。
+  const spatialDynamicsConfig = standingPartyConfig.spatialDynamics;
+  const spatialDynamicsEnabled = formationPolicy.id === "standingParty" && spatialDynamicsConfig.enabled;
+  let spatialRuntimeState: SpatialRuntimeState | undefined = state.spatialRuntimeState;
+  if (spatialDynamicsEnabled) {
+    const { clusterVelocity } = applyClusterSpatialDynamics(
+      candidates,
+      agents,
+      spatialDynamicsConfig,
+      spatialRuntimeState?.clusterVelocity ?? {},
+    );
+    spatialRuntimeState = { clusterVelocity };
+  }
+
   // 1. 核形成: undecidedな人が forming になるかどうか
   // 核を作れるのは主導性が十分高い人、または既存の仲良しグループが
   // 近くに揃っている人だけ(主導者0人・既存関係性も弱い場なら誰も場を作らない)
@@ -2423,6 +2443,12 @@ export function stepSimulation(
     return true;
   });
 
+  // Issue #247 (ADR §2.3/§9.2): このtick中にconfirmedでなくなった、または配列から除去された
+  // clusterのvelocity entryを孤児化させない(cleanup時にspatial runtime stateを必ず削除する)。
+  if (spatialDynamicsEnabled && spatialRuntimeState) {
+    spatialRuntimeState = pruneSpatialRuntimeState(spatialRuntimeState, candidates);
+  }
+
   // Issue #156: 締切概念を持つシナリオ(classroomPair系)でのみ、締切判定の直前に
   // "beforeDeadline"フックを発火する(「直前」とみなす残りtick数の判断は個々の介入実装に委ねる)。
   if (deadlineTick !== undefined) {
@@ -2513,6 +2539,7 @@ export function stepSimulation(
     formationClassroomGroupSize: resolvedFormation?.classroomGroupSize,
     standingPartyConfig: resolvedFormation?.standingPartyConfig,
     observationHorizonTick: resolvedObservationHorizonTick,
+    spatialRuntimeState,
     interventionRuntimeState,
     activeInterventionEffects: [...activeInterventionEffects, ...newInterventionEffects],
     speechLog: [],
