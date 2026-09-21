@@ -452,3 +452,44 @@ validateStandingPartyScenarioConfig(INFO_RICH_STANDING_PARTY_CONFIG);
 validateStandingPartyScenarioConfig(TOPIC_SEGMENTED_STANDING_PARTY_CONFIG);
 validateStandingPartyScenarioConfig(RUMOR_MUTATION_STANDING_PARTY_CONFIG);
 validateStandingPartyScenarioConfig(INFO_SEEKING_STANDING_PARTY_CONFIG);
+
+// --- Issue #251 (Phase 6 P6-G) 比較プリセット ---------------------------------------------------
+
+/**
+ * 比較プリセット「空間回遊あり・分散型」(issue #251要件2節)。`DEFAULT_STANDING_PARTY_SCENARIO_CONFIG`と
+ * `SimParams`・Phase 2〜5設定は同一のまま、`spatialDynamics`だけを有効化する。
+ * - cluster間斥力・persistent roaming・crowding avoidanceをすべてON(`enabled: true`に加え、
+ *   3つの成分別トグルも既定のtrueのまま明示する)。
+ * - 通常再探索の候補選択を`nearestCandidate()`(最寄り1件)ではなく一般化selectionへ切り替える
+ *   (要件: 「nearest-onlyではなく一般化selection」、`candidateSelectionEnabled: true`)。
+ * - 他のパラメータは`SPATIAL_FIXED_BASELINE_STANDING_PARTY_CONFIG`と完全に同一にし、
+ *   同一seed集合でのpaired比較(`docs/speech-effects-paired-monte-carlo.md`と同じ方式)で
+ *   空間ダイナミクスだけの差を観察できるようにする(ADR§8「比較が同一seed集合のpairedで行われる」)。
+ * 「良い/悪いパーティー」という評価名を付けず、空間力学の差として説明する(issue受入条件)。
+ */
+export const SPATIAL_ROAMING_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = {
+  ...DEFAULT_STANDING_PARTY_SCENARIO_CONFIG,
+  spatialDynamics: {
+    ...DEFAULT_SPATIAL_DYNAMICS_CONFIG,
+    enabled: true,
+    clusterRepulsionEnabled: true,
+    roamingEnabled: true,
+    crowdingEnabled: true,
+    candidateSelectionEnabled: true,
+  },
+};
+
+/**
+ * 比較プリセット「空間固定に近い比較基準」(issue #251要件2節)。上記と`SimParams`・Phase 2〜5設定を
+ * 可能な限り同一に保ったまま、`spatialDynamics.enabled: false`(Phase 5までの空間挙動、既定値)に
+ * 固定する ―― `SPATIAL_ROAMING_STANDING_PARTY_CONFIG`とのpaired比較専用の基準線であり、
+ * `DEFAULT_STANDING_PARTY_SCENARIO_CONFIG`自体(既定プリセット)と値としては同一だが、
+ * 「意図的な比較基準」であることを名前・descriptionで明示する意味で別定数として独立させる。
+ */
+export const SPATIAL_FIXED_BASELINE_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = {
+  ...DEFAULT_STANDING_PARTY_SCENARIO_CONFIG,
+  spatialDynamics: { ...DEFAULT_SPATIAL_DYNAMICS_CONFIG, enabled: false },
+};
+
+validateStandingPartyScenarioConfig(SPATIAL_ROAMING_STANDING_PARTY_CONFIG);
+validateStandingPartyScenarioConfig(SPATIAL_FIXED_BASELINE_STANDING_PARTY_CONFIG);

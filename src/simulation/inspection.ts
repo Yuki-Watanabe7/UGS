@@ -8,6 +8,8 @@ import type {
   ObserverActiveEffectStatus,
   ObserverJoinerInspection,
   ObserverSocialExpressionSnapshot,
+  ObserverSpatialCandidateScore,
+  ObserverSpatialSnapshot,
   ObserverSpeechEffectDetail,
   ObserverSpeechHistoryEntry,
   ObserverTieSummary,
@@ -22,7 +24,7 @@ import type { PublicExpression } from "./socialExpression";
 import { derivePrivateEvaluations, derivePublicExpressions } from "./socialExpression";
 import { correctionFromHistory, deriveTieCorrections } from "./relationshipTie";
 import { distance } from "./model";
-import { attractiveness, nearestCandidate } from "./engine";
+import { attractiveness, nearestCandidate, CLUSTER_REJOIN_COOLDOWN_TICKS, REAPPROACH_COOLDOWN_TICKS } from "./engine";
 import { getFormationPolicyById } from "./formationPolicy";
 import type { FormationPolicy } from "./formationPolicy";
 import { computeClusterDepartureDecision } from "./clusterDepartureDecision";
@@ -32,6 +34,13 @@ import type { AlternativeClusterInterestContext } from "./alternativeClusterInte
 import { computeDepartureInhibition, evaluateClusterDissolutionImpact } from "./currentClusterAttachment";
 import { computeClusterTransitionDecision } from "./clusterTransitionDecision";
 import type { ClusterTransitionDecision } from "./clusterTransitionDecision";
+import { buildStandingPartySpatialAnalysis } from "./spatialAnalysis";
+import type { StandingPartySpatialAnalysis } from "./spatialAnalysis";
+import {
+  computeClusterSearchCandidateScore,
+  enumerateClusterSearchCandidates,
+  pickBestClusterSearchCandidate,
+} from "./clusterSearchSelection";
 
 /**
  * Issue #119: 全observerJoinerで共有するPhase 4(本心/対外表現)の導出結果。
@@ -455,11 +464,137 @@ function buildLastTransitionInvalidationSnapshot(
   return { reason: invalidatedEntry.metadata.invalidationReason, tick: invalidatedEntry.tick, fallbackStarted };
 }
 
+/**
+ * Issue #251 (Phase 6): 通常探索の候補選択score内訳を、`engine.ts`(step 2呼び出し箇所)と同じ
+ * 純粋関数群(`enumerateClusterSearchCandidates`/`computeClusterSearchCandidateScore`)から再現する。
+ * `buildClusterTransitionDecisionSnapshot`と同じく`topicIntegration`は含めない簡略版(既存の
+ * 簡略化方針を踏襲、既存attractivenessは`tieCorrection: 0`で計算する ―― `attractivenessScoreBeforeEffects`
+ * と同じ簡略化)。`pendingClusterTransition`保持中・undecided以外・候補選択無効時はundefinedを返す
+ * (0件を捏造しない)。
+ */
+function buildCandidateSelectionSnapshot(
+  agent: Agent,
+  state: SimulationState,
+  params: SimParams,
+  formationPolicy: FormationPolicy,
+): { evaluatedCandidateCount: number; selectedCandidateId?: string; candidateScores: ObserverSpatialCandidateScore[] } | undefined {
+  if (agent.state !== "undecided" || agent.pendingClusterTransition) return undefined;
+  const standingPartyConfig = state.standingPartyConfig ?? DEFAULT_STANDING_PARTY_SCENARIO_CONFIG;
+  const spatialConfig = standingPartyConfig.spatialDynamics;
+  if (!spatialConfig.enabled || !spatialConfig.candidateSelectionEnabled) return undefined;
+
+  const cooldownExcludeIds = new Set<string>();
+  if (
+    agent.lastFailedCandidateId !== undefined &&
+    agent.lastFailedCandidateAtTick !== undefined &&
+    state.tick - agent.lastFailedCandidateAtTick < REAPPROACH_COOLDOWN_TICKS
+  ) {
+    cooldownExcludeIds.add(agent.lastFailedCandidateId);
+  }
+  if (
+    agent.lastDepartedClusterId !== undefined &&
+    agent.lastDepartedClusterAtTick !== undefined &&
+    state.tick - agent.lastDepartedClusterAtTick < CLUSTER_REJOIN_COOLDOWN_TICKS
+  ) {
+    cooldownExcludeIds.add(agent.lastDepartedClusterId);
+  }
+
+  const capacityOf = (c: GroupCandidate) => formationPolicy.resolveGroupCapacity(c, params);
+  const observed = enumerateClusterSearchCandidates(
+    agent,
+    state.groupCandidates,
+    capacityOf,
+    cooldownExcludeIds.size > 0 ? cooldownExcludeIds : undefined,
+    spatialConfig,
+  );
+  const alternativeInterestCtx: AlternativeClusterInterestContext | undefined = standingPartyConfig.transition.enabled
+    ? {
+        config: standingPartyConfig.alternativeInterest,
+        tick: state.tick,
+        agents: state.agents,
+        existingTieStrength: params.existingTieStrength,
+        resolveCapacity: capacityOf,
+        tieCorrections: state.relationshipTieEnabled ? deriveTieCorrections(state.tieHistory ?? {}) : {},
+      }
+    : undefined;
+  const scores = observed.map(({ candidate, dist }) => {
+    const social = attractiveness(agent, candidate, state.agents, params, state.interventionId, state.tick, state.activeSpeechEffects ?? [], 0, state.activeInterventionEffects ?? []);
+    return computeClusterSearchCandidateScore(agent, candidate, dist, social, spatialConfig, {
+      agents: state.agents,
+      candidates: state.groupCandidates,
+      alternativeInterestCtx,
+    });
+  });
+  const best = pickBestClusterSearchCandidate(scores, spatialConfig.candidateSelectionMinScore);
+  return {
+    evaluatedCandidateCount: observed.length,
+    selectedCandidateId: best?.clusterId,
+    candidateScores: scores.map((s) => ({ clusterId: s.clusterId, score: s.score, ...s.factors })),
+  };
+}
+
+/**
+ * Issue #251 (Phase 6): agent 1人分の空間diagnostics(roaming/crowding/候補選択/所属clusterの空間状態)を
+ * `spatialAnalysis.ts`が一度だけ導出したsnapshotから写す。standingParty以外では`spatialAnalysis`自体が
+ * 空扱いになるため、`agents`/`clusters`が空でも例外を投げず、無評価であることが分かる値を返す。
+ */
+function buildSpatialSnapshot(
+  agent: Agent,
+  state: SimulationState,
+  params: SimParams,
+  spatialAnalysis: StandingPartySpatialAnalysis,
+  formationPolicy: FormationPolicy | undefined,
+  currentGroupId: string | undefined,
+): ObserverSpatialSnapshot | undefined {
+  if (state.formationScenarioId !== "standingParty") return undefined;
+  const agentSnapshot = spatialAnalysis.agents.find((a) => a.agentId === agent.id);
+  if (!agentSnapshot) return undefined;
+
+  const candidateSelection =
+    formationPolicy && spatialAnalysis.spatialDynamicsEnabled
+      ? buildCandidateSelectionSnapshot(agent, state, params, formationPolicy)
+      : undefined;
+
+  const currentClusterSnapshot = currentGroupId
+    ? spatialAnalysis.clusters.find((c) => c.clusterId === currentGroupId)
+    : undefined;
+
+  return {
+    spatialDynamicsEnabled: spatialAnalysis.spatialDynamicsEnabled,
+    roamingActive: agentSnapshot.roamingActive,
+    roamingHeadingRadians: agentSnapshot.roamingHeadingRadians,
+    roamingTicksRemaining: agentSnapshot.roamingTicksRemaining,
+    roamingIntensity: agentSnapshot.roamingIntensity,
+    instantRoamingSpeed: agentSnapshot.instantRoamingSpeed,
+    localDensity: agentSnapshot.localDensity,
+    crowded: agentSnapshot.crowded,
+    crowdingVectorMagnitude: agentSnapshot.crowdingVectorMagnitude,
+    wallAvoidanceMagnitude: agentSnapshot.wallAvoidanceMagnitude,
+    nearestClusterId: agentSnapshot.nearestClusterId,
+    nearestClusterDistance: agentSnapshot.nearestClusterDistance,
+    candidateSelectionEnabled: spatialAnalysis.config.candidateSelectionEnabled,
+    evaluatedCandidateCount: candidateSelection?.evaluatedCandidateCount,
+    selectedCandidateId: candidateSelection?.selectedCandidateId,
+    candidateScores: candidateSelection?.candidateScores,
+    currentCluster: currentClusterSnapshot
+      ? {
+          velocity: currentClusterSnapshot.velocity,
+          speed: currentClusterSnapshot.speed,
+          nearestClusterId: currentClusterSnapshot.nearestClusterId,
+          nearestClusterDistance: currentClusterSnapshot.nearestClusterDistance,
+          overlapping: currentClusterSnapshot.overlapping,
+          nearWall: currentClusterSnapshot.nearWall,
+        }
+      : undefined,
+  };
+}
+
 function buildInspection(
   agent: Agent,
   state: SimulationState,
   params: SimParams,
   phase4: Phase4Context,
+  spatialAnalysis: StandingPartySpatialAnalysis,
 ): ObserverJoinerInspection {
   const candidate = nearestCandidate(agent, state.groupCandidates);
   const speechHistory = buildSpeechHistory(agent.id, state.speechLog ?? []);
@@ -473,12 +608,18 @@ function buildInspection(
   const currentGroup = currentGroupId
     ? state.groupCandidates.find((c) => c.id === currentGroupId)
     : undefined;
+  const formationPolicy =
+    state.formationScenarioId === "standingParty"
+      ? getFormationPolicyById(state.formationScenarioId, state.formationDeadlineTick, state.formationClassroomGroupSize)
+      : undefined;
   const currentGroupPolicy = currentGroup
-    ? getFormationPolicyById(state.formationScenarioId ?? "afterParty", state.formationDeadlineTick, state.formationClassroomGroupSize)
+    ? (formationPolicy ??
+      getFormationPolicyById(state.formationScenarioId ?? "afterParty", state.formationDeadlineTick, state.formationClassroomGroupSize))
     : undefined;
   const departureDecision = buildClusterDepartureDecisionSnapshot(agent, state);
   const lastClusterExit = buildLastClusterExitSnapshot(agent, state);
   const transitionDecision = buildClusterTransitionDecisionSnapshot(agent, state, params, currentGroup, currentGroupPolicy);
+  const spatial = buildSpatialSnapshot(agent, state, params, spatialAnalysis, formationPolicy, currentGroupId);
 
   return {
     agentId: agent.id,
@@ -560,6 +701,7 @@ function buildInspection(
     lastFailureTick: lastFailure?.tick,
     pendingTransition: buildPendingTransitionSnapshot(agent, state),
     lastTransitionInvalidation: buildLastTransitionInvalidationSnapshot(agent, state),
+    spatial,
   };
 }
 
@@ -569,7 +711,11 @@ function buildInspection(
  */
 export function buildAgentInspection(state: SimulationState, params: SimParams): ObserverJoinerInspection[] {
   const phase4 = buildPhase4Context(state, params);
-  return state.agents.map((agent) => buildInspection(agent, state, params, phase4));
+  const spatialAnalysis = buildStandingPartySpatialAnalysis(
+    state,
+    (state.standingPartyConfig ?? DEFAULT_STANDING_PARTY_SCENARIO_CONFIG).spatialDynamics,
+  );
+  return state.agents.map((agent) => buildInspection(agent, state, params, phase4, spatialAnalysis));
 }
 
 /**
@@ -582,7 +728,11 @@ export function buildObserverJoinerInspection(
   params: SimParams,
 ): ObserverJoinerInspection[] {
   const phase4 = buildPhase4Context(state, params);
+  const spatialAnalysis = buildStandingPartySpatialAnalysis(
+    state,
+    (state.standingPartyConfig ?? DEFAULT_STANDING_PARTY_SCENARIO_CONFIG).spatialDynamics,
+  );
   return state.agents
     .filter((agent) => agent.isObserverJoiner)
-    .map((agent) => buildInspection(agent, state, params, phase4));
+    .map((agent) => buildInspection(agent, state, params, phase4, spatialAnalysis));
 }

@@ -120,6 +120,10 @@ function SimulationApp({ scenario }: Props) {
     presentation,
   );
   const [running, setRunning] = useState(false);
+  // Issue #251 (Phase 6): Canvas上のdebug/diagnostic overlay(cluster velocity・roaming heading・
+  // 計測専用occupancy gridの簡易overlay)の表示切替。read-only表示専用のUI stateであり、
+  // simulation state・RNG・event列には一切影響しない(既定false、要件5節)。
+  const [showSpatialDiagnostics, setShowSpatialDiagnostics] = useState(false);
   // Issue #98/#119: 状態ログ・observerJoiner Inspector・CanvasでPhase 3(発言効果)およびPhase 4
   // (本心/建前の乖離・動的trust・関係性補正)の因果を確認できるようにするため、ここでまとめて
   // デフォルト有効化する。以後のstepSimulation呼び出しは各`*Enabled`フラグをstateから引き継ぐ
@@ -432,6 +436,17 @@ function SimulationApp({ scenario }: Props) {
         </aside>
 
         <section className="center-stage">
+          {presentation.id === "standingParty" && (
+            <label className="field checkbox-field spatial-diagnostics-toggle">
+              <input
+                type="checkbox"
+                checked={showSpatialDiagnostics}
+                onChange={(e) => setShowSpatialDiagnostics(e.target.checked)}
+                data-testid="spatial-diagnostics-toggle"
+              />
+              <span>空間diagnostics overlayを表示(cluster velocity・roaming heading・計測用grid)</span>
+            </label>
+          )}
           <SimulationCanvas
             agents={simState.agents}
             groupCandidates={simState.groupCandidates}
@@ -446,6 +461,8 @@ function SimulationApp({ scenario }: Props) {
             selectedAgentId={selectedAgentId}
             selectedClusterId={presentation.id === "standingParty" ? selectedClusterId : undefined}
             clusterTopics={canvasClusterTopics}
+            showSpatialDiagnostics={presentation.id === "standingParty" && showSpatialDiagnostics}
+            spatialRuntimeState={simState.spatialRuntimeState}
           />
         </section>
 

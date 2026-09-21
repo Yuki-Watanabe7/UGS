@@ -167,3 +167,26 @@ describe("StandingPartyAnalyticsDashboard (Issue #217)", () => {
     expect(html).toContain("友人数や人気ではありません");
   });
 });
+
+describe("StandingPartyAnalyticsDashboard: Spatial Dynamics section (Issue #251, Phase 6)", () => {
+  it("shows a non-evaluative disabled message when spatialDynamics is off (default)", () => {
+    const html = renderDashboard(makeState());
+    expect(html).toContain('data-testid="analytics-spatial-overview"');
+    expect(html).toContain("Spatial Dynamicsは現在無効です");
+  });
+
+  it("shows spatial coverage/radius-of-gyration and distribution boxes when spatialDynamics is enabled", () => {
+    const html = renderDashboard(makeState(), {
+      standingPartyConfig: {
+        ...DEFAULT_STANDING_PARTY_SCENARIO_CONFIG,
+        spatialDynamics: { ...DEFAULT_STANDING_PARTY_SCENARIO_CONFIG.spatialDynamics, enabled: true },
+      },
+    });
+    expect(html).toContain("spatial coverage");
+    expect(html).toContain("社交性・人気・良し悪しを表すものではありません");
+    expect(html).toContain('data-testid="analytics-spatial-cluster-distance-dist"');
+    expect(html).toContain('data-testid="analytics-spatial-density-dist"');
+    expect(html).toContain('data-testid="analytics-spatial-breakdown"');
+  });
+
+});

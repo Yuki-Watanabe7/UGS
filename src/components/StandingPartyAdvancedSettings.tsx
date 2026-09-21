@@ -1,4 +1,5 @@
 import type { StandingPartyScenarioConfig } from "../simulation/standingPartyScenarioConfig";
+import type { SpatialDynamicsConfig } from "../simulation/spatialDynamics";
 
 type Props = {
   config: StandingPartyScenarioConfig;
@@ -425,6 +426,489 @@ const TRANSITION_FIELDS: NumberFieldDef[] = [
   },
 ];
 
+/** `spatialDynamics`の単一fieldをsetする定型ヘルパー(相互制約のあるfieldは個別にoverrideする) */
+function setSpatial(
+  c: StandingPartyScenarioConfig,
+  patch: Partial<SpatialDynamicsConfig>,
+): StandingPartyScenarioConfig {
+  return { ...c, spatialDynamics: { ...c.spatialDynamics, ...patch } };
+}
+
+/**
+ * Issue #251 (Phase 6): Spatial Dynamics全体・成分別の有効/無効(`enabled`は#247〜#250実装済みの
+ * runtimeを一括で起動する既定false のmaster switch。残り4つは成分単位の切替で、`enabled: true`でも
+ * 個別にfalseにすればその成分だけ従来挙動に戻る、ADR§9.1の設計をそのまま踏襲)。
+ */
+const SPATIAL_DYNAMICS_BOOLEAN_FIELDS: BooleanFieldDef[] = [
+  {
+    key: "spatialDynamicsEnabled",
+    label: "Spatial Dynamicsを有効にする",
+    description:
+      "オフ(既定)の間はcluster斥力・persistent roaming・crowding avoidance・候補選択の一般化を" +
+      "一切実行せず、Phase 5までの空間挙動(state・event・PRNG系列)をそのまま保つ。",
+    get: (c) => c.spatialDynamics.enabled,
+    set: (c, v) => setSpatial(c, { enabled: v }),
+  },
+  {
+    key: "clusterRepulsionEnabled",
+    label: "cluster間斥力を有効にする",
+    description: "オフにすると、Spatial Dynamics有効時でもcluster中心はwall avoidanceのみで動く。",
+    get: (c) => c.spatialDynamics.clusterRepulsionEnabled,
+    set: (c, v) => setSpatial(c, { clusterRepulsionEnabled: v }),
+  },
+  {
+    key: "roamingEnabled",
+    label: "persistent roamingを有効にする",
+    description: "オフにすると、undecided(再探索中を含む)agentは従来どおり毎tick独立のランダムwalkで動く。",
+    get: (c) => c.spatialDynamics.roamingEnabled,
+    set: (c, v) => setSpatial(c, { roamingEnabled: v }),
+  },
+  {
+    key: "crowdingEnabled",
+    label: "crowding avoidanceを有効にする",
+    description: "オフにすると、roaming移動から局所混雑を避ける寄与が消える(roaming自体は残る)。",
+    get: (c) => c.spatialDynamics.crowdingEnabled,
+    set: (c, v) => setSpatial(c, { crowdingEnabled: v }),
+  },
+  {
+    key: "candidateSelectionEnabled",
+    label: "候補選択の一般化を有効にする",
+    description:
+      "オフ(既定)の間は通常の再探索が最寄り1件(nearestCandidate)だけを評価する。オンにすると、" +
+      "観察半径内の候補を列挙し総合scoreが最大のものへ向かう(pendingClusterTransitionの優先契約は変更しない)。",
+    get: (c) => c.spatialDynamics.candidateSelectionEnabled,
+    set: (c, v) => setSpatial(c, { candidateSelectionEnabled: v }),
+  },
+];
+
+/** Issue #251: cluster間斥力・wall avoidance・member追従(#247)の設定項目 */
+const SPATIAL_CLUSTER_FIELDS: NumberFieldDef[] = [
+  {
+    key: "repulsionRadius",
+    label: "cluster間斥力の有効range",
+    description: "この距離以上離れたconfirmed cluster対には斥力の寄与が厳密に0になる。",
+    unit: "px",
+    min: 40,
+    max: 300,
+    step: 10,
+    decimals: 0,
+    get: (c) => c.spatialDynamics.repulsionRadius,
+    set: (c, v) => setSpatial(c, { repulsionRadius: v, preferredClusterSeparation: Math.min(c.spatialDynamics.preferredClusterSeparation, v) }),
+  },
+  {
+    key: "preferredClusterSeparation",
+    label: "望ましいcluster間隔",
+    description: "この距離未満では、線形減衰に加えて追加のより強い押し離しが働く(cluster間斥力の有効range以下)。",
+    unit: "px",
+    min: 20,
+    max: 300,
+    step: 10,
+    decimals: 0,
+    get: (c) => c.spatialDynamics.preferredClusterSeparation,
+    set: (c, v) => setSpatial(c, { preferredClusterSeparation: Math.min(v, c.spatialDynamics.repulsionRadius) }),
+  },
+  {
+    key: "repulsionStrength",
+    label: "cluster間斥力の強さ",
+    description: "cluster間斥力の寄与の基準値。大きいほど近いcluster同士が強く押し離される。",
+    min: 0,
+    max: 4,
+    step: 0.1,
+    decimals: 1,
+    get: (c) => c.spatialDynamics.repulsionStrength,
+    set: (c, v) => setSpatial(c, { repulsionStrength: v }),
+  },
+  {
+    key: "damping",
+    label: "cluster移動のdamping",
+    description: "前tickのvelocityをどれだけ持ち越すか。大きいほど押し合いが振動として持続しやすい([0,1)に固定)。",
+    min: 0,
+    max: 0.9,
+    step: 0.05,
+    decimals: 2,
+    get: (c) => c.spatialDynamics.damping,
+    set: (c, v) => setSpatial(c, { damping: v }),
+  },
+  {
+    key: "maxClusterCenterSpeed",
+    label: "cluster中心の最大移動速度",
+    description: "1tickでcluster中心が動ける最大距離。大きすぎるとjoined memberの追従が追いつかなくなる。",
+    unit: "px/tick",
+    min: 0.5,
+    max: 10,
+    step: 0.5,
+    decimals: 1,
+    get: (c) => c.spatialDynamics.maxClusterCenterSpeed,
+    set: (c, v) => setSpatial(c, { maxClusterCenterSpeed: v, maxMemberFollowStep: Math.min(c.spatialDynamics.maxMemberFollowStep, v) }),
+  },
+  {
+    key: "maxMemberFollowStep",
+    label: "joined memberの最大追従速度",
+    description: "cluster中心が動いた分に、joined memberが1tickで追従できる最大距離(中心の最大移動速度以下)。",
+    unit: "px/tick",
+    min: 0.5,
+    max: 10,
+    step: 0.5,
+    decimals: 1,
+    get: (c) => c.spatialDynamics.maxMemberFollowStep,
+    set: (c, v) => setSpatial(c, { maxMemberFollowStep: Math.min(v, c.spatialDynamics.maxClusterCenterSpeed) }),
+  },
+  {
+    key: "overlapThreshold",
+    label: "cluster重複/過密の診断閾値",
+    description: "中心間距離がこの値未満のcluster対を「重複/過密」と診断する(斥力の計算自体には使わない)。",
+    unit: "px",
+    min: 10,
+    max: 200,
+    step: 5,
+    decimals: 0,
+    get: (c) => c.spatialDynamics.overlapThreshold,
+    set: (c, v) => setSpatial(c, { overlapThreshold: v }),
+  },
+  {
+    key: "wallAvoidanceDistance",
+    label: "cluster側wall avoidanceの効き始め距離",
+    description: "会場の境界からこの距離以内にいるcluster中心を、内側へ滑らかに押し戻し始める。",
+    unit: "px",
+    min: 5,
+    max: 100,
+    step: 5,
+    decimals: 0,
+    get: (c) => c.spatialDynamics.wallAvoidanceDistance,
+    set: (c, v) => setSpatial(c, { wallAvoidanceDistance: v }),
+  },
+  {
+    key: "wallAvoidanceStrength",
+    label: "cluster側wall avoidanceの強さ",
+    description: "境界に近いcluster中心を内側へ押し戻す寄与の基準値。",
+    min: 0,
+    max: 4,
+    step: 0.1,
+    decimals: 1,
+    get: (c) => c.spatialDynamics.wallAvoidanceStrength,
+    set: (c, v) => setSpatial(c, { wallAvoidanceStrength: v }),
+  },
+  {
+    key: "wallMaxContribution",
+    label: "cluster側wall avoidanceの寄与上限",
+    description: "角(2辺が同時に近い)でも寄与が発散しないよう頭打ちにする上限。",
+    min: 0.5,
+    max: 10,
+    step: 0.5,
+    decimals: 1,
+    get: (c) => c.spatialDynamics.wallMaxContribution,
+    set: (c, v) => setSpatial(c, { wallMaxContribution: v }),
+  },
+];
+
+/** Issue #251: undecided agentのpersistent roaming + agent側wall avoidance(#248)の設定項目 */
+const SPATIAL_ROAMING_FIELDS: NumberFieldDef[] = [
+  {
+    key: "roamingSpeed",
+    label: "roamingの基準速度",
+    description: "headingを保持している間の移動速度の基準値。",
+    unit: "px/tick",
+    min: 0.5,
+    max: 10,
+    step: 0.5,
+    decimals: 1,
+    get: (c) => c.spatialDynamics.roamingSpeed,
+    set: (c, v) => setSpatial(c, { roamingSpeed: v }),
+  },
+  {
+    key: "roamingHeadingHoldTicksMin",
+    label: "headingの維持tick数(下限)",
+    description: "この tick数の間は同じ向きを維持してから、前回headingからの小さな摂動として更新する(下限)。",
+    unit: "tick",
+    min: 1,
+    max: 60,
+    step: 1,
+    decimals: 0,
+    get: (c) => c.spatialDynamics.roamingHeadingHoldTicksMin,
+    set: (c, v) => setSpatial(c, { roamingHeadingHoldTicksMin: v, roamingHeadingHoldTicksMax: Math.max(c.spatialDynamics.roamingHeadingHoldTicksMax, v) }),
+  },
+  {
+    key: "roamingHeadingHoldTicksMax",
+    label: "headingの維持tick数(上限)",
+    description: "headingを維持するtick数の上限(下限以上)。",
+    unit: "tick",
+    min: 1,
+    max: 60,
+    step: 1,
+    decimals: 0,
+    get: (c) => c.spatialDynamics.roamingHeadingHoldTicksMax,
+    set: (c, v) => setSpatial(c, { roamingHeadingHoldTicksMax: Math.max(v, c.spatialDynamics.roamingHeadingHoldTicksMin) }),
+  },
+  {
+    key: "roamingHeadingNoiseRadians",
+    label: "heading更新時の摂動幅",
+    description: "期限が切れたtickに、前回headingからどれだけ揺らぐか(radians)。全方位への再抽選ではない。",
+    unit: "rad",
+    min: 0,
+    max: Math.PI,
+    step: 0.1,
+    decimals: 2,
+    get: (c) => c.spatialDynamics.roamingHeadingNoiseRadians,
+    set: (c, v) => setSpatial(c, { roamingHeadingNoiseRadians: v }),
+  },
+  {
+    key: "roamingIntensityBase",
+    label: "roaming強度の基準値",
+    description: "社交的回遊傾向を無視した場合のroaming強度([0,1])。",
+    min: 0,
+    max: 1,
+    step: 0.05,
+    decimals: 2,
+    get: (c) => c.spatialDynamics.roamingIntensityBase,
+    set: (c, v) => setSpatial(c, { roamingIntensityBase: v }),
+  },
+  {
+    key: "roamingCirculationWeight",
+    label: "社交的回遊傾向のroaming強度への再利用重み",
+    description: "0にすると、social CirculationTendencyの高低に関わらずroaming強度が全agent一様になる。",
+    min: 0,
+    max: 1,
+    step: 0.05,
+    decimals: 2,
+    get: (c) => c.spatialDynamics.roamingCirculationWeight,
+    set: (c, v) => setSpatial(c, { roamingCirculationWeight: v }),
+  },
+  {
+    key: "agentWallAvoidanceDistance",
+    label: "agent側wall avoidanceの効き始め距離",
+    description: "境界からこの距離以内にいるagentを、内側へ滑らかに押し戻し始める。",
+    unit: "px",
+    min: 5,
+    max: 100,
+    step: 5,
+    decimals: 0,
+    get: (c) => c.spatialDynamics.agentWallAvoidanceDistance,
+    set: (c, v) => setSpatial(c, { agentWallAvoidanceDistance: v }),
+  },
+  {
+    key: "agentWallAvoidanceStrength",
+    label: "agent側wall avoidanceの強さ",
+    description: "境界に近いagentを内側へ押し戻す寄与の基準値。",
+    min: 0,
+    max: 4,
+    step: 0.1,
+    decimals: 1,
+    get: (c) => c.spatialDynamics.agentWallAvoidanceStrength,
+    set: (c, v) => setSpatial(c, { agentWallAvoidanceStrength: v }),
+  },
+  {
+    key: "agentWallMaxContribution",
+    label: "agent側wall avoidanceの寄与上限",
+    description: "角でも寄与が発散しないよう頭打ちにする上限。",
+    min: 0.5,
+    max: 10,
+    step: 0.5,
+    decimals: 1,
+    get: (c) => c.spatialDynamics.agentWallMaxContribution,
+    set: (c, v) => setSpatial(c, { agentWallMaxContribution: v }),
+  },
+  {
+    key: "maxAgentSpeed",
+    label: "roaming合成後の最大移動速度",
+    description: "roaming + crowding avoidance + wall avoidanceを合成した後の、1tickあたりの最大移動量。",
+    unit: "px/tick",
+    min: 1,
+    max: 20,
+    step: 0.5,
+    decimals: 1,
+    get: (c) => c.spatialDynamics.maxAgentSpeed,
+    set: (c, v) => setSpatial(c, { maxAgentSpeed: v }),
+  },
+];
+
+/** Issue #251: 局所crowding avoidance(#249)の設定項目 */
+const SPATIAL_CROWDING_FIELDS: NumberFieldDef[] = [
+  {
+    key: "crowdSampleRadius",
+    label: "crowding fieldの近傍探索範囲",
+    description: "この距離以上離れたagent/cluster中心は混雑の寄与に数えない。",
+    unit: "px",
+    min: 10,
+    max: 200,
+    step: 5,
+    decimals: 0,
+    get: (c) => c.spatialDynamics.crowdSampleRadius,
+    set: (c, v) => setSpatial(c, { crowdSampleRadius: v }),
+  },
+  {
+    key: "crowdSampleDirections",
+    label: "方向サンプリング数",
+    description: "周囲を何方向へ扇形サンプリングするか。多いほど滑らかだが計算量が増える。",
+    unit: "方向",
+    min: 4,
+    max: 16,
+    step: 1,
+    decimals: 0,
+    get: (c) => c.spatialDynamics.crowdSampleDirections,
+    set: (c, v) => setSpatial(c, { crowdSampleDirections: v }),
+  },
+  {
+    key: "crowdDensityThreshold",
+    label: "混雑とみなす局所密度の閾値",
+    description: "この値以下の局所密度では寄与が厳密に0になる。超過分だけ滑らかに寄与が増える。",
+    min: 0,
+    max: 6,
+    step: 0.1,
+    decimals: 1,
+    get: (c) => c.spatialDynamics.crowdDensityThreshold,
+    set: (c, v) => setSpatial(c, { crowdDensityThreshold: v }),
+  },
+  {
+    key: "crowdRepulsionStrength",
+    label: "crowding avoidanceの強さ",
+    description: "閾値超過分に対する押し出しの強さの基準値。",
+    min: 0,
+    max: 4,
+    step: 0.1,
+    decimals: 1,
+    get: (c) => c.spatialDynamics.crowdRepulsionStrength,
+    set: (c, v) => setSpatial(c, { crowdRepulsionStrength: v }),
+  },
+  {
+    key: "crowdMaxContribution",
+    label: "crowding avoidanceの寄与上限",
+    description: "crowding由来の押し出しvectorの大きさの上限。",
+    min: 0.5,
+    max: 10,
+    step: 0.5,
+    decimals: 1,
+    get: (c) => c.spatialDynamics.crowdMaxContribution,
+    set: (c, v) => setSpatial(c, { crowdMaxContribution: v }),
+  },
+  {
+    key: "crowdClusterCenterWeight",
+    label: "cluster中心1つあたりの密度重み",
+    description: "輪は点でなく面を占めるため、cluster中心1つをagent何人分として密度に数えるか。",
+    min: 0,
+    max: 5,
+    step: 0.1,
+    decimals: 1,
+    get: (c) => c.spatialDynamics.crowdClusterCenterWeight,
+    set: (c, v) => setSpatial(c, { crowdClusterCenterWeight: v }),
+  },
+];
+
+/** Issue #251: cluster候補選択の一般化(#250)の設定項目 */
+const SPATIAL_CANDIDATE_SELECTION_FIELDS: NumberFieldDef[] = [
+  {
+    key: "candidateSelectionObservationRadius",
+    label: "通常探索の観察半径",
+    description: "この距離を超えるclusterは候補として列挙されない。",
+    unit: "px",
+    min: 50,
+    max: 500,
+    step: 10,
+    decimals: 0,
+    get: (c) => c.spatialDynamics.candidateSelectionObservationRadius,
+    set: (c, v) => setSpatial(c, { candidateSelectionObservationRadius: v }),
+  },
+  {
+    key: "candidateSelectionMaxObserved",
+    label: "評価対象の上限件数",
+    description: "観察半径内の候補が多い場合に、距離昇順で評価対象を打ち切る上限。",
+    unit: "件",
+    min: 1,
+    max: 30,
+    step: 1,
+    decimals: 0,
+    get: (c) => c.spatialDynamics.candidateSelectionMaxObserved,
+    set: (c, v) => setSpatial(c, { candidateSelectionMaxObserved: v }),
+  },
+  {
+    key: "candidateSelectionMinScore",
+    label: "候補として成立する最低score",
+    description: "この値未満なら、best candidateがあっても「候補なし」としてroamingを継続する。",
+    min: 0,
+    max: 1,
+    step: 0.05,
+    decimals: 2,
+    get: (c) => c.spatialDynamics.candidateSelectionMinScore,
+    set: (c, v) => setSpatial(c, { candidateSelectionMinScore: v }),
+  },
+  {
+    key: "candidateSelectionSocialWeight",
+    label: "既存attractivenessの重み",
+    description: "総合scoreにおける既存の社会的魅力度の重み。既定で最大にし、空間項が社会的評価を上書きしないようにする。",
+    min: 0,
+    max: 1,
+    step: 0.05,
+    decimals: 2,
+    get: (c) => c.spatialDynamics.candidateSelectionSocialWeight,
+    set: (c, v) => setSpatial(c, { candidateSelectionSocialWeight: v }),
+  },
+  {
+    key: "candidateSelectionDistanceWeight",
+    label: "距離factorの重み",
+    description: "総合scoreにおける、近さそのものの重み。",
+    min: 0,
+    max: 1,
+    step: 0.05,
+    decimals: 2,
+    get: (c) => c.spatialDynamics.candidateSelectionDistanceWeight,
+    set: (c, v) => setSpatial(c, { candidateSelectionDistanceWeight: v }),
+  },
+  {
+    key: "candidateSelectionAlternativeInterestWeight",
+    label: "既知member・clique適合の重み",
+    description: "総合scoreにおける、既知participant・clique適合(Phase 3の成分)の重み。",
+    min: 0,
+    max: 1,
+    step: 0.05,
+    decimals: 2,
+    get: (c) => c.spatialDynamics.candidateSelectionAlternativeInterestWeight,
+    set: (c, v) => setSpatial(c, { candidateSelectionAlternativeInterestWeight: v }),
+  },
+  {
+    key: "candidateSelectionTopicOpportunityWeight",
+    label: "topic機会の重み",
+    description: "総合scoreにおける、topic/情報機会(Phase 5)の重み。Phase 5が無効なら常に寄与0。",
+    min: 0,
+    max: 1,
+    step: 0.05,
+    decimals: 2,
+    get: (c) => c.spatialDynamics.candidateSelectionTopicOpportunityWeight,
+    set: (c, v) => setSpatial(c, { candidateSelectionTopicOpportunityWeight: v }),
+  },
+  {
+    key: "candidateSelectionExplorationWeight",
+    label: "空間探索bonusの重み",
+    description: "まだ行っていない閑散地域にある候補への小さな加点の重み。",
+    min: 0,
+    max: 1,
+    step: 0.05,
+    decimals: 2,
+    get: (c) => c.spatialDynamics.candidateSelectionExplorationWeight,
+    set: (c, v) => setSpatial(c, { candidateSelectionExplorationWeight: v }),
+  },
+  {
+    key: "candidateSelectionCooldownPenalty",
+    label: "直近離脱/失敗候補への残存penalty",
+    description: "cooldown期間が過ぎた直後、同一候補であること自体への弱い減点。",
+    min: 0,
+    max: 1,
+    step: 0.05,
+    decimals: 2,
+    get: (c) => c.spatialDynamics.candidateSelectionCooldownPenalty,
+    set: (c, v) => setSpatial(c, { candidateSelectionCooldownPenalty: v }),
+  },
+  {
+    key: "candidateSelectionCrowdingPenalty",
+    label: "候補周辺の混雑penalty",
+    description: "候補周辺の局所密度が高い場合の減点。",
+    min: 0,
+    max: 1,
+    step: 0.05,
+    decimals: 2,
+    get: (c) => c.spatialDynamics.candidateSelectionCrowdingPenalty,
+    set: (c, v) => setSpatial(c, { candidateSelectionCrowdingPenalty: v }),
+  },
+];
+
 /**
  * standingParty選択時だけ表示する、Phase 2(会話満足度・クラスタ離脱判定・社交的回遊傾向分布)の
  * 詳細設定パネル。設定項目数が多いため常時展開せず`<details>`で折りたたむ(既存UI密度方針)。
@@ -524,6 +1008,33 @@ export function StandingPartyAdvancedSettings({ config, onConfigChange, hasPendi
         </summary>
         {renderBooleanFields(TRANSITION_BOOLEAN_FIELDS, config, onConfigChange)}
         {renderNumberFields(TRANSITION_FIELDS, config, onConfigChange)}
+      </details>
+      <details className="standing-party-advanced-settings-details">
+        <summary>
+          Spatial Dynamics 有効化(Phase 6、{SPATIAL_DYNAMICS_BOOLEAN_FIELDS.length}項目)
+        </summary>
+        <p className="standing-party-advanced-settings-note">
+          cluster間斥力・agentの回遊・局所混雑回避は、会話への凝集(attractiveness)と釣り合う空間的な
+          広がりの仮説モデルです。spatial coverageが高いこと自体を良い結果として評価するものではなく、
+          cluster間斥力は会話の良し悪しを、crowding avoidanceは人への嫌悪を表すものではありません。
+        </p>
+        {renderBooleanFields(SPATIAL_DYNAMICS_BOOLEAN_FIELDS, config, onConfigChange)}
+      </details>
+      <details className="standing-party-advanced-settings-details">
+        <summary>cluster空間力学(Phase 6、{SPATIAL_CLUSTER_FIELDS.length}項目)</summary>
+        {renderNumberFields(SPATIAL_CLUSTER_FIELDS, config, onConfigChange)}
+      </details>
+      <details className="standing-party-advanced-settings-details">
+        <summary>persistent roaming(Phase 6、{SPATIAL_ROAMING_FIELDS.length}項目)</summary>
+        {renderNumberFields(SPATIAL_ROAMING_FIELDS, config, onConfigChange)}
+      </details>
+      <details className="standing-party-advanced-settings-details">
+        <summary>局所crowding avoidance(Phase 6、{SPATIAL_CROWDING_FIELDS.length}項目)</summary>
+        {renderNumberFields(SPATIAL_CROWDING_FIELDS, config, onConfigChange)}
+      </details>
+      <details className="standing-party-advanced-settings-details">
+        <summary>候補選択の一般化(Phase 6、{SPATIAL_CANDIDATE_SELECTION_FIELDS.length}項目)</summary>
+        {renderNumberFields(SPATIAL_CANDIDATE_SELECTION_FIELDS, config, onConfigChange)}
       </details>
     </div>
   );

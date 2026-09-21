@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ObserverJoinerInspector } from "./ObserverJoinerInspector";
 import { createSpeechEvent } from "../simulation/speech";
 import { DEFAULT_PARAMS } from "../simulation/presets";
+import { DEFAULT_STANDING_PARTY_SCENARIO_CONFIG } from "../simulation/standingPartyScenarioConfig";
 import type { Agent, SimulationState } from "../simulation/types";
 
 function makeAgent(overrides: Partial<Agent>): Agent {
@@ -348,5 +349,78 @@ describe("ObserverJoinerInspector standingParty Phase 3 sections (Issue #202)", 
 
     expect(html).toContain("向かっていた輪が満員になった");
     expect(html).toContain("通常の再探索へ切替済み");
+  });
+});
+
+describe("ObserverJoinerInspector spatial diagnostics (Issue #251, Phase 6)", () => {
+  it("shows a non-fabricated empty state when Spatial Dynamics is disabled", () => {
+    const agent = makeAgent({ id: "agent-x", label: "X", state: "undecided" });
+    const html = render(makeState({ formationScenarioId: "standingParty", agents: [agent] }));
+
+    expect(html).toContain("空間diagnostics(Phase 6)");
+    expect(html).toContain("Spatial Dynamicsは現在無効です");
+  });
+
+  it("renders roaming/crowding/wall avoidance diagnostics when Spatial Dynamics is enabled", () => {
+    const agent = makeAgent({ id: "agent-x", label: "X", state: "undecided", x: 100, y: 100 });
+    const html = render(
+      makeState({
+        formationScenarioId: "standingParty",
+        agents: [agent],
+        spatialRuntimeState: { clusterVelocity: {}, roaming: { "agent-x": { headingRadians: 0, expiresAtTick: 20 } } },
+        standingPartyConfig: {
+          ...DEFAULT_STANDING_PARTY_SCENARIO_CONFIG,
+          spatialDynamics: { ...DEFAULT_STANDING_PARTY_SCENARIO_CONFIG.spatialDynamics, enabled: true },
+        },
+      }),
+    );
+
+    expect(html).toContain("回遊中");
+    expect(html).toContain("局所密度(周辺人数)");
+    expect(html).toContain("crowding avoidanceの大きさ");
+    expect(html).toContain("wall avoidanceの大きさ");
+  });
+
+  it("renders evaluated candidate count and selected candidate when candidate selection is enabled", () => {
+    const agent = makeAgent({ id: "agent-x", label: "X", state: "undecided", x: 100, y: 100 });
+    const candidate = { id: "group-1", x: 120, y: 100, memberIds: [], status: "confirmed" as const, age: 3 };
+    const html = render(
+      makeState({
+        formationScenarioId: "standingParty",
+        agents: [agent],
+        groupCandidates: [candidate],
+        standingPartyConfig: {
+          ...DEFAULT_STANDING_PARTY_SCENARIO_CONFIG,
+          spatialDynamics: {
+            ...DEFAULT_STANDING_PARTY_SCENARIO_CONFIG.spatialDynamics,
+            enabled: true,
+            candidateSelectionEnabled: true,
+          },
+        },
+      }),
+    );
+
+    expect(html).toContain("評価した候補数 / 選択された候補");
+    expect(html).toContain("候補ごとのscore内訳");
+    expect(html).toContain("group-1");
+  });
+
+  it("renders the joined agent's current cluster spatial diagnostics", () => {
+    const agent = makeAgent({ id: "agent-x", label: "X", state: "joined", joinedGroupId: "group-1", x: 100, y: 100 });
+    const candidate = { id: "group-1", x: 100, y: 100, memberIds: ["agent-x"], status: "confirmed" as const, age: 3 };
+    const html = render(
+      makeState({
+        formationScenarioId: "standingParty",
+        agents: [agent],
+        groupCandidates: [candidate],
+        standingPartyConfig: {
+          ...DEFAULT_STANDING_PARTY_SCENARIO_CONFIG,
+          spatialDynamics: { ...DEFAULT_STANDING_PARTY_SCENARIO_CONFIG.spatialDynamics, enabled: true },
+        },
+      }),
+    );
+
+    expect(html).toContain("所属clusterの空間diagnostics");
+    expect(html).toContain("診断: 重複/過密・壁際");
   });
 });

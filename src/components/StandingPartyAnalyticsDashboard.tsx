@@ -15,6 +15,7 @@ import {
   buildStandingPartyConversationHistory,
   buildStandingPartyRunStatistics,
 } from "../simulation/standingPartyAnalysis";
+import { buildStandingPartySpatialAnalysis } from "../simulation/spatialAnalysis";
 import type { StandingPartyScenarioConfig } from "../simulation/standingPartyScenarioConfig";
 import type {
   ClusterLifetimeEndReason,
@@ -263,6 +264,15 @@ export function StandingPartyAnalyticsDashboard({
 
   const run = statistics.run;
   const oj = statistics.observerJoinerComparison;
+
+  // Issue #251 (Phase 6): spatialAnalysisは現在tickのread-onlyスナップショット(spatialAnalysis.ts参照)。
+  // 既存のepisode/contact由来統計(`statistics`)とは独立に導出する。
+  const spatialAnalysis = useMemo(
+    () => buildStandingPartySpatialAnalysis(state, standingPartyConfig.spatialDynamics),
+    [state, standingPartyConfig.spatialDynamics],
+  );
+  const spatial = spatialAnalysis.snapshot;
+  const roamingAgents = spatialAnalysis.agents.filter((agent) => agent.roamingActive);
 
   const actionTotals = useMemo(() => {
     let explore = 0;
@@ -589,6 +599,26 @@ export function StandingPartyAnalyticsDashboard({
           <h4>会場退出</h4>
           <p>{run.venueExitCount} 人</p>
         </article>
+        <article className="analytics-card" data-testid="analytics-spatial-overview">
+          <h4>空間ダイナミクス(Phase 6)</h4>
+          {spatialAnalysis.spatialDynamicsEnabled ? (
+            <>
+              <p>
+                spatial coverage: {formatRate(spatial.occupiedCells)} / active cluster{" "}
+                {spatial.activeClusterCount}
+              </p>
+              <p>
+                radius of gyration: {spatial.radiusOfGyration !== undefined ? formatNumber(spatial.radiusOfGyration) : "非該当"}{" "}
+                / 混雑cell率: {formatRate(spatial.overCrowdedCellRate)}
+              </p>
+              <p className="analytics-card-hint">
+                数値は空間の広がりの記述統計であり、社交性・人気・良し悪しを表すものではありません。
+              </p>
+            </>
+          ) : (
+            <p className="analytics-empty">Spatial Dynamicsは現在無効です(詳細設定で有効化できます)。</p>
+          )}
+        </article>
       </section>
 
       {viewMode === "charts" ? (
@@ -624,6 +654,42 @@ export function StandingPartyAnalyticsDashboard({
             unit="人"
             testId="analytics-cluster-peak-dist"
           />
+          <DistributionBox
+            title="cluster間最近接距離分布(Phase 6)"
+            summary={spatial.clusterNearestNeighborDistance}
+            unit="px"
+            testId="analytics-spatial-cluster-distance-dist"
+          />
+          <DistributionBox
+            title="agent局所密度分布(Phase 6)"
+            summary={spatial.localDensity}
+            unit="人 (crowdSampleRadius内・同cluster除く)"
+            testId="analytics-spatial-density-dist"
+          />
+
+          <section className="analytics-breakdown" data-testid="analytics-spatial-breakdown">
+            <h4 className="analytics-section-title">空間ダイナミクスの内訳(Phase 6)</h4>
+            {spatialAnalysis.spatialDynamicsEnabled ? (
+              <ul>
+                <li>cluster重複/過密率: {formatRate(spatial.clusterOverlapRate)}</li>
+                <li>
+                  回遊中(roaming)agent数: {roamingAgents.length} / 在場agent{spatial.presentAgentCount}人
+                </li>
+                <li>
+                  現在tickのroaming移動量(瞬間値)分布中央値:{" "}
+                  {roamingAgents.length > 0
+                    ? formatNumber(
+                        [...roamingAgents.map((a) => a.instantRoamingSpeed ?? 0)].sort((x, y) => x - y)[
+                          Math.floor(roamingAgents.length / 2)
+                        ],
+                      )
+                    : "非該当"}
+                </li>
+              </ul>
+            ) : (
+              <p className="analytics-empty">Spatial Dynamicsは現在無効です。</p>
+            )}
+          </section>
 
           <section className="analytics-breakdown" data-testid="analytics-motion-breakdown">
             <h4 className="analytics-section-title">移動・葛藤の内訳</h4>
@@ -830,6 +896,47 @@ export function StandingPartyAnalyticsDashboard({
                           : cluster.status === "active"
                             ? "進行中"
                             : "非該当"}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <h4 className="analytics-section-title">cluster空間統計(Phase 6)</h4>
+          <div className="analytics-table-wrap">
+            <table className="analytics-table" data-testid="analytics-spatial-cluster-table">
+              <thead>
+                <tr>
+                  <th scope="col">cluster</th>
+                  <th scope="col">中心速度</th>
+                  <th scope="col">最近接cluster/距離</th>
+                  <th scope="col">診断</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!spatialAnalysis.spatialDynamicsEnabled ? (
+                  <tr>
+                    <td colSpan={4}>Spatial Dynamicsは現在無効です</td>
+                  </tr>
+                ) : spatialAnalysis.clusters.length === 0 ? (
+                  <tr>
+                    <td colSpan={4}>該当clusterなし</td>
+                  </tr>
+                ) : (
+                  spatialAnalysis.clusters.map((cluster) => (
+                    <tr key={cluster.clusterId}>
+                      <td>{cluster.clusterId}</td>
+                      <td>{cluster.speed !== undefined ? formatNumber(cluster.speed) : "-"}</td>
+                      <td>
+                        {cluster.nearestClusterId
+                          ? `${cluster.nearestClusterId}(${formatNumber(cluster.nearestClusterDistance ?? 0)})`
+                          : "-"}
+                      </td>
+                      <td>
+                        {cluster.overlapping ? "重複/過密" : "分散"}
+                        {cluster.nearWall ? "・壁際" : ""}
                       </td>
                     </tr>
                   ))

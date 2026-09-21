@@ -1296,6 +1296,8 @@ export type ObserverJoinerInspection = {
    * 発生していない場合、または現在別のpending transitionを新たに保持している場合はundefined。
    */
   lastTransitionInvalidation?: ObserverTransitionInvalidationSnapshot;
+  /** Issue #251 (Phase 6): 空間diagnostics(standingParty以外は常にundefined) */
+  spatial?: ObserverSpatialSnapshot;
 };
 
 /** Issue #202 (Phase 3): `ObserverJoinerInspection.pendingTransition`の内訳 */
@@ -1319,6 +1321,61 @@ export type ObserverTransitionInvalidationSnapshot = {
   tick: number;
   /** 無効化直後、通常の再探索(`clusterTransitionAbandoned`)へ切り替わったか */
   fallbackStarted: boolean;
+};
+
+/**
+ * Issue #251 (Phase 6): 通常探索時に一般化候補選択(#250)が評価した1候補分のscore内訳。
+ * `clusterSearchSelection.ts`の`ClusterSearchCandidateScore`をそのまま表示用に写す(再計算しない)。
+ */
+export type ObserverSpatialCandidateScore = {
+  clusterId: string;
+  score: number;
+  distance: number;
+  socialAttractiveness: number;
+  alternativeInterest?: number;
+  informationOpportunity?: number;
+  crowdingPenalty?: number;
+  recentVisitPenalty?: number;
+  spatialExplorationBonus?: number;
+};
+
+/**
+ * Issue #251 (Phase 6): agent Inspector向けの空間diagnostics(roaming/crowding/候補選択/所属clusterの
+ * 空間状態)。`spatialAnalysis.ts`の`buildStandingPartySpatialAnalysis`が導出した値をagent 1人分だけ
+ * 写して使う(read-only、SimulationStateは変更しない)。`spatialDynamicsEnabled === false`でも
+ * (afterParty/classroomPairを含め)常にundefinedにはせず、"未計算"であることを`spatialDynamicsEnabled`
+ * で表現する(0で捏造しない既存方針)。
+ */
+export type ObserverSpatialSnapshot = {
+  spatialDynamicsEnabled: boolean;
+  roamingActive: boolean;
+  roamingHeadingRadians?: number;
+  roamingTicksRemaining?: number;
+  roamingIntensity?: number;
+  /** 今tickのroaming移動量(速度)。累積距離ではない(`spatialAnalysis.ts`冒頭コメント参照) */
+  instantRoamingSpeed?: number;
+  /** `crowdSampleRadius`内・同clusterを除く他agent数(重み無し実数) */
+  localDensity: number;
+  crowded: boolean;
+  crowdingVectorMagnitude: number;
+  /** agent側wall avoidance(境界回避)vectorの大きさ。境界から離れていれば0 */
+  wallAvoidanceMagnitude: number;
+  nearestClusterId?: string;
+  nearestClusterDistance?: number;
+  /** 一般化候補選択(#250)が有効な場合のみ埋まる。無効ならundefined(0件を捏造しない) */
+  candidateSelectionEnabled: boolean;
+  evaluatedCandidateCount?: number;
+  selectedCandidateId?: string;
+  candidateScores?: ObserverSpatialCandidateScore[];
+  /** 現在joinしているclusterの空間diagnostics(joinしていなければundefined) */
+  currentCluster?: {
+    velocity?: { vx: number; vy: number };
+    speed?: number;
+    nearestClusterId?: string;
+    nearestClusterDistance?: number;
+    overlapping: boolean;
+    nearWall: boolean;
+  };
 };
 
 /**
