@@ -10,6 +10,8 @@ import {
   TOPIC_SEGMENTED_STANDING_PARTY_CONFIG,
   RUMOR_MUTATION_STANDING_PARTY_CONFIG,
   INFO_SEEKING_STANDING_PARTY_CONFIG,
+  SPATIAL_ROAMING_STANDING_PARTY_CONFIG,
+  SPATIAL_FIXED_BASELINE_STANDING_PARTY_CONFIG,
 } from "./standingPartyScenarioConfig";
 import type { StandingPartyScenarioConfig } from "./standingPartyScenarioConfig";
 
@@ -296,6 +298,48 @@ export const PRESETS: ScenarioPreset[] = [
     },
     formationScenarioId: "standingParty",
     formationStandingPartyConfig: INFO_SEEKING_STANDING_PARTY_CONFIG,
+  },
+  {
+    id: "standing-party-spatial-roaming",
+    name: "立食パーティー(空間回遊あり・分散型)",
+    description:
+      "標準ケースと同じ会場規模・既存の関係性の強さ・Phase 2〜5パラメータのまま、cluster間斥力・" +
+      "persistent roaming・crowding avoidance(Phase 6)をすべて有効にし、通常の再探索も最寄り1件では" +
+      "なく観察半径内の候補を総合scoreで比較する場。会場の複数領域が継続的に利用されやすくなる。" +
+      "「立食パーティー(空間固定に近い比較基準)」と同一seedでpaired比較することで、" +
+      "空間ダイナミクスだけの差を観察できる。「良い/悪いパーティー」を意味する名称ではない。",
+    params: {
+      ...DEFAULT_PARAMS,
+      populationSize: 24,
+      groupConfirmSize: 3,
+      numLeaders: 4,
+      overallWillingness: 0.65,
+      lateJoinEase: 0.5,
+      existingTieStrength: 0.25,
+    },
+    formationScenarioId: "standingParty",
+    formationStandingPartyConfig: SPATIAL_ROAMING_STANDING_PARTY_CONFIG,
+  },
+  {
+    id: "standing-party-spatial-fixed-baseline",
+    name: "立食パーティー(空間固定に近い比較基準)",
+    description:
+      "標準ケースと同じ会場規模・既存の関係性の強さ・Phase 2〜5パラメータのまま、Phase 6の" +
+      "空間ダイナミクス(cluster間斥力・persistent roaming・crowding avoidance・候補選択の一般化)を" +
+      "すべて無効化した、Phase 5までの空間挙動に近い比較基準。" +
+      "「立食パーティー(空間回遊あり・分散型)」と同一seedでpaired比較するための基準線であり、" +
+      "単独では既定の「立食パーティー」プリセットと同じ挙動になる。",
+    params: {
+      ...DEFAULT_PARAMS,
+      populationSize: 24,
+      groupConfirmSize: 3,
+      numLeaders: 4,
+      overallWillingness: 0.65,
+      lateJoinEase: 0.5,
+      existingTieStrength: 0.25,
+    },
+    formationScenarioId: "standingParty",
+    formationStandingPartyConfig: SPATIAL_FIXED_BASELINE_STANDING_PARTY_CONFIG,
   },
   {
     id: "classroom-pair",

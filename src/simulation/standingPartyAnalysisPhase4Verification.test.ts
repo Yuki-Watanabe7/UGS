@@ -423,6 +423,8 @@ describe("Issue #218: export整合・決定性", () => {
         "standing-party-information-transmissions.csv",
         "standing-party-information-utterances.csv",
         "standing-party-information-variants.csv",
+        "standing-party-spatial-agent-stats.csv",
+        "standing-party-spatial-cluster-stats.csv",
         "standing-party-transitions.csv",
       ].sort(),
     );

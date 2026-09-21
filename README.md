@@ -1090,16 +1090,46 @@ Phase 5 presetでは右sidebarの「情報伝播の観察・分析」から、ag
 PRNGを変えません。検証範囲・受入条件対応表・benchmark手順は
 [`docs/standing-party-phase5-verification.md`](docs/standing-party-phase5-verification.md)を参照してください。
 
-### Phase 6の空間回遊・分散ダイナミクス設計(#246)
+### Phase 6の空間回遊・分散ダイナミクス(#246〜#251)
 
 Phase 5までの立食パーティーは、成立済みclusterの中心が動かず、未所属agentの移動が無方向の
 ランダムwalkで、再探索が最寄り候補1件しか見ないため、会場の狭い領域へ局所固定されやすい構造でした。
-「輪へ集まる力」と「会場を広く使う力」を別要因として定義し、cluster間斥力、未所属agentの
-persistent roaming、局所crowding avoidance、wall avoidance、候補選択の一般化、tick更新順序、
-座標の不変条件、spatial coverage等の定量指標、feature flagとseed再現性の方針を
-[`docs/spatial-dynamics-phase6-model.md`](docs/spatial-dynamics-phase6-model.md)に定義しています。
-現時点では設計文書のみで、既存runtimeの挙動は変更していません。空間力は移動vectorと候補選択scoreを
-通じてのみ社会的判断と接続し、`attractiveness()`や離脱hazardの式そのものへは加算しません。
+「輪へ集まる力」と「会場を広く使う力」を別要因として定義した設計(ADR)を
+[`docs/spatial-dynamics-phase6-model.md`](docs/spatial-dynamics-phase6-model.md)に定義し、
+cluster間斥力・wall avoidance(#247)、未所属agentのpersistent roaming・局所crowding avoidance(#248、#249)、
+候補選択の一般化(#250)として実装しています。空間力は移動vectorと候補選択scoreを通じてのみ社会的判断と
+接続し、`attractiveness()`や離脱hazardの式そのものへは加算しません。`standingPartyConfig.spatialDynamics`は
+既定`enabled: false`で、無効な間は既存のstate・event・PRNG系列をbyte-identicalに保ちます(既存の
+standingPartyプリセットの既定挙動は変更していません)。cluster movement・crowding field・候補列挙・argmax
+はrngを一切消費せず、消費するのはroamingのheading更新のみで、主系列`SeededRandom`とは独立した派生streamです。
+
+有効化するとJSON/CSV exportにも空間config・統計が乗るため、`enabled: true`のpaired seedで前後比較したい
+場合はexportした2本のJSON/CSVを突き合わせてください。
+
+UI側(#251)は次を提供します。
+
+- `StandingPartyAdvancedSettings`の「Spatial Dynamics 有効化」「cluster空間力学」「persistent roaming」
+  「局所crowding avoidance」「候補選択の一般化」の5セクション(standingParty選択時のみ表示、Resetで反映)。
+- 比較プリセット「立食パーティー(空間回遊あり・分散型)」(`standing-party-spatial-roaming`、斥力・
+  roaming・crowding avoidance・候補選択の一般化をすべて有効化)と「立食パーティー(空間固定に近い比較基準)」
+  (`standing-party-spatial-fixed-baseline`、`spatialDynamics.enabled: false`)。他のPhase 2〜5設定は
+  同一のため、同一seedのpaired比較で空間ダイナミクスだけの差を観察できます。
+- agentインスペクターの「空間diagnostics(Phase 6)」セクション: roaming向き・残りtick・局所密度・
+  crowding/wall avoidanceの大きさ・候補選択のscore内訳・所属clusterの中心速度/最近接距離/重複診断。
+- Canvasの「空間diagnostics overlayを表示」toggle(既定OFF): 選択中clusterの中心velocity、選択中agentの
+  roaming向き、計測専用occupancy grid(8×5)の簡易overlayをread-onlyで表示します。ONにしてもsimulation
+  state・PRNG・event列は変わりません。
+- 統計ダッシュボードの「空間ダイナミクス(Phase 6)」セクション: spatial coverage・radius of gyration・
+  cluster間最近接距離分布・agent局所密度分布・cluster重複率・cluster空間統計table。
+- `spatialAnalysis.ts`のread model(`buildStandingPartySpatialAnalysis`)が上記すべての共有導出元です。
+  現在tick時点のspatial coverage / radius of gyration / cluster間最近接距離分布 / local density分布 /
+  cluster重複率は決定的な記述統計として導出できますが、過去tickの位置履歴を保持しないため、累積移動距離・
+  累積roaming距離・訪問zone数・cluster center path lengthのような「run全体を通じた累積」指標は本Issueの
+  スコープ外です。表示される瞬間的な移動量(`instantRoamingSpeed`等)は累積値ではありません。
+
+指標は空間の広がりの記述統計であり、社交性・人気・良し悪しを表すものではありません。ドリンク・料理・
+入口等の会場anchor、物理衝突、経路探索は対象外です。検証範囲・受入条件対応表・スコープ決定の詳細は
+[`docs/standing-party-phase6-verification.md`](docs/standing-party-phase6-verification.md)を参照してください。
 
 ## シミュレーションルールの概要
 
@@ -1124,13 +1154,13 @@ src/
     types.ts              Agent / GroupCandidate / SimParams などの型定義
     random.ts              seed固定の疑似乱数生成器
     model.ts               初期エージェント生成(seedから再現可能)
-    presets.ts              二次会5つ+立食パーティー5つ+教室での班分け4つ、計14シナリオプリセットとデフォルトパラメータ
-    standingPartyScenarioConfig.ts 立食パーティー専用のPhase 2設定(満足度・離脱判定・回遊傾向分布)+Phase 3設定(他クラスタ関心・愛着離脱配慮・遷移decision)束とその比較プリセット(#189、#202)
+    presets.ts              二次会5つ+立食パーティー11個(Phase 6比較プリセット2つを含む、#251)+教室での班分け4つ、計20シナリオプリセットとデフォルトパラメータ
+    standingPartyScenarioConfig.ts 立食パーティー専用のPhase 2設定(満足度・離脱判定・回遊傾向分布)+Phase 3設定(他クラスタ関心・愛着離脱配慮・遷移decision)+Phase 5設定(情報伝播・topic統合)+Phase 6設定(spatialDynamics)束とその比較プリセット(#189、#202、#251)
     standingPartyComparison.ts 立食パーティーのプリセット間比較指標(自発離脱・再参加・滞在tick等)の集計ロジック(#190)
     standingPartyAnalysis.ts   立食パーティー Phase 4 分析入口: 会話履歴(#212)・接触network(#213)・統計(#214)のpure導出(ADR: docs/standing-party-analysis-phase4-model.md)
     contactNetwork.ts          立食パーティー Phase 4: membership重複からcontact interval / edge / node / 記述指標を導出(#213)
     standingPartyStatistics.ts 立食パーティー Phase 4: 滞在・接触・cluster寿命・transitionの記述統計と時系列(#214)
-    analysisExport.ts            立食パーティー Phase 4: 現在runの履歴・network・統計のJSON/CSV export(#217)
+    analysisExport.ts            立食パーティー Phase 4: 現在runの履歴・network・統計のJSON/CSV export(#217、Phase 6の空間config/統計を含む、#251)
     standingPartyAnalysisInvariants.ts 立食パーティー Phase 4: 履歴/network/統計の横断不変条件(#218)
     formationPolicy.ts       シナリオ別の班形成・成立・終了ルールを切り替えるFormationPolicyの定義
     groupPartition.ts        人口を定員ルール(固定/可変)で分割し構造的未割当人数を決定的に計算
@@ -1150,15 +1180,20 @@ src/
     relationshipTie.ts       整合性履歴に基づく関係性(tie)補正(Phase 4)
     divergenceTemplates.ts   シナリオ別・性格別の本心/建前表現テンプレート(表示専用、Phase 4)
     phase4MonteCarlo.ts      Phase 4 (三層モデル・信頼・関係性) ON/OFFのpaired Monte Carlo比較ロジック
+    spatialDynamics.ts       立食パーティー Phase 6: confirmed cluster間斥力・wall avoidance・joined member追従・config/runtime state(#247)
+    roaming.ts               立食パーティー Phase 6: undecided agentのpersistent heading roaming + agent側wall avoidance(#248)
+    spatialOccupancy.ts      立食パーティー Phase 6: 方向サンプリング局所crowding field + 計測専用occupancy grid診断selector(#249)
+    clusterSearchSelection.ts 立食パーティー Phase 6: 候補列挙+総合scoreによる通常再探索の一般化(nearestCandidate代替、#250)
+    spatialAnalysis.ts       立食パーティー Phase 6: spatial coverage・radius of gyration・cluster間最近接距離・局所密度分布等のread-only統計と、agent/clusterごとの空間diagnostics snapshot(#251)
   components/
-    SimulationCanvas.tsx    SVGによる描画のみを担当
+    SimulationCanvas.tsx    SVGによる描画のみを担当(立食パーティーのみ、Phase 6空間diagnostics overlay(cluster velocity・roaming heading・計測用grid、read-only)を含む、#251)
     ControlPanel.tsx        操作パネルとパラメータスライダー
-    StandingPartyAdvancedSettings.tsx 立食パーティー専用のPhase 2+Phase 3詳細設定パネル(#189、#202、standingParty選択時のみ表示)
+    StandingPartyAdvancedSettings.tsx 立食パーティー専用のPhase 2+Phase 3+Phase 6詳細設定パネル(#189、#202、#251、standingParty選択時のみ表示)
     ConversationHistoryTimeline.tsx 立食パーティー専用の会話履歴タイムライン(#215、agent/cluster mode・filter・詳細・Canvas選択同期)
     ConversationHistoryFilters.tsx / ConversationHistoryDetail.tsx / conversationHistoryProjection.ts  同上のfilter・詳細・表示投影
     ContactNetworkGraph.tsx 立食パーティー専用の接触ネットワークグラフ(#216、weight切替・filter・詳細・Canvas/timeline選択同期)
     ContactNetworkControls.tsx / ContactNetworkDetail.tsx / contactNetworkProjection.ts  同上の操作・詳細・表示投影
-    StandingPartyAnalyticsDashboard.tsx 立食パーティー専用の統計ダッシュボード(#217、分布・時系列・内訳・代替table・JSON/CSV export)
+    StandingPartyAnalyticsDashboard.tsx 立食パーティー専用の統計ダッシュボード(#217、分布・時系列・内訳・代替table・JSON/CSV export、Phase 6空間ダイナミクスsection、#251)
     EventLog.tsx            状態ログの表示(発言・発言効果・乖離・信頼・関係性フィルタを含む)
     AgentLegend.tsx         凡例
     SimulationSummaryPanel.tsx  終了サマリーの表示
@@ -1166,7 +1201,7 @@ src/
     InterventionSelector.tsx        介入シナリオの選択・説明表示
     InterventionComparisonPanel.tsx 介入あり/なしのMonte Carlo比較表示
     GroupFormationComparisonPanel.tsx 学校シナリオの班人数・教師介入paired Monte Carlo比較表示
-    ObserverJoinerInspector.tsx     observerJoinerインスペクター/agentインスペクター(発言効果・本心/建前・信頼の因果詳細、standingPartyのagent選択・離脱判定要因・他クラスタ関心/愛着/遷移decision/pending transitionを含む)
+    ObserverJoinerInspector.tsx     observerJoinerインスペクター/agentインスペクター(発言効果・本心/建前・信頼の因果詳細、standingPartyのagent選択・離脱判定要因・他クラスタ関心/愛着/遷移decision/pending transition・Phase 6空間diagnostics(roaming/crowding/候補選択score内訳/所属cluster空間状態)を含む、#251)
     SpeechEffectsComparisonPanel.tsx 発言効果ON/OFFのMonte Carlo比較表示(Phase 3)
 ```
 

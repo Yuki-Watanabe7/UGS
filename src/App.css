@@ -908,6 +908,37 @@
   pointer-events: none;
 }
 
+/*
+ * Issue #251 (Phase 6): debug/diagnostic toggleでのみ描画する空間diagnostics。既存の
+ * approach-link/transition-target-linkとは別の色にし、read-only表示専用であることが分かるよう
+ * 点線・低opacityに揃える。
+ */
+.spatial-diagnostic-grid-line {
+  stroke: #64748b;
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.spatial-diagnostic-cluster-velocity {
+  stroke: #a855f7;
+  stroke-width: 2;
+  stroke-linecap: round;
+  opacity: 0.9;
+  pointer-events: none;
+  marker-end: none;
+}
+
+.spatial-diagnostic-roaming-heading {
+  stroke: #22d3ee;
+  stroke-width: 2;
+  stroke-dasharray: 3 2;
+  stroke-linecap: round;
+  opacity: 0.9;
+  pointer-events: none;
+}
+
 /* target候補: 実線に近い短い点線・水色。source候補(移動元)とは線種・色の両方で区別する */
 .candidate-ring.candidate-ring--transition-target {
   stroke: #38bdf8;

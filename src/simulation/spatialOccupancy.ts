@@ -43,8 +43,11 @@ const ZERO_CROWDING_RESULT: CrowdingAvoidanceResult = {
 /**
  * 密度計算に数える対象(issue #249「density source」節): undecided/approaching/forming/joined。
  * `leaving`/`left`/`unassigned`はここに含めないことで自然に除外される(allowlist方式)。
+ * Issue #251: `spatialAnalysis.ts`の局所密度分布(read-only診断)が同じallowlistを再利用できるよう
+ * exportする(`clusterSearchSelection.ts`が同じ定義を独立に再実装しているのと同じ事情だが、
+ * こちらは循環importが無いため素直に共有する)。
  */
-function isCrowdingDensitySource(agent: Agent): boolean {
+export function isCrowdingDensitySource(agent: Agent): boolean {
   return (
     agent.state === "undecided" ||
     agent.state === "approaching" ||
@@ -57,7 +60,7 @@ function isCrowdingDensitySource(agent: Agent): boolean {
  * ADR §4.3: 自分自身、および(selfが`joined`/`approaching`等で`joinedGroupId`を持つ場合の)同じclusterの
  * memberは密度に数えない。selfが`joinedGroupId`を持たない(undecided等)場合はこの条件は発火しない。
  */
-function isSameClusterMember(self: Agent, other: Agent): boolean {
+export function isSameClusterMember(self: Agent, other: Agent): boolean {
   return self.joinedGroupId !== undefined && other.joinedGroupId === self.joinedGroupId;
 }
 
@@ -166,8 +169,11 @@ export type SpatialOccupancyGridSnapshot = {
   cellOccupancy: DistributionSummary;
 };
 
-/** occupancy計測に数えるagent(issue #249「left/unassigned/cleanup済みentityは含めない」) */
-function isPresentForOccupancy(agent: Agent): boolean {
+/**
+ * occupancy計測に数えるagent(issue #249「left/unassigned/cleanup済みentityは含めない」)。
+ * Issue #251: `spatialAnalysis.ts`のcentroid/radius of gyration計算が同じ定義を再利用するためexport。
+ */
+export function isPresentForOccupancy(agent: Agent): boolean {
   return agent.state !== "left" && agent.state !== "unassigned";
 }
 

@@ -15,6 +15,8 @@ import {
   type CandidateVisualLayout,
   type GroupVisualSlotRegistry,
 } from "./groupVisualLayout";
+import type { SpatialRuntimeState } from "../simulation/spatialDynamics";
+import { SPATIAL_OCCUPANCY_GRID_COLS, SPATIAL_OCCUPANCY_GRID_ROWS } from "../simulation/spatialOccupancy";
 
 /**
  * 表示すべき心の声1件分。文言生成・寿命管理は呼び出し側(表示管理レイヤー)の責務で、ここでは受け取るだけ。
@@ -86,7 +88,23 @@ type Props = {
   selectedClusterId?: string;
   /** Issue #234: Phase 5 read modelが導出した、active clusterごとの最小topic表示。 */
   clusterTopics?: Array<{ clusterId: string; currentTopicId?: string; changedAtCurrentTick?: boolean }>;
+  /**
+   * Issue #251 (Phase 6): debug/diagnostic toggleでのみ表示する、選択cluster/agentの空間diagnostics
+   * (velocity/repulsion方向・roaming heading・計測専用occupancy gridの簡易overlay)。read-onlyの
+   * 表示専用propsであり、trueにしてもsimulation state・RNG・event列には一切影響しない(要件5節)。
+   * `spatialRuntimeState`未指定、または対象が選択されていない場合は該当overlayを描かない。
+   */
+  showSpatialDiagnostics?: boolean;
+  spatialRuntimeState?: SpatialRuntimeState;
 };
+
+/**
+ * Issue #251 (Phase 6): diagnostic overlay専用の表示倍率。`maxClusterCenterSpeed`は既定`2`px/tick
+ * ・`roamingSpeed`は既定`3`px/tickと、そのまま描くと視認できないほど小さいため、表示上だけ拡大する
+ * (simulation座標・runtime velocityは一切変更しない)。
+ */
+const DIAGNOSTIC_VECTOR_SCALE = 15;
+const DIAGNOSTIC_HEADING_LENGTH = 24;
 
 function stateColor(agent: Agent, showClassroomAssignmentState: boolean): string {
   switch (agent.state) {
@@ -610,6 +628,8 @@ export function SimulationCanvas({
   selectedAgentId,
   selectedClusterId,
   clusterTopics,
+  showSpatialDiagnostics = false,
+  spatialRuntimeState,
 }: Props) {
   const presentation = getScenarioPresentation(formationScenarioId, formationClassroomGroupSize);
   const isClassroomPair = presentation.id === "classroomPair";
@@ -690,6 +710,22 @@ export function SimulationCanvas({
   const transitionTargetVisual = selectedPendingTransition
     ? visualLayout.candidates.get(selectedPendingTransition.targetClusterId)
     : undefined;
+
+  // Issue #251 (Phase 6): diagnostic toggle時のみ、選択clusterのvelocityと選択agentのroaming headingを
+  // 表示専用vectorとして描く。速度そのものは数px/tickと小さいため、視認できるよう表示専用の倍率
+  // (`DIAGNOSTIC_VECTOR_SCALE`)で引き伸ばす ―― simulation座標・runtime velocityそのものは変更しない。
+  const diagnosticCluster =
+    showSpatialDiagnostics && isStandingParty
+      ? simulationCandidates.find((candidate) => candidate.id === selectedClusterId)
+      : undefined;
+  const diagnosticClusterVelocity =
+    diagnosticCluster && spatialRuntimeState ? spatialRuntimeState.clusterVelocity[diagnosticCluster.id] : undefined;
+  const diagnosticAgent =
+    showSpatialDiagnostics && isStandingParty
+      ? simulationAgents.find((agent) => agent.id === selectedAgentId && agent.state === "undecided")
+      : undefined;
+  const diagnosticRoaming =
+    diagnosticAgent && spatialRuntimeState ? spatialRuntimeState.roaming[diagnosticAgent.id] : undefined;
   const resolvedCanvasHeight = visualLayout.resolvedRegion?.height ?? height;
   const resolvedBubbles = buildBubbleCanvasLayout(
     resolvedAgents,
@@ -721,6 +757,31 @@ export function SimulationCanvas({
             aria-label={presentation.canvas.ariaLabel}
           >
             <rect x={0} y={0} width={width} height={height} className="canvas-bg" />
+
+            {showSpatialDiagnostics && isStandingParty && (
+              <g className="spatial-diagnostic-grid" aria-hidden="true">
+                {Array.from({ length: SPATIAL_OCCUPANCY_GRID_COLS - 1 }, (_, i) => i + 1).map((col) => (
+                  <line
+                    key={`grid-col-${col}`}
+                    x1={(width / SPATIAL_OCCUPANCY_GRID_COLS) * col}
+                    y1={0}
+                    x2={(width / SPATIAL_OCCUPANCY_GRID_COLS) * col}
+                    y2={height}
+                    className="spatial-diagnostic-grid-line"
+                  />
+                ))}
+                {Array.from({ length: SPATIAL_OCCUPANCY_GRID_ROWS - 1 }, (_, i) => i + 1).map((row) => (
+                  <line
+                    key={`grid-row-${row}`}
+                    x1={0}
+                    y1={(height / SPATIAL_OCCUPANCY_GRID_ROWS) * row}
+                    x2={width}
+                    y2={(height / SPATIAL_OCCUPANCY_GRID_ROWS) * row}
+                    className="spatial-diagnostic-grid-line"
+                  />
+                ))}
+              </g>
+            )}
 
             {isClassroomPair &&
               simulationAgents.map((agent) => {
@@ -756,6 +817,28 @@ export function SimulationCanvas({
                   aria-label={`${selectedTransitionAgent.label}が向かっている輪 ${selectedPendingTransition.targetClusterId} への移動意図`}
                 />
               )}
+
+            {diagnosticCluster && diagnosticClusterVelocity && (
+              <line
+                x1={diagnosticCluster.x}
+                y1={diagnosticCluster.y}
+                x2={diagnosticCluster.x + diagnosticClusterVelocity.vx * DIAGNOSTIC_VECTOR_SCALE}
+                y2={diagnosticCluster.y + diagnosticClusterVelocity.vy * DIAGNOSTIC_VECTOR_SCALE}
+                className="spatial-diagnostic-cluster-velocity"
+                aria-label={`選択中の輪 ${diagnosticCluster.id} のcluster中心velocity(表示用に拡大)`}
+              />
+            )}
+
+            {diagnosticAgent && diagnosticRoaming && (
+              <line
+                x1={diagnosticAgent.x}
+                y1={diagnosticAgent.y}
+                x2={diagnosticAgent.x + Math.cos(diagnosticRoaming.headingRadians) * DIAGNOSTIC_HEADING_LENGTH}
+                y2={diagnosticAgent.y + Math.sin(diagnosticRoaming.headingRadians) * DIAGNOSTIC_HEADING_LENGTH}
+                className="spatial-diagnostic-roaming-heading"
+                aria-label={`${diagnosticAgent.label}のroaming向き`}
+              />
+            )}
 
             {simulationCandidates.map((candidate) => (
               <CandidateGlyph

@@ -14,6 +14,14 @@ import {
   INFORMATION_PROPAGATION_ANALYSIS_SCHEMA_VERSION,
   type InformationPropagationAnalysis,
 } from "./informationAnalysis";
+import {
+  buildStandingPartySpatialAnalysis,
+  SPATIAL_DYNAMICS_ANALYSIS_SCHEMA_VERSION,
+  type AgentSpatialSnapshot,
+  type ClusterSpatialSnapshot,
+  type StandingPartySpatialSnapshot,
+} from "./spatialAnalysis";
+import { DEFAULT_SPATIAL_DYNAMICS_CONFIG } from "./spatialDynamics";
 import type { ContentUtteranceEvent } from "./contentUtterance";
 import type {
   InformationAdoptionEvent,
@@ -38,8 +46,11 @@ import type {
 } from "./types";
 import { STANDING_PARTY_ANALYSIS_SCHEMA_VERSION } from "./types";
 
-/** Issue #217: export bundle の schema。分析 snapshot の schemaVersion とは別系統。 */
-export const STANDING_PARTY_ANALYSIS_EXPORT_SCHEMA_VERSION = "standing-party-analysis-export/2";
+/**
+ * Issue #217: export bundle の schema。分析 snapshot の schemaVersion とは別系統。
+ * Issue #251 (Phase 6)でspatialDynamics fieldを追加したため/2から/3へ更新する。
+ */
+export const STANDING_PARTY_ANALYSIS_EXPORT_SCHEMA_VERSION = "standing-party-analysis-export/3";
 
 /** Issue #217 本文の別名。実装正本は`StandingPartyConversationHistory`。 */
 export type InteractionHistorySnapshot = StandingPartyConversationHistory;
@@ -87,6 +98,23 @@ export type StandingPartyAnalysisExport = {
   statistics: StandingPartyRunStatistics;
   /** Issue #234: Phase 5 event/stateを含む、read-onlyのversioned analysis snapshot。 */
   informationPropagation: InformationPropagationExport;
+  /** Issue #251 (Phase 6): 空間ダイナミクスのread-only analysis snapshot(現在tick時点)。 */
+  spatialDynamics: SpatialDynamicsExport;
+};
+
+/**
+ * Issue #251 (Phase 6): `spatialAnalysis.ts`の`buildStandingPartySpatialAnalysis`結果をexport形状に
+ * 写す。raw occupancy grid全tickは含めない(issue要件「無制限exportしない」)。
+ */
+export type SpatialDynamicsExport = {
+  schemaVersion: typeof SPATIAL_DYNAMICS_ANALYSIS_SCHEMA_VERSION;
+  /** master OFFのrunではfalse。standingParty以外では常にfalse */
+  enabled: boolean;
+  /** standingParty専用のspatialDynamics config。他シナリオではnull */
+  config: StandingPartyScenarioConfig["spatialDynamics"] | null;
+  snapshot: StandingPartySpatialSnapshot;
+  agents: AgentSpatialSnapshot[];
+  clusters: ClusterSpatialSnapshot[];
 };
 
 export type InformationPropagationExport = {
@@ -215,6 +243,12 @@ export function buildStandingPartyAnalysisExport(
   const statistics = options.statistics ?? buildStandingPartyRunStatistics(state, statsOptions);
   const simParams = options.simParams;
   const informationConfig = options.standingPartyConfig?.informationPropagation;
+  const spatialConfig = options.standingPartyConfig?.spatialDynamics;
+  const spatialAnalysis = buildStandingPartySpatialAnalysis(state, spatialConfig ?? DEFAULT_SPATIAL_DYNAMICS_CONFIG, {
+    agentIds: options.agentIds,
+    clusterIds: options.clusterIds,
+    observerJoinerMode: options.observerJoinerMode,
+  });
   const informationAnalysis = buildInformationPropagationAnalysis(state, {
     config: informationConfig,
     filter: {
@@ -287,6 +321,14 @@ export function buildStandingPartyAnalysisExport(
       lineage: informationAnalysis.lineage,
       timeline: informationAnalysis.timeline,
       statistics: informationAnalysis.statistics,
+    },
+    spatialDynamics: {
+      schemaVersion: SPATIAL_DYNAMICS_ANALYSIS_SCHEMA_VERSION,
+      enabled: spatialAnalysis.spatialDynamicsEnabled,
+      config: spatialConfig ?? null,
+      snapshot: spatialAnalysis.snapshot,
+      agents: spatialAnalysis.agents,
+      clusters: spatialAnalysis.clusters,
     },
   };
 }
@@ -484,6 +526,84 @@ export function clusterStatisticsToCsv(clusters: readonly StandingPartyClusterSt
   );
 }
 
+/** Issue #251 (Phase 6): agentごとの空間diagnostics(現在tickのsnapshot)をCSV化する。 */
+export function spatialAgentStatsToCsv(agents: readonly AgentSpatialSnapshot[]): string {
+  return rowsToCsv(
+    [
+      "agentId",
+      "label",
+      "isObserverJoiner",
+      "state",
+      "x",
+      "y",
+      "roamingActive",
+      "roamingHeadingRadians",
+      "roamingTicksRemaining",
+      "roamingIntensity",
+      "instantRoamingSpeed",
+      "localDensity",
+      "crowded",
+      "crowdingVectorMagnitude",
+      "wallAvoidanceMagnitude",
+      "nearestClusterId",
+      "nearestClusterDistance",
+    ],
+    agents.map((a) => [
+      a.agentId,
+      a.label,
+      a.isObserverJoiner,
+      a.state,
+      a.x,
+      a.y,
+      a.roamingActive,
+      a.roamingHeadingRadians,
+      a.roamingTicksRemaining,
+      a.roamingIntensity,
+      a.instantRoamingSpeed,
+      a.localDensity,
+      a.crowded,
+      a.crowdingVectorMagnitude,
+      a.wallAvoidanceMagnitude,
+      a.nearestClusterId,
+      a.nearestClusterDistance,
+    ]),
+  );
+}
+
+/** Issue #251 (Phase 6): clusterごとの空間diagnostics(現在tickのsnapshot)をCSV化する。 */
+export function spatialClusterStatsToCsv(clusters: readonly ClusterSpatialSnapshot[]): string {
+  return rowsToCsv(
+    [
+      "clusterId",
+      "status",
+      "x",
+      "y",
+      "velocityX",
+      "velocityY",
+      "speed",
+      "memberCount",
+      "nearestClusterId",
+      "nearestClusterDistance",
+      "overlapping",
+      "nearWall",
+    ],
+    clusters.map((c) => [
+      c.clusterId,
+      c.status,
+      c.x,
+      c.y,
+      c.velocity?.vx,
+      c.velocity?.vy,
+      c.speed,
+      c.memberCount,
+      c.nearestClusterId,
+      c.nearestClusterDistance,
+      c.overlapping,
+      c.nearWall,
+    ]),
+  );
+}
+
 export function transitionsToCsv(transitions: readonly ClusterTransitionRecord[]): string {
   return rowsToCsv(
     [
@@ -642,6 +762,14 @@ export function buildStandingPartyAnalysisCsvFiles(
     {
       filename: "standing-party-transitions.csv",
       content: transitionsToCsv(bundle.history.transitions),
+    },
+    {
+      filename: "standing-party-spatial-agent-stats.csv",
+      content: spatialAgentStatsToCsv(bundle.spatialDynamics.agents),
+    },
+    {
+      filename: "standing-party-spatial-cluster-stats.csv",
+      content: spatialClusterStatsToCsv(bundle.spatialDynamics.clusters),
     },
     {
       filename: "standing-party-information-topics.csv",

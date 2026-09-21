@@ -141,6 +141,9 @@ describe("analysisExport (Issue #217)", () => {
     expect(bundle.informationPropagation.schemaVersion).toBe("information-propagation-analysis/1");
     expect(bundle.informationPropagation.config).toEqual(DEFAULT_STANDING_PARTY_SCENARIO_CONFIG.informationPropagation);
     expect(bundle.history.episodes.length).toBeGreaterThan(0);
+    expect(bundle.spatialDynamics.schemaVersion).toBe("spatial-dynamics-analysis/1");
+    expect(bundle.spatialDynamics.enabled).toBe(false);
+    expect(bundle.spatialDynamics.config).toEqual(DEFAULT_STANDING_PARTY_SCENARIO_CONFIG.spatialDynamics);
   });
 
   it("同一stateからJSONが決定的", () => {
@@ -161,6 +164,8 @@ describe("analysisExport (Issue #217)", () => {
       "standing-party-agent-statistics.csv",
       "standing-party-cluster-statistics.csv",
       "standing-party-transitions.csv",
+      "standing-party-spatial-agent-stats.csv",
+      "standing-party-spatial-cluster-stats.csv",
       "standing-party-information-topics.csv",
       "standing-party-information-claims.csv",
       "standing-party-information-variants.csv",
@@ -178,8 +183,10 @@ describe("analysisExport (Issue #217)", () => {
     expect(files[1]!.content).toContain("contactIntervalId");
     expect(files[3]!.content).toContain("isObserverJoiner");
     expect(files[4]!.content).toContain("lifetimeTicks");
-    expect(files[9]!.content).toContain("agentId,label,isObserverJoiner,claimId");
-    expect(files[14]!.content).toContain("transmissionId,tick,speakerId,receiverId");
+    expect(files[6]!.content).toContain("agentId,label,isObserverJoiner,state");
+    expect(files[7]!.content).toContain("clusterId,status,x,y,velocityX");
+    expect(files[11]!.content).toContain("agentId,label,isObserverJoiner,claimId");
+    expect(files[16]!.content).toContain("transmissionId,tick,speakerId,receiverId");
   });
 
   it("exportはSimulationStateをmutationしない", () => {

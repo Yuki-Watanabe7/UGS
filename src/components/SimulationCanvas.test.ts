@@ -598,3 +598,97 @@ describe("SimulationCanvas Phase 3 pending transition visualization (Issue #202)
     expect(html).not.toContain("candidate-ring--transition-target");
   });
 });
+
+describe("SimulationCanvas spatial diagnostics overlay (Issue #251, Phase 6)", () => {
+  const cluster: GroupCandidate = { id: "group-1", x: 300, y: 200, memberIds: ["agent-a"], status: "confirmed", age: 5 };
+
+  it("renders no diagnostic overlay markers when showSpatialDiagnostics is false (default)", () => {
+    const agent = makeAgent({ id: "agent-a", state: "joined", joinedGroupId: "group-1" });
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        groupCandidates: [cluster],
+        width: 800,
+        height: 520,
+        formationScenarioId: "standingParty",
+        agents: [agent],
+        selectedClusterId: "group-1",
+        spatialRuntimeState: { clusterVelocity: { "group-1": { vx: 1, vy: 0 } }, roaming: {} },
+      }),
+    );
+
+    expect(html).not.toContain("spatial-diagnostic-grid-line");
+    expect(html).not.toContain("spatial-diagnostic-cluster-velocity");
+    expect(html).not.toContain("spatial-diagnostic-roaming-heading");
+  });
+
+  it("renders the measurement-only occupancy grid overlay when enabled", () => {
+    const agent = makeAgent({ id: "agent-a", state: "undecided" });
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        groupCandidates: [],
+        width: 800,
+        height: 520,
+        formationScenarioId: "standingParty",
+        agents: [agent],
+        showSpatialDiagnostics: true,
+      }),
+    );
+
+    expect(html).toContain("spatial-diagnostic-grid-line");
+  });
+
+  it("renders the selected cluster's velocity vector when showSpatialDiagnostics is enabled", () => {
+    const agent = makeAgent({ id: "agent-a", state: "joined", joinedGroupId: "group-1" });
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        groupCandidates: [cluster],
+        width: 800,
+        height: 520,
+        formationScenarioId: "standingParty",
+        agents: [agent],
+        selectedClusterId: "group-1",
+        showSpatialDiagnostics: true,
+        spatialRuntimeState: { clusterVelocity: { "group-1": { vx: 1, vy: 0.5 } }, roaming: {} },
+      }),
+    );
+
+    expect(html).toContain("spatial-diagnostic-cluster-velocity");
+  });
+
+  it("renders the selected undecided agent's roaming heading when showSpatialDiagnostics is enabled", () => {
+    const agent = makeAgent({ id: "agent-a", state: "undecided" });
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        groupCandidates: [],
+        width: 800,
+        height: 520,
+        formationScenarioId: "standingParty",
+        agents: [agent],
+        selectedAgentId: "agent-a",
+        showSpatialDiagnostics: true,
+        spatialRuntimeState: { clusterVelocity: {}, roaming: { "agent-a": { headingRadians: 0, expiresAtTick: 20 } } },
+      }),
+    );
+
+    expect(html).toContain("spatial-diagnostic-roaming-heading");
+  });
+
+  it("does not render diagnostic vectors outside standingParty even when enabled", () => {
+    const agent = makeAgent({ id: "agent-a", state: "undecided" });
+    const html = renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        groupCandidates: [],
+        width: 800,
+        height: 520,
+        formationScenarioId: "afterParty",
+        agents: [agent],
+        selectedAgentId: "agent-a",
+        showSpatialDiagnostics: true,
+        spatialRuntimeState: { clusterVelocity: {}, roaming: { "agent-a": { headingRadians: 0, expiresAtTick: 20 } } },
+      }),
+    );
+
+    expect(html).not.toContain("spatial-diagnostic-grid-line");
+    expect(html).not.toContain("spatial-diagnostic-roaming-heading");
+  });
+});

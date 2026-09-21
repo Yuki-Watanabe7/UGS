@@ -34,6 +34,8 @@ describe("scenario category configuration", () => {
       "standing-party-topic-segmented",
       "standing-party-rumor-mutation",
       "standing-party-info-seeking",
+      "standing-party-spatial-roaming",
+      "standing-party-spatial-fixed-baseline",
     ]);
   });
 

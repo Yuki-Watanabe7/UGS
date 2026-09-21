@@ -156,6 +156,25 @@ const TIE_OBSERVATION_LABEL: Record<"consistent" | "inconsistent", string> = {
   inconsistent: "不一致",
 };
 
+/** Issue #251 (Phase 6): 候補選択score内訳の表示ラベル。`ClusterSearchCandidateFactors`のkeyと対応する */
+const SPATIAL_CANDIDATE_FACTOR_LABEL: Record<
+  "distance" | "socialAttractiveness" | "alternativeInterest" | "informationOpportunity" | "crowdingPenalty" | "recentVisitPenalty" | "spatialExplorationBonus",
+  string
+> = {
+  distance: "距離",
+  socialAttractiveness: "既存attractiveness",
+  alternativeInterest: "既知member・clique適合",
+  informationOpportunity: "topic機会",
+  crowdingPenalty: "周辺の混雑",
+  recentVisitPenalty: "直近離脱/失敗の残存penalty",
+  spatialExplorationBonus: "空間探索bonus",
+};
+
+function formatRadians(radians: number): string {
+  const degrees = ((radians * 180) / Math.PI + 360) % 360;
+  return `${degrees.toFixed(0)}°`;
+}
+
 // Inspectorの履歴表示は直近この件数までに絞る(観察を妨げないための上限。Issue #98の折りたたみ方針を踏襲)
 const HISTORY_DISPLAY_LIMIT = 5;
 
@@ -456,6 +475,141 @@ function TieSummaryList({
         );
       })}
     </div>
+  );
+}
+
+/**
+ * Issue #251 (Phase 6): roaming/crowding/候補選択/所属clusterの空間diagnostics。read-only表示のみで、
+ * simulation state・RNGへは一切介入しない。raw vector数値を大量表示せず、候補score内訳は
+ * `<details>`折りたたみ内に置く(issue実装範囲3節)。
+ */
+function SpatialDiagnosticsSection({
+  spatial,
+  labelById,
+}: {
+  spatial: NonNullable<ObserverJoinerInspection["spatial"]>;
+  labelById: Map<string, string>;
+}) {
+  if (!spatial.spatialDynamicsEnabled) {
+    return (
+      <p className="observer-inspector-speech-empty">
+        Spatial Dynamicsは現在無効です(詳細設定でオンにするとroaming・混雑回避・候補選択の内訳がここに表示されます)。
+      </p>
+    );
+  }
+  return (
+    <>
+      <div className="observer-inspector-row">
+        <span>roaming</span>
+        <span>
+          {spatial.roamingActive ? "回遊中" : "停止中(接近中・joined等、対象外の状態)"}
+          {spatial.roamingActive && spatial.roamingIntensity !== undefined
+            ? `(強度 ${formatRatio(spatial.roamingIntensity)})`
+            : ""}
+        </span>
+      </div>
+      {spatial.roamingActive && (
+        <>
+          <div className="observer-inspector-row">
+            <span>roaming向き</span>
+            <span>{spatial.roamingHeadingRadians !== undefined ? formatRadians(spatial.roamingHeadingRadians) : "-"}</span>
+          </div>
+          <div className="observer-inspector-row">
+            <span>heading維持の残りtick</span>
+            <span>{spatial.roamingTicksRemaining ?? "-"}</span>
+          </div>
+        </>
+      )}
+      <div className="observer-inspector-row">
+        <span>局所密度(周辺人数)</span>
+        <span>
+          {spatial.localDensity}人{spatial.crowded ? "・混雑と判定" : ""}
+        </span>
+      </div>
+      <div className="observer-inspector-row">
+        <span>crowding avoidanceの大きさ</span>
+        <span>{formatDistance(spatial.crowdingVectorMagnitude)}</span>
+      </div>
+      <div className="observer-inspector-row">
+        <span>wall avoidanceの大きさ</span>
+        <span>{formatDistance(spatial.wallAvoidanceMagnitude)}</span>
+      </div>
+      <div className="observer-inspector-row">
+        <span>最寄りのconfirmed cluster</span>
+        <span title={spatial.nearestClusterId}>
+          {spatial.nearestClusterId
+            ? `${spatial.nearestClusterId}(距離 ${formatDistance(spatial.nearestClusterDistance ?? 0)})`
+            : "なし"}
+        </span>
+      </div>
+      <div className="observer-inspector-row">
+        <span>候補選択の一般化</span>
+        <span>
+          {spatial.candidateSelectionEnabled
+            ? "有効"
+            : "無効(最寄り1件のみを評価)"}
+        </span>
+      </div>
+      {spatial.candidateSelectionEnabled && spatial.evaluatedCandidateCount !== undefined && (
+        <>
+          <div className="observer-inspector-row" data-testid="observer-inspector-spatial-candidate-selection">
+            <span>評価した候補数 / 選択された候補</span>
+            <span title={spatial.selectedCandidateId}>
+              {spatial.evaluatedCandidateCount}件 /{" "}
+              {spatial.selectedCandidateId ?? "候補なし(閾値未満、roaming継続)"}
+            </span>
+          </div>
+          {spatial.candidateScores && spatial.candidateScores.length > 0 && (
+            <details className="observer-inspector-effect-details">
+              <summary>候補ごとのscore内訳({spatial.candidateScores.length}件)</summary>
+              {spatial.candidateScores.map((score) => (
+                <div key={score.clusterId} className="observer-inspector-effect-line">
+                  {score.clusterId}{score.clusterId === spatial.selectedCandidateId ? "(選択)" : ""}: score{" "}
+                  {formatRatio(score.score)}
+                  <ul className="observer-inspector-factor-list">
+                    {(Object.keys(SPATIAL_CANDIDATE_FACTOR_LABEL) as (keyof typeof SPATIAL_CANDIDATE_FACTOR_LABEL)[])
+                      .filter((key) => score[key] !== undefined)
+                      .map((key) => (
+                        <li key={key}>
+                          {SPATIAL_CANDIDATE_FACTOR_LABEL[key]}: {(score[key] as number) >= 0 ? "+" : ""}
+                          {formatRatio(score[key] as number)}
+                        </li>
+                      ))}
+                  </ul>
+                </div>
+              ))}
+            </details>
+          )}
+        </>
+      )}
+      {spatial.currentCluster && (
+        <>
+          <div className="observer-inspector-divider" />
+          <div className="observer-inspector-row observer-inspector-row--header">
+            <span>所属clusterの空間diagnostics</span>
+          </div>
+          <div className="observer-inspector-row">
+            <span>cluster中心の移動速度</span>
+            <span>{spatial.currentCluster.speed !== undefined ? formatDistance(spatial.currentCluster.speed) : "-"}</span>
+          </div>
+          <div className="observer-inspector-row">
+            <span>最も近いconfirmed cluster</span>
+            <span title={spatial.currentCluster.nearestClusterId}>
+              {spatial.currentCluster.nearestClusterId
+                ? `${labelById.get(spatial.currentCluster.nearestClusterId) ?? spatial.currentCluster.nearestClusterId}(距離 ${formatDistance(spatial.currentCluster.nearestClusterDistance ?? 0)})`
+                : "なし"}
+            </span>
+          </div>
+          <div className="observer-inspector-row">
+            <span>診断: 重複/過密・壁際</span>
+            <span>
+              {spatial.currentCluster.overlapping ? "重複/過密" : "分散"}
+              {spatial.currentCluster.nearWall ? "・壁際" : ""}
+            </span>
+          </div>
+        </>
+      )}
+    </>
   );
 }
 
@@ -815,6 +969,17 @@ function InspectionCard({
                 {inspection.lastTransitionInvalidation.fallbackStarted ? "・通常の再探索へ切替済み" : ""}
               </span>
             </div>
+          )}
+
+          <div className="observer-inspector-divider" />
+
+          <div className="observer-inspector-row observer-inspector-row--header">
+            <span>空間diagnostics(Phase 6)</span>
+          </div>
+          {inspection.spatial ? (
+            <SpatialDiagnosticsSection spatial={inspection.spatial} labelById={labelById} />
+          ) : (
+            <p className="observer-inspector-speech-empty">この場面ではSpatial Dynamicsは対象外です。</p>
           )}
         </>
       )}

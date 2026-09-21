@@ -11,6 +11,7 @@ import type {
   SpeechReceptionEvent,
 } from "./speechEffects";
 import type { Agent, GroupCandidate, SimulationState } from "./types";
+import { DEFAULT_STANDING_PARTY_SCENARIO_CONFIG } from "./standingPartyScenarioConfig";
 
 function makeAgent(overrides: Partial<Agent>): Agent {
   return {
@@ -659,5 +660,59 @@ describe("buildAgentInspection: pendingTransition / lastTransitionInvalidation (
     const [inspection] = buildAgentInspection(state, DEFAULT_PARAMS);
 
     expect(inspection.lastTransitionInvalidation).toEqual({ reason: "targetFull", tick: 18, fallbackStarted: true });
+  });
+});
+
+describe("buildAgentInspection: spatial (Issue #251, Phase 6)", () => {
+  it("standingParty以外ではspatialが常にundefined", () => {
+    const agent = makeAgent({ id: "agent-x", state: "undecided" });
+    const state = makeState({ agents: [agent], formationScenarioId: "afterParty" });
+    const [inspection] = buildAgentInspection(state, DEFAULT_PARAMS);
+    expect(inspection.spatial).toBeUndefined();
+  });
+
+  it("standingPartyかつspatialDynamics無効なら、spatialは定義されるがroamingActive=false・候補selectionは未計算", () => {
+    const agent = makeAgent({ id: "agent-x", state: "undecided" });
+    const state = makeState({ agents: [agent], formationScenarioId: "standingParty" });
+    const [inspection] = buildAgentInspection(state, DEFAULT_PARAMS);
+    expect(inspection.spatial).toBeDefined();
+    expect(inspection.spatial?.spatialDynamicsEnabled).toBe(false);
+    expect(inspection.spatial?.roamingActive).toBe(false);
+    expect(inspection.spatial?.candidateSelectionEnabled).toBe(false);
+    expect(inspection.spatial?.evaluatedCandidateCount).toBeUndefined();
+  });
+
+  it("spatialDynamics.candidateSelectionEnabledが有効なら、観察範囲内の候補のscore内訳を返す", () => {
+    const agent = makeAgent({ id: "agent-x", state: "undecided", x: 100, y: 100 });
+    const candidate: GroupCandidate = { id: "group-1", x: 120, y: 100, memberIds: ["m1"], status: "confirmed", age: 5 };
+    const member = makeAgent({ id: "m1", state: "joined", joinedGroupId: "group-1", x: 120, y: 100 });
+    const state = makeState({
+      agents: [agent, member],
+      groupCandidates: [candidate],
+      formationScenarioId: "standingParty",
+      standingPartyConfig: {
+        ...DEFAULT_STANDING_PARTY_SCENARIO_CONFIG,
+        spatialDynamics: {
+          ...DEFAULT_STANDING_PARTY_SCENARIO_CONFIG.spatialDynamics,
+          enabled: true,
+          candidateSelectionEnabled: true,
+        },
+      },
+    });
+    const [inspection] = buildAgentInspection(state, DEFAULT_PARAMS);
+    expect(inspection.spatial?.spatialDynamicsEnabled).toBe(true);
+    expect(inspection.spatial?.candidateSelectionEnabled).toBe(true);
+    expect(inspection.spatial?.evaluatedCandidateCount).toBe(1);
+    expect(inspection.spatial?.candidateScores).toHaveLength(1);
+    expect(inspection.spatial?.candidateScores?.[0].clusterId).toBe("group-1");
+  });
+
+  it("joinしているagentのcurrentClusterは所属clusterの空間diagnosticsを返す", () => {
+    const agent = makeAgent({ id: "agent-x", state: "joined", joinedGroupId: "group-1", x: 100, y: 100 });
+    const candidate: GroupCandidate = { id: "group-1", x: 100, y: 100, memberIds: ["agent-x"], status: "confirmed", age: 5 };
+    const state = makeState({ agents: [agent], groupCandidates: [candidate], formationScenarioId: "standingParty" });
+    const [inspection] = buildAgentInspection(state, DEFAULT_PARAMS);
+    expect(inspection.spatial?.currentCluster).toBeDefined();
+    expect(inspection.spatial?.currentCluster?.overlapping).toBe(false);
   });
 });

@@ -35,6 +35,16 @@ describe("StandingPartyAdvancedSettings", () => {
     expect(html).toContain("ObserverJoinerも他のagentと同じ連続値のdecision");
   });
 
+  it("renders the Phase 6 Spatial Dynamics sections with non-evaluative notes", () => {
+    const html = render(DEFAULT_STANDING_PARTY_SCENARIO_CONFIG);
+    expect(html).toContain("Spatial Dynamics 有効化");
+    expect(html).toContain("cluster空間力学");
+    expect(html).toContain("persistent roaming");
+    expect(html).toContain("局所crowding avoidance");
+    expect(html).toContain("候補選択の一般化");
+    expect(html).toContain("spatial coverageが高いこと自体を良い結果として評価するものではなく");
+  });
+
   it("does not show the reset-required banner when there are no pending changes", () => {
     const html = render(DEFAULT_STANDING_PARTY_SCENARIO_CONFIG, false);
     expect(html).not.toContain("一部の変更はReset後に反映されます");
@@ -48,8 +58,10 @@ describe("StandingPartyAdvancedSettings", () => {
   it("renders each field with a Reset-required apply-mode badge (all fields need Reset to take effect)", () => {
     const html = render(DEFAULT_STANDING_PARTY_SCENARIO_CONFIG);
     const badgeCount = (html.match(/apply-mode-badge--resetRequired/g) ?? []).length;
-    // Phase 2(10項目) + 他クラスタ関心(8項目) + 愛着(8項目) + 遷移(1 boolean + 4 number)の合計31項目
-    expect(badgeCount).toBe(31);
+    // Phase 2(10項目) + 他クラスタ関心(8項目) + 愛着(8項目) + 遷移(1 boolean + 4 number) = 31項目
+    // + Phase 6(#251): 有効化(5 boolean) + cluster空間力学(10) + roaming(10) + crowding(6) + 候補選択(10) = 41項目
+    // (hysteresisMarginは診断専用値のためUIには出さない、spatialDynamics.tsのコメント参照)
+    expect(badgeCount).toBe(31 + 41);
   });
 
   it("reflects the current numeric values from the config (e.g. observation radius)", () => {
@@ -91,6 +103,7 @@ describe("StandingPartyAdvancedSettings", () => {
     expect(html).not.toContain("onClick");
     expect(html).not.toMatch(/role="button"/);
     expect((html.match(/type="range"/g) ?? []).length).toBeGreaterThan(0);
-    expect((html.match(/type="checkbox"/g) ?? []).length).toBe(1);
+    // 遷移decision(1) + Phase 6(#251)のSpatial Dynamics有効化トグル(5) = 6
+    expect((html.match(/type="checkbox"/g) ?? []).length).toBe(6);
   });
 });
