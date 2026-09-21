@@ -100,6 +100,11 @@ import type { SpatialRuntimeState } from "./spatialDynamics";
 import { advanceRoamingHeading, applyAgentRoamingStep, roamingIntensity } from "./roaming";
 import type { RoamingRuntimeState } from "./roaming";
 import { computeCrowdingVector } from "./spatialOccupancy";
+import {
+  computeClusterSearchCandidateScore,
+  enumerateClusterSearchCandidates,
+  pickBestClusterSearchCandidate,
+} from "./clusterSearchSelection";
 // Issue #115: 発言生成の後段調整(乖離を反映した対外発言の選択)のためだけの依存。
 // socialExpression.ts側もattractiveness等のためにengine.tsをimportする循環参照になるが、
 // どちらもモジュール初期化時には相手側の値を評価しない(関数呼び出し時のみ参照する)ため安全。
@@ -1555,13 +1560,72 @@ export function stepSimulation(
     }
 
     // Issue #131: 既に満員の候補へは新たに接近を始めさせない(容量込みのjoinable判定)
+    // Issue #250 (Phase 6 P6-D, ADR§5): pendingClusterTransitionが無い/無効化された通常探索のみ、
+    // `spatialDynamics.candidateSelectionEnabled`のときに限り`nearestCandidate()`(最寄り1件)から
+    // 観察半径内の複数候補を総合scoreで比較する一般化selectionへ差し替える。afterParty/classroomPair、
+    // または`enabled: false`の間は完全に従来経路のまま(ADR§9.4「formationPolicy.idゲート」)。
     if (!candidate) {
-      candidate = nearestCandidate(
-        agent,
-        candidates,
-        capacityOf,
-        cooldownExcludeIds.size > 0 ? cooldownExcludeIds : undefined,
-      );
+      const useGeneralizedClusterSearch =
+        spatialDynamicsEnabled && formationPolicy.id === "standingParty" && spatialDynamicsConfig.candidateSelectionEnabled;
+      if (useGeneralizedClusterSearch) {
+        const observedCandidates = enumerateClusterSearchCandidates(
+          agent,
+          candidates,
+          capacityOf,
+          cooldownExcludeIds.size > 0 ? cooldownExcludeIds : undefined,
+          spatialDynamicsConfig,
+        );
+        const candidateScores = observedCandidates.map(({ candidate: observed, dist }) => {
+          const observedTieCorrection = aggregateGroupTieCorrection(agent.id, observed.memberIds, incomingTieCorrections);
+          const observedSocialScore = attractiveness(
+            agent,
+            observed,
+            agents,
+            effectiveParams,
+            interventionId,
+            tick,
+            activeEffects,
+            observedTieCorrection,
+            activeInterventionEffects,
+          );
+          const alternativeInterestCtx: AlternativeClusterInterestContext | undefined =
+            standingPartyConfig.transition.enabled
+              ? {
+                  config: standingPartyConfig.alternativeInterest,
+                  tick,
+                  agents,
+                  existingTieStrength: effectiveParams.existingTieStrength,
+                  resolveCapacity: (c) => formationPolicy.resolveGroupCapacity(c, effectiveParams),
+                  tieCorrections: incomingTieCorrections,
+                  topicIntegration: topicRuntimeContext
+                    ? {
+                        config: topicRuntimeContext.config,
+                        clusterTopicRuntime: topicRuntimeContext.clusterTopicRuntime,
+                        topicCatalog: topicRuntimeContext.topicCatalog,
+                        claimCatalog: topicRuntimeContext.claimCatalog,
+                        agentInformation: topicRuntimeContext.informationRuntime[agent.id],
+                        fatigueGain: topicRuntimeContext.fatigueGain,
+                        fatigueDecay: topicRuntimeContext.fatigueDecay,
+                      }
+                    : undefined,
+                }
+              : undefined;
+          return computeClusterSearchCandidateScore(agent, observed, dist, observedSocialScore, spatialDynamicsConfig, {
+            agents,
+            candidates,
+            alternativeInterestCtx,
+          });
+        });
+        const best = pickBestClusterSearchCandidate(candidateScores, spatialDynamicsConfig.candidateSelectionMinScore);
+        candidate = best ? candidates.find((c) => c.id === best.clusterId) : undefined;
+      } else {
+        candidate = nearestCandidate(
+          agent,
+          candidates,
+          capacityOf,
+          cooldownExcludeIds.size > 0 ? cooldownExcludeIds : undefined,
+        );
+      }
     }
     if (!candidate) continue;
 

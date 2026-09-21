@@ -100,6 +100,37 @@ export type SpatialDynamicsConfig = {
   crowdMaxContribution: number;
   /** cluster中心1つを密度sourceとして数える際の重み(ADR§4.3、既定1.5。輪は点でなく面を占めるため) */
   crowdClusterCenterWeight: number;
+
+  // --- Issue #250 (Phase 6 P6-D): 候補選択の一般化(`clusterSearchSelection.ts`が参照する) --------
+  // crowding関連の局所密度計算自体は`crowdSampleRadius`/`crowdDensityThreshold`/
+  // `crowdClusterCenterWeight`(上記)をそのまま再利用し、ここでは新規config項目を増やさない
+  // (ADR§5.4、候補選択専用のcrowding radiusを別途持たない)。
+
+  /** 候補選択の一般化そのものの有効/無効。`enabled: true`でもこれをfalseにすれば従来の
+   * `nearestCandidate()`(最寄り1件)のままになる(`roamingEnabled`/`crowdingEnabled`と対になる、
+   * 成分単位の切替) */
+  candidateSelectionEnabled: boolean;
+  /** 通常探索が観察するclusterの最大距離(ADR§5.2)。これを超える候補は列挙されない */
+  candidateSelectionObservationRadius: number;
+  /** 観察半径内の候補が多い場合に、距離昇順で評価対象を打ち切る上限(ADR§5.2) */
+  candidateSelectionMaxObserved: number;
+  /** 総合scoreがこれ未満ならbest candidateがあっても「候補なし」とし、roamingを継続する(ADR§5.3) */
+  candidateSelectionMinScore: number;
+  /** 総合scoreにおける既存`attractiveness()`の重み。既定で最大にし、空間項が社会的評価を上書きしない
+   * ようにする(ADR§5.4) */
+  candidateSelectionSocialWeight: number;
+  /** 総合scoreにおける距離factorの重み */
+  candidateSelectionDistanceWeight: number;
+  /** 総合scoreにおける既知member・clique適合(#198)の重み */
+  candidateSelectionAlternativeInterestWeight: number;
+  /** 総合scoreにおけるtopic/information機会(#233)の重み。Phase 5 disabled時は常に寄与0 */
+  candidateSelectionTopicOpportunityWeight: number;
+  /** 総合scoreにおける空間探索(閑散地域への小さな加点)の重み */
+  candidateSelectionExplorationWeight: number;
+  /** 直前に離脱/参加失敗した候補と同一の場合の減点(cooldown期間中は列挙段階で既に除外済み、二重防御) */
+  candidateSelectionCooldownPenalty: number;
+  /** 候補周辺が過密な場合の減点 */
+  candidateSelectionCrowdingPenalty: number;
 };
 
 export const DEFAULT_SPATIAL_DYNAMICS_CONFIG: SpatialDynamicsConfig = {
@@ -136,6 +167,18 @@ export const DEFAULT_SPATIAL_DYNAMICS_CONFIG: SpatialDynamicsConfig = {
   crowdRepulsionStrength: 1.2,
   crowdMaxContribution: 2,
   crowdClusterCenterWeight: 1.5,
+
+  candidateSelectionEnabled: false,
+  candidateSelectionObservationRadius: 260,
+  candidateSelectionMaxObserved: 12,
+  candidateSelectionMinScore: 0.35,
+  candidateSelectionSocialWeight: 1,
+  candidateSelectionDistanceWeight: 0.3,
+  candidateSelectionAlternativeInterestWeight: 0.2,
+  candidateSelectionTopicOpportunityWeight: 0.2,
+  candidateSelectionExplorationWeight: 0.15,
+  candidateSelectionCooldownPenalty: 0.2,
+  candidateSelectionCrowdingPenalty: 0.2,
 };
 
 function assertFinite(name: string, value: number): void {
@@ -238,6 +281,23 @@ export function validateSpatialDynamicsConfig(config: SpatialDynamicsConfig): vo
   assertNonNegative("crowdRepulsionStrength", config.crowdRepulsionStrength);
   assertPositive("crowdMaxContribution", config.crowdMaxContribution);
   assertNonNegative("crowdClusterCenterWeight", config.crowdClusterCenterWeight);
+
+  // Issue #250 (Phase 6 P6-D): 候補選択の一般化
+  assertPositive("candidateSelectionObservationRadius", config.candidateSelectionObservationRadius);
+  assertFinite("candidateSelectionMaxObserved", config.candidateSelectionMaxObserved);
+  if (!Number.isInteger(config.candidateSelectionMaxObserved) || config.candidateSelectionMaxObserved < 1) {
+    throw new Error(
+      `spatialDynamics config: candidateSelectionMaxObserved must be a positive integer (got ${config.candidateSelectionMaxObserved})`,
+    );
+  }
+  assertRange01("candidateSelectionMinScore", config.candidateSelectionMinScore);
+  assertRange01("candidateSelectionSocialWeight", config.candidateSelectionSocialWeight);
+  assertRange01("candidateSelectionDistanceWeight", config.candidateSelectionDistanceWeight);
+  assertRange01("candidateSelectionAlternativeInterestWeight", config.candidateSelectionAlternativeInterestWeight);
+  assertRange01("candidateSelectionTopicOpportunityWeight", config.candidateSelectionTopicOpportunityWeight);
+  assertRange01("candidateSelectionExplorationWeight", config.candidateSelectionExplorationWeight);
+  assertRange01("candidateSelectionCooldownPenalty", config.candidateSelectionCooldownPenalty);
+  assertRange01("candidateSelectionCrowdingPenalty", config.candidateSelectionCrowdingPenalty);
 }
 
 validateSpatialDynamicsConfig(DEFAULT_SPATIAL_DYNAMICS_CONFIG);
