@@ -1,4 +1,6 @@
 import { expect } from "vitest";
+import { distance, WORLD_HEIGHT, WORLD_WIDTH } from "./model";
+import type { SpatialDynamicsConfig } from "./spatialDynamics";
 import type { SimulationState } from "./types";
 
 /**
@@ -136,5 +138,100 @@ export function assertStandingPartyInvariants(state: SimulationState, ctx: Stand
         }
       }
     }
+  }
+}
+
+/** agent座標のclamp margin(`roaming.ts`/`spatialDynamics.ts`の`applyAgentRoamingStep`/`applyMemberFollow`と同一) */
+const AGENT_WORLD_MARGIN = 5;
+/** cluster中心座標のclamp margin(`spatialDynamics.ts`の`moveClusterCenter`と同一、`CLUSTER_CENTER_MARGIN`) */
+const CLUSTER_WORLD_MARGIN = 20;
+
+/**
+ * Issue #252 (Phase 6 統合検証): Phase 6(`spatialDynamics.ts`/`roaming.ts`/`spatialOccupancy.ts`/
+ * `clusterSearchSelection.ts`)固有の座標・movement不変条件を1箇所へ集約する。既存の
+ * `assertStandingPartyInvariants`(membership/episode/pendingClusterTransition)と組み合わせて、
+ * 1000tick級のロングラン・複数seed・複数presetのテストから毎tick呼び出すことを想定する。
+ * `spatialDynamics.enabled === false`のrunでも(呼び出し側が`config`を渡す限り)安全に呼べる ――
+ * `state.spatialRuntimeState`が`undefined`ならcluster velocity/roaming関連の検証は自然にスキップされる。
+ */
+export function assertStandingPartySpatialInvariants(
+  state: SimulationState,
+  config: SpatialDynamicsConfig,
+  label: string,
+): void {
+  for (const agent of state.agents) {
+    expect(Number.isFinite(agent.x), `${label} agent=${agent.id}のxがNaN/Infinity`).toBe(true);
+    expect(Number.isFinite(agent.y), `${label} agent=${agent.id}のyがNaN/Infinity`).toBe(true);
+    expect(agent.x, `${label} agent=${agent.id}のxがworld境界外`).toBeGreaterThanOrEqual(AGENT_WORLD_MARGIN);
+    expect(agent.x, `${label} agent=${agent.id}のxがworld境界外`).toBeLessThanOrEqual(WORLD_WIDTH - AGENT_WORLD_MARGIN);
+    expect(agent.y, `${label} agent=${agent.id}のyがworld境界外`).toBeGreaterThanOrEqual(AGENT_WORLD_MARGIN);
+    expect(agent.y, `${label} agent=${agent.id}のyがworld境界外`).toBeLessThanOrEqual(WORLD_HEIGHT - AGENT_WORLD_MARGIN);
+  }
+
+  const confirmedClusters = state.groupCandidates.filter((c) => c.status === "confirmed");
+  const confirmedIds = new Set(confirmedClusters.map((c) => c.id));
+  for (const cluster of confirmedClusters) {
+    expect(Number.isFinite(cluster.x), `${label} cluster=${cluster.id}のxがNaN/Infinity`).toBe(true);
+    expect(Number.isFinite(cluster.y), `${label} cluster=${cluster.id}のyがNaN/Infinity`).toBe(true);
+    expect(cluster.x, `${label} cluster=${cluster.id}のxがworld境界外`).toBeGreaterThanOrEqual(CLUSTER_WORLD_MARGIN);
+    expect(cluster.x, `${label} cluster=${cluster.id}のxがworld境界外`).toBeLessThanOrEqual(WORLD_WIDTH - CLUSTER_WORLD_MARGIN);
+    expect(cluster.y, `${label} cluster=${cluster.id}のyがworld境界外`).toBeGreaterThanOrEqual(CLUSTER_WORLD_MARGIN);
+    expect(cluster.y, `${label} cluster=${cluster.id}のyがworld境界外`).toBeLessThanOrEqual(WORLD_HEIGHT - CLUSTER_WORLD_MARGIN);
+  }
+
+  const runtime = state.spatialRuntimeState;
+  if (runtime) {
+    for (const [clusterId, velocity] of Object.entries(runtime.clusterVelocity)) {
+      // pruneSpatialRuntimeState(#247)がconfirmedでなくなったclusterのentryを毎tick除去するはず
+      // (「left/cleanup済みentityにspatial runtime stateが残らない」)。
+      expect(confirmedIds.has(clusterId), `${label}: 消滅したcluster=${clusterId}のclusterVelocityが残留している`).toBe(true);
+      const speed = Math.hypot(velocity.vx, velocity.vy);
+      expect(Number.isFinite(speed), `${label} cluster=${clusterId}のvelocityがNaN/Infinity`).toBe(true);
+      expect(speed, `${label} cluster=${clusterId}のvelocityが上限(maxClusterCenterSpeed)超過`).toBeLessThanOrEqual(
+        config.maxClusterCenterSpeed + 1e-6,
+      );
+    }
+
+    const agentsById = new Map(state.agents.map((a) => [a.id, a] as const));
+    for (const [agentId, roamingState] of Object.entries(runtime.roaming)) {
+      const agent = agentsById.get(agentId);
+      // 「roaming中agentにstale target/joinedGroupIdが残らない」「left/cleanup済みentityに
+      // spatial runtime stateが残らない」: `nextRoaming`はengine.tsのstep 6(roaming)時点の
+      // undecided集合から構築されるが、責務9(stress蓄積・離脱判定)やその他の終了処理はその後の
+      // 別stepで評価されるため、同一tick内でroaming直後に`leaving`/`left`/`unassigned`等の
+      // 「場を離れる」側へ遷移したagentのentryは「今tickの戻り値」に限り1tickだけ残る
+      // (次tickのrebuildで自然に脱落する、孤児化ではない)。一方`approaching`/`forming`/`joined`
+      // (「候補へ合流する」側)は、候補選択がroaming stateを即座に脱落させることを
+      // `roamingEngineWiring.test.ts`が既に固定しているため、roaming entryと共存してはならない。
+      expect(agent, `${label}: 存在しないagent=${agentId}のroaming entryが残留している`).toBeDefined();
+      expect(
+        agent!.state === "approaching" || agent!.state === "forming" || agent!.state === "joined",
+        `${label} agent=${agentId}: roaming entryが候補合流状態(state=${agent!.state})と共存している`,
+      ).toBe(false);
+      expect(
+        Number.isFinite(roamingState.headingRadians),
+        `${label} agent=${agentId}のroaming headingがNaN/Infinity`,
+      ).toBe(true);
+      expect(
+        Number.isFinite(roamingState.expiresAtTick),
+        `${label} agent=${agentId}のroaming expiresAtTickがNaN/Infinity`,
+      ).toBe(true);
+    }
+  }
+
+  // 「joinedGroupIdから許容距離を超えて取り残されない」: cluster移動そのものはmembership/episodeを
+  // 変えない(#247の責務外)一方、追従(applyMemberFollow)が機能していれば乖離は無限に広がらない。
+  // 個々のtickでの追従量を厳密比較するのではなく、明らかな追従破綻(取り残され)だけを検出する
+  // 緩やかな上限を使う。
+  const strandedDistanceLimit = config.repulsionRadius + config.preferredClusterSeparation + 200;
+  for (const agent of state.agents) {
+    if (agent.state !== "joined" || agent.joinedGroupId === undefined) continue;
+    const cluster = confirmedClusters.find((c) => c.id === agent.joinedGroupId);
+    if (!cluster) continue;
+    const d = distance(agent.x, agent.y, cluster.x, cluster.y);
+    expect(Number.isFinite(d), `${label} agent=${agent.id}のcluster中心までの距離がNaN/Infinity`).toBe(true);
+    expect(d, `${label} agent=${agent.id}が所属cluster=${cluster.id}から取り残されている(距離=${d})`).toBeLessThanOrEqual(
+      strandedDistanceLimit,
+    );
   }
 }
