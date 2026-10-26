@@ -669,6 +669,13 @@ Phase 3のspeech effectsが確立した契約と同型である。
   rng消費方針(§9.3)、空間phaseがmembershipを触らないこと(SP-9)。
 - 物理衝突・NavMesh・経路探索・3D表示・実データ較正は明示的に対象外(Issue本文の「対象外」と同じ)。
 
+Phase 7(Issue #261)の契約は
+[`standing-party-phase7-venue-anchors.md`](standing-party-phase7-venue-anchors.md)にある。
+飲食の直進は、上の箇条書きにある「全agentの合成へ足す第5成分」にはしない。
+`PendingVenueVisit` が `traveling` のagentだけ、roamingとcrowdingを止めて台の中心へ進む。
+維持するのは、成分を足すときのclamp順、飲食needの初期化を主系列RNGで行わないこと、
+空間phase(S1〜S4)がmembershipを書き換えないことである。入口・窓際・障害物は引き続き対象外である。
+
 ---
 
 ## 11. 受入条件との対応
