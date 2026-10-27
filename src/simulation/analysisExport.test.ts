@@ -177,6 +177,7 @@ describe("analysisExport (Issue #217)", () => {
       "standing-party-information-transmissions.csv",
       "standing-party-information-retellings.csv",
       "standing-party-information-statistics.csv",
+      "standing-party-venue-visits.csv",
     ]);
     expect(files[0]!.content).toContain("episodeId,agentId,clusterId");
     expect(files[0]!.content).toContain("activeOrCensored");

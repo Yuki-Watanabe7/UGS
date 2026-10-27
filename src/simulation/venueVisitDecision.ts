@@ -248,6 +248,9 @@ export function readVenueAgentReadout(
           phase: visit.phase,
           visitId: visit.visitId,
           anchorId: decision?.anchorId ?? visit.anchorId,
+          purpose: visit.purpose,
+          startedAtTick: visit.startedAtTick,
+          phaseEnteredAtTick: visit.phaseEnteredAtTick,
         }
       : {}),
   };

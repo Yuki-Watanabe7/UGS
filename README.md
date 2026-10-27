@@ -1132,12 +1132,29 @@ UI側(#251)は次を提供します。
 検証範囲・受入条件対応表・スコープ決定の詳細は
 [`docs/standing-party-phase6-verification.md`](docs/standing-party-phase6-verification.md)を参照してください。
 
-### Phase 7の飲食台契約(#261、設計のみ)
+### Phase 7の飲食台と目的移動(#261〜#266)
 
 料理台とドリンク台、空腹・喉の渇き、台への目的移動の型・寿命・優先順位・tick順は
 [`docs/standing-party-phase7-venue-anchors.md`](docs/standing-party-phase7-venue-anchors.md)
 に固定しています。台は会話clusterとは別のentityで、近くに立っただけでは接触や内容発話になりません。
-実装は #262 以降です。この節の時点ではシミュレーションの状態・イベント・座標・乱数は変わっていません。
+
+立食パーティーを開くと、初期presetは「飲食による会場回遊」(`standing-party-venue-refreshment`)です。
+料理台やドリンク台へ向かう移動が、別の人との新しい会話のきっかけになる様子を見られます。
+これは食欲や人流を再現したモデルではなく、仮説的な設定です。比較は「飲食なし比較」
+(`standing-party-venue-off-baseline`)と同一seedで行います。差は飲食の有効/無効だけです。
+従来の「立食パーティー」(`standing-party`)と Phase 6 の比較presetは残しており、それらの飲食は無効のままです。
+URLで `/simulate/standing-party` を開くと初期presetで実行が作り直され、台と訪問はリセットされます。
+
+Canvasでは移動中のagentから対象の台へ点線を引き、皿またはコップの印と「受取」「飲食」「回遊」の短い文字で
+受け取りと会場への復帰を区別します。全員の経路や吹き出しは常時出しません。
+「飲食の移動を表示」を切っても、座標・event・乱数は変わりません。
+agentインスペクターの「飲食の目的行動」は、会話の輪への参加とは別の区画で空腹・喉の渇き、phase、
+対象の台、取得tick、判断理由、cooldownを示します。
+イベントログには「料理を取りに移動を始めた」「ドリンクを受け取った」「会場の回遊に戻った」など、
+区切りの出来事だけが出ます。移動の毎tickは出しません。
+統計の「飲食の訪問」と JSON / CSV(`standing-party-analysis-export/4`、分析スキーマ 2、
+`venue-visit-analysis/1`)は、料理とドリンクの訪問回数、到着・完了・中断、開始時の移動距離、
+訪問後に別の輪へ入った件数をread-onlyで数えます。
 
 ## シミュレーションルールの概要
 
@@ -1162,13 +1179,13 @@ src/
     types.ts              Agent / GroupCandidate / SimParams などの型定義
     random.ts              seed固定の疑似乱数生成器
     model.ts               初期エージェント生成(seedから再現可能)
-    presets.ts              二次会5つ+立食パーティー11個(Phase 6比較プリセット2つを含む、#251)+教室での班分け4つ、計20シナリオプリセットとデフォルトパラメータ
+    presets.ts              二次会5つ+立食パーティー13個(Phase 6比較2つとPhase 7飲食比較2つを含む、#251、#266)+教室での班分け4つ、計22シナリオプリセットとデフォルトパラメータ
     standingPartyScenarioConfig.ts 立食パーティー専用のPhase 2設定(満足度・離脱判定・回遊傾向分布)+Phase 3設定(他クラスタ関心・愛着離脱配慮・遷移decision)+Phase 5設定(情報伝播・topic統合)+Phase 6設定(spatialDynamics)束とその比較プリセット(#189、#202、#251)
     standingPartyComparison.ts 立食パーティーのプリセット間比較指標(自発離脱・再参加・滞在tick等)の集計ロジック(#190)
     standingPartyAnalysis.ts   立食パーティー Phase 4 分析入口: 会話履歴(#212)・接触network(#213)・統計(#214)のpure導出(ADR: docs/standing-party-analysis-phase4-model.md)
     contactNetwork.ts          立食パーティー Phase 4: membership重複からcontact interval / edge / node / 記述指標を導出(#213)
     standingPartyStatistics.ts 立食パーティー Phase 4: 滞在・接触・cluster寿命・transitionの記述統計と時系列(#214)
-    analysisExport.ts            立食パーティー Phase 4: 現在runの履歴・network・統計のJSON/CSV export(#217、Phase 6の空間config/統計を含む、#251)
+    analysisExport.ts            立食パーティー Phase 4: 現在runの履歴・network・統計のJSON/CSV export(#217、Phase 6の空間config/統計を含む、#251、Phase 7の飲食集計を含む、#266)
     standingPartyAnalysisInvariants.ts 立食パーティー Phase 4: 履歴/network/統計の横断不変条件(#218)
     formationPolicy.ts       シナリオ別の班形成・成立・終了ルールを切り替えるFormationPolicyの定義
     groupPartition.ts        人口を定員ルール(固定/可変)で分割し構造的未割当人数を決定的に計算
@@ -1194,9 +1211,9 @@ src/
     clusterSearchSelection.ts 立食パーティー Phase 6: 候補列挙+総合scoreによる通常再探索の一般化(nearestCandidate代替、#250)
     spatialAnalysis.ts       立食パーティー Phase 6: spatial coverage・radius of gyration・cluster間最近接距離・局所密度分布等のread-only統計と、agent/clusterごとの空間diagnostics snapshot(#251)
   components/
-    SimulationCanvas.tsx    SVGによる描画のみを担当(立食パーティーのみ、Phase 6空間diagnostics overlay(cluster velocity・roaming heading・計測用grid、read-only)を含む、#251)
+    SimulationCanvas.tsx    SVGによる描画のみを担当(立食パーティーのみ、Phase 6空間diagnostics overlayとPhase 7の飲食移動表示を含む、#251、#266)
     ControlPanel.tsx        操作パネルとパラメータスライダー
-    StandingPartyAdvancedSettings.tsx 立食パーティー専用のPhase 2+Phase 3+Phase 6詳細設定パネル(#189、#202、#251、standingParty選択時のみ表示)
+    StandingPartyAdvancedSettings.tsx 立食パーティー専用のPhase 2+Phase 3+Phase 6+Phase 7詳細設定パネル(#189、#202、#251、#266、standingParty選択時のみ表示)
     ConversationHistoryTimeline.tsx 立食パーティー専用の会話履歴タイムライン(#215、agent/cluster mode・filter・詳細・Canvas選択同期)
     ConversationHistoryFilters.tsx / ConversationHistoryDetail.tsx / conversationHistoryProjection.ts  同上のfilter・詳細・表示投影
     ContactNetworkGraph.tsx 立食パーティー専用の接触ネットワークグラフ(#216、weight切替・filter・詳細・Canvas/timeline選択同期)

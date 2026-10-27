@@ -195,6 +195,7 @@ export function startVenueVisitsFromDecisions(input: {
           : {}),
         refreshmentNeedHunger: decision.hunger,
         refreshmentNeedThirst: decision.thirst,
+        ...(decision.distance !== undefined ? { venueTravelDistance: decision.distance } : {}),
       },
     });
   }

@@ -24,7 +24,8 @@ type FilterKey =
   | "speechEffect"
   | "divergence"
   | "trust"
-  | "tie";
+  | "tie"
+  | "venueVisit";
 
 function filtersForPresentation(
   presentation: ScenarioPresentation,
@@ -59,6 +60,9 @@ function filtersForPresentation(
       tags: ["clusterDeparture", "groupLifecycle"],
     });
   }
+  if (presentation.id === "standingParty") {
+    filters.push({ key: "venueVisit", label: "飲食の移動のみ", tag: "venueVisit" });
+  }
   return filters;
 }
 
@@ -79,7 +83,7 @@ const ROW_DISPLAY_LIMIT = 200;
  * (観察者ごとの認知/非認知の詳細はObserverJoinerInspector側で確認する)。
  */
 type TimelineRow =
-  | { kind: "state"; key: string; tick: number; message: string; tags: LogTag[] }
+  | { kind: "state"; key: string; tick: number; message: string; tags: LogTag[]; eventType?: string }
   | { kind: "speech"; key: string; tick: number; message: string; meta: string }
   | { kind: "speechInterpretation"; key: string; tick: number; message: string; meta: string }
   | { kind: "speechEffect"; key: string; tick: number; message: string; meta: string }
@@ -107,6 +111,7 @@ function buildTimeline(
     tick: entry.tick,
     message: resolveScenarioLogMessage(entry, presentation),
     tags: entry.tags,
+    ...(entry.eventType ? { eventType: entry.eventType } : {}),
   }));
   const speechLog: SpeechEvent[] = state.speechLog ?? [];
   const speechRows: TimelineRow[] = speechLog.map((event) => {
@@ -312,7 +317,11 @@ export function EventLog({
               <div className="event-log-entry-meta">{row.meta}</div>
             </div>
           ) : (
-            <div key={row.key} className="event-log-entry">
+            <div
+              key={row.key}
+              className="event-log-entry"
+              data-event-type={row.eventType}
+            >
               {row.message}
             </div>
           ),

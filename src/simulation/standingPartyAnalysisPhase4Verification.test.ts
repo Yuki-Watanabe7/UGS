@@ -426,6 +426,7 @@ describe("Issue #218: export整合・決定性", () => {
         "standing-party-spatial-agent-stats.csv",
         "standing-party-spatial-cluster-stats.csv",
         "standing-party-transitions.csv",
+        "standing-party-venue-visits.csv",
       ].sort(),
     );
     const episodeCsv = csvFiles.find((f) => f.filename.includes("episodes"))!;

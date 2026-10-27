@@ -805,3 +805,103 @@ describe("SimulationCanvas venue anchors (Issue #262, Phase 7)", () => {
     expect(renderCanvas({ formationScenarioId: "classroomPair" })).not.toContain("venue-anchor");
   });
 });
+
+describe("SimulationCanvas venue visit markers (Issue #266)", () => {
+  const anchors = [
+    {
+      id: "anchor:food-main",
+      kind: "food" as const,
+      x: 72,
+      y: 460,
+      interactionRadius: 28,
+      capacity: 3,
+      serviceTicks: 4,
+      label: "料理台",
+    },
+    {
+      id: "anchor:drink-main",
+      kind: "drink" as const,
+      x: 728,
+      y: 60,
+      interactionRadius: 28,
+      capacity: 3,
+      serviceTicks: 4,
+      label: "ドリンク台",
+    },
+  ];
+
+  function renderVisit(overrides: Partial<Parameters<typeof SimulationCanvas>[0]> = {}) {
+    return renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        agents: [makeAgent({ id: "agent-a", label: "A", x: 400, y: 260 })],
+        groupCandidates: [],
+        width: 800,
+        height: 520,
+        formationScenarioId: "standingParty",
+        venueAnchors: anchors,
+        showVenueVisitMarkers: true,
+        venueVisits: {
+          "agent-a": {
+            visitId: "agent-a:anchor:drink-main:16",
+            anchorId: "anchor:drink-main",
+            purpose: "drink",
+            startedAtTick: 16,
+            phase: "traveling",
+            phaseEnteredAtTick: 16,
+            decisionReason: "selectedDrink",
+          },
+        },
+        ...overrides,
+      }),
+    );
+  }
+
+  it("draws a dotted line and a cup while traveling, and hides them when the display is off", () => {
+    const html = renderVisit();
+    expect(html).toContain('data-testid="venue-visit-link-agent-a"');
+    expect(html).toContain('data-venue-phase="traveling"');
+    expect(html).toContain('data-venue-kind="drink"');
+    expect(html).toContain("杯");
+    expect(html).toContain("ドリンク台へ移動中");
+    expect(html).not.toContain("受取");
+
+    const hidden = renderVisit({ showVenueVisitMarkers: false });
+    expect(hidden).not.toContain("venue-visit-link-agent-a");
+    expect(hidden).toContain('data-testid="venue-anchor-anchor:drink-main"');
+  });
+
+  it("labels receiving with a plate and shows a short return caption from the log", () => {
+    const receiving = renderVisit({
+      venueVisits: {
+        "agent-a": {
+          visitId: "v",
+          anchorId: "anchor:food-main",
+          purpose: "food",
+          startedAtTick: 10,
+          phase: "receiving",
+          phaseEnteredAtTick: 20,
+          decisionReason: "selectedFood",
+        },
+      },
+    });
+    expect(receiving).toContain("皿 受取");
+    expect(receiving).not.toContain("venue-visit-link-agent-a");
+
+    const returned = renderVisit({
+      tick: 30,
+      venueVisits: {},
+      log: [
+        {
+          tick: 28,
+          message: "Aさんが料理台を離れ、会場の回遊に戻った",
+          tags: ["venueVisit"],
+          eventType: "venueVisitCompleted",
+          metadata: { agentId: "agent-a", venueAnchorKind: "food" },
+        },
+      ],
+    });
+    expect(returned).toContain('data-testid="venue-return-agent-a"');
+    expect(returned).toContain("回遊");
+    expect(returned).not.toContain("venue-visit-link");
+  });
+});

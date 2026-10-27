@@ -43,14 +43,17 @@ import type {
   StandingPartyConversationHistory,
   StandingPartyRunStatistics,
   StandingPartyStatisticsFilter,
+  VenueVisitAnalysis,
 } from "./types";
-import { STANDING_PARTY_ANALYSIS_SCHEMA_VERSION } from "./types";
+import { STANDING_PARTY_ANALYSIS_SCHEMA_VERSION, VENUE_VISIT_ANALYSIS_SCHEMA_VERSION } from "./types";
+import type { VenueAnchorConfig } from "./venueAnchors";
 
 /**
  * Issue #217: export bundle の schema。分析 snapshot の schemaVersion とは別系統。
  * Issue #251 (Phase 6)でspatialDynamics fieldを追加したため/2から/3へ更新する。
+ * Issue #266 (Phase 7)でvenueVisits fieldを追加したため/3から/4へ更新する。
  */
-export const STANDING_PARTY_ANALYSIS_EXPORT_SCHEMA_VERSION = "standing-party-analysis-export/3";
+export const STANDING_PARTY_ANALYSIS_EXPORT_SCHEMA_VERSION = "standing-party-analysis-export/4";
 
 /** Issue #217 本文の別名。実装正本は`StandingPartyConversationHistory`。 */
 export type InteractionHistorySnapshot = StandingPartyConversationHistory;
@@ -100,6 +103,16 @@ export type StandingPartyAnalysisExport = {
   informationPropagation: InformationPropagationExport;
   /** Issue #251 (Phase 6): 空間ダイナミクスのread-only analysis snapshot(現在tick時点)。 */
   spatialDynamics: SpatialDynamicsExport;
+  /** Issue #266 (Phase 7): 飲食訪問の集計と、その実行のvenue設定。 */
+  venueVisits: VenueVisitExport;
+};
+
+/** Issue #266: 飲食集計と設定のexport。表示用stateは含めない */
+export type VenueVisitExport = {
+  schemaVersion: typeof VENUE_VISIT_ANALYSIS_SCHEMA_VERSION;
+  /** standingParty以外、または設定未指定なら null */
+  config: VenueAnchorConfig | null;
+  summary: VenueVisitAnalysis;
 };
 
 /**
@@ -329,6 +342,11 @@ export function buildStandingPartyAnalysisExport(
       snapshot: spatialAnalysis.snapshot,
       agents: spatialAnalysis.agents,
       clusters: spatialAnalysis.clusters,
+    },
+    venueVisits: {
+      schemaVersion: VENUE_VISIT_ANALYSIS_SCHEMA_VERSION,
+      config: options.standingPartyConfig?.venueAnchors ?? null,
+      summary: statistics.venueVisits,
     },
   };
 }
@@ -722,6 +740,50 @@ export function informationTransmissionsToCsv(bundle: InformationPropagationExpo
   );
 }
 
+export function venueVisitsToCsv(bundle: VenueVisitExport): string {
+  const summary = bundle.summary;
+  const config = bundle.config;
+  const serviceTicks = config?.anchors[0]?.serviceTicks;
+  return rowsToCsv(
+    [
+      "schemaVersion",
+      "enabled",
+      "encounterEnabled",
+      "hungerGainPerTick",
+      "thirstGainPerTick",
+      "visitThreshold",
+      "serviceTicks",
+      "revisitCooldownTicks",
+      "foodVisitCount",
+      "drinkVisitCount",
+      "arrivedCount",
+      "completedCount",
+      "abandonedCount",
+      "travelDistanceSampleCount",
+      "meanTravelDistance",
+      "newClusterJoinAfterVisitCount",
+    ],
+    [[
+      summary.schemaVersion,
+      summary.enabled,
+      config?.encounterEnabled ?? "",
+      config?.needs.hungerGainPerTick ?? "",
+      config?.needs.thirstGainPerTick ?? "",
+      config?.needs.visitThreshold ?? "",
+      serviceTicks ?? "",
+      config?.visit.revisitCooldownTicks ?? "",
+      summary.foodVisitCount,
+      summary.drinkVisitCount,
+      summary.arrivedCount,
+      summary.completedCount,
+      summary.abandonedCount,
+      summary.travelDistanceSampleCount,
+      summary.meanTravelDistance ?? "",
+      summary.newClusterJoinAfterVisitCount,
+    ]],
+  );
+}
+
 export function informationStatisticsToCsv(bundle: InformationPropagationExport): string {
   return rowsToCsv(
     ["level", "topicId", "claimId", "awareCount", "adoptedCount", "rememberedCount", "firstSpreadTick", "uniqueSpeakerCount", "uniqueReceiverCount"],
@@ -814,6 +876,10 @@ export function buildStandingPartyAnalysisCsvFiles(
     {
       filename: "standing-party-information-statistics.csv",
       content: informationStatisticsToCsv(bundle.informationPropagation),
+    },
+    {
+      filename: "standing-party-venue-visits.csv",
+      content: venueVisitsToCsv(bundle.venueVisits),
     },
   ];
 }

@@ -44,6 +44,19 @@ describe("StandingPartyAdvancedSettings", () => {
     const tagStart = html.lastIndexOf("<input", testidIndex);
     const tagEnd = html.indexOf("/>", testidIndex);
     expect(html.slice(tagStart, tagEnd)).not.toContain('checked=""');
+    expect(html).toContain("空腹の上昇量");
+    expect(html).toContain("喉の渇きの上昇量");
+    expect(html).toContain("訪問を始める欲求の閾値");
+    expect(html).toContain("受け取りにかかるtick");
+    expect(html).toContain("同じ種類を再訪するまでのtick");
+    expect(html).toContain('data-testid="standing-party-field-hungerGainPerTick"');
+    expect(html).toContain('min="0"');
+    expect(html).toContain('data-testid="standing-party-field-visitThreshold"');
+    expect(html).toContain('max="1"');
+    expect(html).toContain('data-testid="standing-party-field-venueServiceTicks"');
+    expect(html).toContain('min="1"');
+    expect(html).toContain('data-testid="standing-party-field-revisitCooldownTicks"');
+    expect(html).toContain('max="200"');
   });
 
   it("renders the Phase 6 Spatial Dynamics sections with non-evaluative notes", () => {
@@ -71,9 +84,9 @@ describe("StandingPartyAdvancedSettings", () => {
     const badgeCount = (html.match(/apply-mode-badge--resetRequired/g) ?? []).length;
     // Phase 2(10項目) + 他クラスタ関心(8項目) + 愛着(8項目) + 遷移(1 boolean + 4 number) = 31項目
     // + Phase 6(#251): 有効化(5 boolean) + cluster空間力学(10) + roaming(10) + crowding(6) + 候補選択(10) = 41項目
-    // + Phase 7(#262): 飲食台の有効化(1 boolean)
+    // + Phase 7(#262、#266): 飲食台の有効化(1 boolean) + 上昇量2 + 閾値 + service + 再訪cooldown(5 number)
     // (hysteresisMarginは診断専用値のためUIには出さない、spatialDynamics.tsのコメント参照)
-    expect(badgeCount).toBe(31 + 41 + 1);
+    expect(badgeCount).toBe(31 + 41 + 1 + 5);
   });
 
   it("reflects the current numeric values from the config (e.g. observation radius)", () => {

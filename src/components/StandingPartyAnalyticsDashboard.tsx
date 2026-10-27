@@ -599,6 +599,32 @@ export function StandingPartyAnalyticsDashboard({
           <h4>会場退出</h4>
           <p>{run.venueExitCount} 人</p>
         </article>
+        <article className="analytics-card" data-testid="analytics-venue-visits">
+          <h4>飲食の訪問(Phase 7)</h4>
+          {statistics.venueVisits.enabled ? (
+            <>
+              <p>
+                料理 {statistics.venueVisits.foodVisitCount} / ドリンク {statistics.venueVisits.drinkVisitCount}
+              </p>
+              <p>
+                到着 {statistics.venueVisits.arrivedCount} / 完了 {statistics.venueVisits.completedCount} / 中断{" "}
+                {statistics.venueVisits.abandonedCount}
+              </p>
+              <p>
+                開始時の平均移動距離:{" "}
+                {statistics.venueVisits.meanTravelDistance !== undefined
+                  ? formatNumber(statistics.venueVisits.meanTravelDistance)
+                  : "非該当"}
+                {" / "}訪問後の新しい輪への参加 {statistics.venueVisits.newClusterJoinAfterVisitCount}
+              </p>
+              <p className="analytics-card-hint">
+                会話への参加や接触とは別の件数です。多さは社交性の良し悪しを意味しません。
+              </p>
+            </>
+          ) : (
+            <p className="analytics-empty">飲食台は現在無効です。比較presetか詳細設定で有効にできます。</p>
+          )}
+        </article>
         <article className="analytics-card" data-testid="analytics-spatial-overview">
           <h4>空間ダイナミクス(Phase 6)</h4>
           {spatialAnalysis.spatialDynamicsEnabled ? (
