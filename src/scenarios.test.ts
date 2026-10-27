@@ -36,6 +36,8 @@ describe("scenario category configuration", () => {
       "standing-party-info-seeking",
       "standing-party-spatial-roaming",
       "standing-party-spatial-fixed-baseline",
+      "standing-party-venue-refreshment",
+      "standing-party-venue-off-baseline",
     ]);
   });
 
@@ -47,9 +49,11 @@ describe("scenario category configuration", () => {
     expect(getPresetForScenario(afterParty, afterParty.initialPresetId).id).toBe("natural");
     expect(getPresetForScenario(classroom, classroom.initialPresetId).id).toBe("classroom-pair");
     expect(getPresetForScenario(classroom, "natural").id).toBe("classroom-pair");
-    expect(getPresetForScenario(standingParty, standingParty.initialPresetId).id).toBe("standing-party");
+    expect(getPresetForScenario(standingParty, standingParty.initialPresetId).id).toBe(
+      "standing-party-venue-refreshment",
+    );
     // 未対応プリセットidを渡しても、そのシナリオの初期プリセットへフォールバックする
-    expect(getPresetForScenario(standingParty, "natural").id).toBe("standing-party");
+    expect(getPresetForScenario(standingParty, "natural").id).toBe("standing-party-venue-refreshment");
   });
 
   it("resolves standing-party's own formation policy (not silently aliased to afterParty)", () => {

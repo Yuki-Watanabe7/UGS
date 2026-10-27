@@ -31,6 +31,7 @@ import {
   formatReceptionLine,
 } from "./speechEffectsDisplay";
 import { getScenarioPresentation, type ScenarioPresentation } from "../presentation/scenarioPresentation";
+import type { VenueAnchor, VenueVisitDecisionReason, VenueVisitPhase } from "../simulation/venueAnchors";
 
 type Props = {
   state: SimulationState;
@@ -613,6 +614,122 @@ function SpatialDiagnosticsSection({
   );
 }
 
+const VENUE_PHASE_LABEL: Record<VenueVisitPhase, string> = {
+  traveling: "移動中",
+  receiving: "受け取り中",
+  consuming: "消費中",
+};
+
+const VENUE_REASON_LABEL: Record<VenueVisitDecisionReason, string> = {
+  featureDisabled: "機能オフ",
+  notEligibleState: "対象外の状態",
+  pendingSocialTransition: "社会的な移動意図を優先",
+  activeVenueVisit: "飲食の訪問中",
+  minimumDwell: "最低滞在中",
+  belowThreshold: "欲求が閾値未満",
+  revisitCooldown: "再訪のcooldown中",
+  noAnchor: "対象の台がない",
+  anchorsAtCapacity: "台が埋まっている",
+  selectedFood: "空腹が閾値以上",
+  selectedDrink: "喉の渇きが閾値以上",
+};
+
+const VENUE_ABANDON_LABEL = {
+  anchorMissing: "台が無い",
+  anchorAtCapacity: "台が埋まっている",
+  travelTimedOut: "移動が時間切れ",
+  agentLeft: "会場を出た",
+} as const;
+
+function formatNeed(value: number): string {
+  return value.toFixed(2);
+}
+
+function cooldownLabel(untilTick: number | undefined, tick: number): string {
+  if (untilTick === undefined || untilTick <= tick) return "なし";
+  return `tick ${untilTick} まで`;
+}
+
+function VenueVisitSection({
+  inspection,
+  tick,
+  anchors,
+}: {
+  inspection: ObserverJoinerInspection;
+  tick: number;
+  anchors?: VenueAnchor[];
+}) {
+  const visit = inspection.venueVisit;
+  const history = inspection.venueVisitHistory;
+  if (!visit) {
+    return (
+      <p className="observer-inspector-speech-empty" data-testid="observer-inspector-venue-visit">
+        この実行では飲食台は無効です。会話の輪への参加とは別の行動です。
+      </p>
+    );
+  }
+  const anchorId = visit.anchorId ?? history?.lastAnchorId;
+  const anchor = anchors?.find((item) => item.id === anchorId);
+  const kind = visit.purpose ?? history?.lastKind;
+  const kindLabel = kind === "food" ? "料理" : kind === "drink" ? "ドリンク" : undefined;
+  return (
+    <div data-testid="observer-inspector-venue-visit">
+      <div className="observer-inspector-row">
+        <span>空腹 / 喉の渇き</span>
+        <span>
+          {formatNeed(visit.hunger)} / {formatNeed(visit.thirst)}
+        </span>
+      </div>
+      <div className="observer-inspector-row">
+        <span>訪問phase</span>
+        <span>{visit.phase ? VENUE_PHASE_LABEL[visit.phase] : "訪問していない"}</span>
+      </div>
+      <div className="observer-inspector-row">
+        <span>対象の台</span>
+        <span>{anchor ? `${anchor.label}${kindLabel ? `(${kindLabel})` : ""}` : "なし"}</span>
+      </div>
+      {visit.startedAtTick !== undefined && (
+        <div className="observer-inspector-row">
+          <span>移動開始tick</span>
+          <span>tick {visit.startedAtTick}</span>
+        </div>
+      )}
+      {visit.phase && visit.phaseEnteredAtTick !== undefined && (
+        <div className="observer-inspector-row">
+          <span>今のphaseに入ったtick</span>
+          <span>tick {visit.phaseEnteredAtTick}</span>
+        </div>
+      )}
+      <div className="observer-inspector-row">
+        <span>到着 / 取得 / 完了tick</span>
+        <span>
+          {history?.arrivedAtTick ?? "-"} / {history?.obtainedAtTick ?? "-"} / {history?.completedAtTick ?? "-"}
+        </span>
+      </div>
+      <div className="observer-inspector-row">
+        <span>直近の判断理由</span>
+        <span>{visit.reason ? VENUE_REASON_LABEL[visit.reason] : "なし"}</span>
+      </div>
+      {history?.abandonedAtTick !== undefined && (
+        <div className="observer-inspector-row">
+          <span>直近の中断</span>
+          <span>
+            tick {history.abandonedAtTick}
+            {history.abandonReason ? `(${VENUE_ABANDON_LABEL[history.abandonReason]})` : ""}
+          </span>
+        </div>
+      )}
+      <div className="observer-inspector-row">
+        <span>飲食後のcooldown</span>
+        <span>
+          料理 {cooldownLabel(visit.foodCooldownUntilTick, tick)} / ドリンク{" "}
+          {cooldownLabel(visit.drinkCooldownUntilTick, tick)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function InspectionCard({
   inspection,
   labelById,
@@ -620,6 +737,8 @@ function InspectionCard({
   seed,
   presetId,
   agentById,
+  tick = 0,
+  anchors,
 }: {
   inspection: ObserverJoinerInspection;
   labelById: Map<string, string>;
@@ -627,6 +746,8 @@ function InspectionCard({
   seed?: number;
   presetId?: string;
   agentById: Map<string, SimulationState["agents"][number]>;
+  tick?: number;
+  anchors?: VenueAnchor[];
 }) {
   const isNearLeaving = inspection.leaveMargin <= LEAVE_MARGIN_WARNING_THRESHOLD;
   const hasNearestGroup = inspection.nearestGroupId !== undefined;
@@ -981,6 +1102,13 @@ function InspectionCard({
           ) : (
             <p className="observer-inspector-speech-empty">この場面ではSpatial Dynamicsは対象外です。</p>
           )}
+
+          <div className="observer-inspector-divider" />
+
+          <div className="observer-inspector-row observer-inspector-row--header">
+            <span>飲食の目的行動(会話への参加とは別)</span>
+          </div>
+          <VenueVisitSection inspection={inspection} tick={tick} anchors={anchors} />
         </>
       )}
 
@@ -1242,6 +1370,8 @@ export function ObserverJoinerInspector({
             seed={seed}
             presetId={presetId}
             agentById={agentById}
+            tick={state.tick}
+            anchors={state.venueAnchors}
           />
         )
       ) : isClassroomPair ? (

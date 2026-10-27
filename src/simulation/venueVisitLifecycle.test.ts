@@ -193,7 +193,7 @@ describe("venue visit movement (Issue #264)", () => {
       "venueRefreshmentBreak",
     );
     expect(history.clusterLifetimes.every((life) => life.voluntaryLeaveCount === 0)).toBe(true);
-    expect(history.schemaVersion).toBe(1);
+    expect(history.schemaVersion).toBe(2);
 
     const arrived = seen.get(51)!;
     expect(arrived.venueRuntimeState?.visits["agent-a"]?.phase).toBe("receiving");

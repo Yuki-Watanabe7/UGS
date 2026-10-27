@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Agent, GroupCandidate } from "../simulation/types";
+import type { Agent, GroupCandidate, LogEntry } from "../simulation/types";
 import type { FormationScenarioId, GroupSizeRule } from "../simulation/formationPolicy";
 import type { ExpressionIntent } from "../simulation/expression";
 import type { SpeechIntent } from "../simulation/speech";
@@ -17,7 +17,7 @@ import {
 } from "./groupVisualLayout";
 import type { SpatialRuntimeState } from "../simulation/spatialDynamics";
 import { SPATIAL_OCCUPANCY_GRID_COLS, SPATIAL_OCCUPANCY_GRID_ROWS } from "../simulation/spatialOccupancy";
-import type { VenueAnchor } from "../simulation/venueAnchors";
+import type { PendingVenueVisit, VenueAnchor, VenueAnchorKind } from "../simulation/venueAnchors";
 
 /**
  * 表示すべき心の声1件分。文言生成・寿命管理は呼び出し側(表示管理レイヤー)の責務で、ここでは受け取るだけ。
@@ -103,6 +103,14 @@ type Props = {
    * 座標と `interactionRadius` はここから変えず、当たり判定の位置をCanvas側で作り直さない。
    */
   venueAnchors?: VenueAnchor[];
+  /**
+   * Issue #266: 進行中の飲食訪問。点線と皿/コップは表示専用で、未指定なら描かない。
+   * true/falseはsimulation state・PRNGを変えない。
+   */
+  showVenueVisitMarkers?: boolean;
+  venueVisits?: Record<string, PendingVenueVisit>;
+  /** 完了直後の「回遊へ戻った」表示にだけ使う。logを書き戻さない */
+  log?: LogEntry[];
 };
 
 /** ラベルの字面。viewBox 800幅を約320pxへ縮めたときおおよそ13pxになる */
@@ -115,6 +123,97 @@ const VENUE_ANCHOR_LABEL_FONT_SIZE = 32;
  */
 const DIAGNOSTIC_VECTOR_SCALE = 15;
 const DIAGNOSTIC_HEADING_LENGTH = 24;
+/** 完了eventのあと、このtick数だけ「回遊」と出す。経路の履歴は描かない */
+const VENUE_RETURN_MARKER_TICKS = 8;
+
+function VenueVisitGlyph({ kind }: { kind: VenueAnchorKind }) {
+  if (kind === "food") {
+    return (
+      <g className="venue-visit-glyph venue-visit-glyph--food" aria-hidden="true">
+        <ellipse cx="0" cy="0" rx="7" ry="3" />
+        <path d="M-7 0 v2.2 c0 2.2 3.1 3.6 7 3.6 s7-1.4 7-3.6 V0" />
+      </g>
+    );
+  }
+  return (
+    <g className="venue-visit-glyph venue-visit-glyph--drink" aria-hidden="true">
+      <path d="M-4.2 -4 h8.4 l-1.2 7.4 a1.8 1.8 0 0 1-1.8 1.5 h-2.4 a1.8 1.8 0 0 1-1.8-1.5 z" />
+      <path d="M0 5 v3 M-2.2 8 h4.4" />
+    </g>
+  );
+}
+
+function venuePhaseCaption(phase: PendingVenueVisit["phase"], kind: VenueAnchorKind): string {
+  const item = kind === "food" ? "皿" : "杯";
+  if (phase === "receiving") return `${item} 受取`;
+  if (phase === "consuming") return `${item} 飲食`;
+  return item;
+}
+
+function VenueVisitMarker({
+  agent,
+  visit,
+  anchor,
+}: {
+  agent: Agent;
+  visit: PendingVenueVisit;
+  anchor: VenueAnchor;
+}) {
+  const radius = radiusFor(agent);
+  const kindLabel = visit.purpose === "food" ? "料理" : "ドリンク";
+  const phaseLabel =
+    visit.phase === "traveling" ? "移動中" : visit.phase === "receiving" ? "受け取り中" : "消費中";
+  return (
+    <g
+      data-testid={`venue-visit-agent-${agent.id}`}
+      data-venue-phase={visit.phase}
+      data-venue-kind={visit.purpose}
+      data-venue-anchor={anchor.id}
+    >
+      {visit.phase === "traveling" && (
+        <line
+          x1={agent.x}
+          y1={agent.y}
+          x2={anchor.x}
+          y2={anchor.y}
+          className={`venue-visit-link venue-visit-link--${visit.purpose}`}
+          data-testid={`venue-visit-link-${agent.id}`}
+          aria-label={`${agent.label}が${kindLabel}台へ移動中`}
+        />
+      )}
+      <g transform={`translate(${agent.x + radius + 2} ${agent.y - radius - 2})`}>
+        <VenueVisitGlyph kind={visit.purpose} />
+      </g>
+      <text
+        x={agent.x}
+        y={agent.y + radius + 24}
+        className="venue-visit-caption"
+        aria-label={`${agent.label}は${kindLabel}の${phaseLabel}`}
+      >
+        {venuePhaseCaption(visit.phase, visit.purpose)}
+      </text>
+    </g>
+  );
+}
+
+function latestVenueReturns(
+  log: readonly LogEntry[],
+  tick: number,
+  busyAgentIds: ReadonlySet<string>,
+): Array<{ agentId: string; kind: VenueAnchorKind }> {
+  const latest = new Map<string, { tick: number; kind: VenueAnchorKind }>();
+  for (const entry of log) {
+    if (entry.eventType !== "venueVisitCompleted") continue;
+    const agentId = entry.metadata?.agentId;
+    const kind = entry.metadata?.venueAnchorKind;
+    if (!agentId || (kind !== "food" && kind !== "drink")) continue;
+    if (tick - entry.tick > VENUE_RETURN_MARKER_TICKS || tick < entry.tick) continue;
+    latest.set(agentId, { tick: entry.tick, kind });
+  }
+  return [...latest.entries()]
+    .filter(([agentId]) => !busyAgentIds.has(agentId))
+    .map(([agentId, item]) => ({ agentId, kind: item.kind }));
+}
 
 function stateColor(agent: Agent, showClassroomAssignmentState: boolean): string {
   switch (agent.state) {
@@ -764,6 +863,9 @@ export function SimulationCanvas({
   showSpatialDiagnostics = false,
   spatialRuntimeState,
   venueAnchors,
+  showVenueVisitMarkers = true,
+  venueVisits,
+  log,
 }: Props) {
   const presentation = getScenarioPresentation(formationScenarioId, formationClassroomGroupSize);
   const isClassroomPair = presentation.id === "classroomPair";
@@ -862,6 +964,20 @@ export function SimulationCanvas({
     diagnosticAgent && spatialRuntimeState ? spatialRuntimeState.roaming[diagnosticAgent.id] : undefined;
   const visibleVenueAnchors =
     isStandingParty && venueAnchors && venueAnchors.length > 0 ? venueAnchors : [];
+  const venueAnchorById = new Map(visibleVenueAnchors.map((anchor) => [anchor.id, anchor]));
+  const activeVenueVisits =
+    showVenueVisitMarkers && isStandingParty && venueVisits
+      ? simulationAgents.flatMap((agent) => {
+          const visit = venueVisits[agent.id];
+          const anchor = visit ? venueAnchorById.get(visit.anchorId) : undefined;
+          return visit && anchor ? [{ agent, visit, anchor }] : [];
+        })
+      : [];
+  const activeVisitAgentIds = new Set(activeVenueVisits.map((item) => item.agent.id));
+  const recentVenueReturns =
+    showVenueVisitMarkers && isStandingParty
+      ? latestVenueReturns(log ?? [], tick ?? 0, activeVisitAgentIds)
+      : [];
   const resolvedCanvasHeight = visualLayout.resolvedRegion?.height ?? height;
   const resolvedBubbles = buildBubbleCanvasLayout(
     resolvedAgents,
@@ -1018,6 +1134,31 @@ export function SimulationCanvas({
                 isHistorySelected={isStandingParty && selectedAgentId === agent.id}
               />
             ))}
+            {activeVenueVisits.map(({ agent, visit, anchor }) => (
+              <VenueVisitMarker key={`venue-visit-${agent.id}`} agent={agent} visit={visit} anchor={anchor} />
+            ))}
+            {recentVenueReturns.map((item) => {
+              const agent = simulationAgents.find((candidate) => candidate.id === item.agentId);
+              if (!agent) return null;
+              const kindLabel = item.kind === "food" ? "料理" : "ドリンク";
+              return (
+                <g
+                  key={`venue-return-${item.agentId}`}
+                  data-testid={`venue-return-${item.agentId}`}
+                  data-venue-phase="returned"
+                  data-venue-kind={item.kind}
+                >
+                  <text
+                    x={agent.x}
+                    y={agent.y + radiusFor(agent) + 24}
+                    className="venue-visit-caption"
+                    aria-label={`${agent.label}は${kindLabel}台を離れ、会場の回遊に戻った`}
+                  >
+                    回遊
+                  </text>
+                </g>
+              );
+            })}
             <BubbleLayer canvas={simulationBubbles} />
             {visibleVenueAnchors.map((anchor) => (
               <VenueAnchorBadge

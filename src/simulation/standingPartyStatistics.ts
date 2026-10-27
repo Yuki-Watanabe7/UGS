@@ -41,6 +41,7 @@ import type {
   StandingPartyTimeSeriesPoint,
 } from "./types";
 import { STANDING_PARTY_ANALYSIS_SCHEMA_VERSION } from "./types";
+import { buildVenueVisitAnalysis } from "./venueVisitAnalysis";
 
 /** `buildStandingPartyStatisticsFromHistory`向け。filterフィールドをflatに受け取る */
 export type BuildStandingPartyStatisticsOptions = StandingPartyStatisticsFilter & {
@@ -1096,6 +1097,7 @@ export function buildStandingPartyStatisticsFromHistory(
     run,
     observerJoinerComparison,
     series,
+    venueVisits: buildVenueVisitAnalysis(state),
   };
 }
 

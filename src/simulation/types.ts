@@ -842,6 +842,8 @@ export type SimulationEventMetadata = {
   refreshmentNeedThirst?: number;
   /** Issue #264: `venueVisitAbandoned`の理由。表示文言には埋め込まない */
   venueVisitAbandonReason?: VenueVisitAbandonReason;
+  /** Issue #266: `venueVisitStarted`時点の、agentから対象anchorまでの直線距離 */
+  venueTravelDistance?: number;
   /** Issue #265: 飲食台付近の機会。取得前 / 取得後 / 訪問完了後 */
   venueEncounterPhase?: VenueEncounterPhase;
   /** Issue #265: 機会の構造化理由。表示文言は解析しない */
@@ -1376,6 +1378,22 @@ export type ObserverJoinerInspection = {
    * runtimeにneedが無い(機能OFFを含む)ときは undefined。閾値式は再計算しない。
    */
   venueVisit?: VenueAgentReadout;
+  /**
+   * Issue #266: 構造化eventから読んだ、このagentの直近の飲食訪問。
+   * 会話episodeやcluster joinとは別。eventが無ければ undefined。
+   */
+  venueVisitHistory?: VenueVisitHistorySnapshot;
+};
+
+/** Issue #266: 飲食eventから復元する、agent 1人分の直近訪問。閾値は再計算しない */
+export type VenueVisitHistorySnapshot = {
+  arrivedAtTick?: number;
+  obtainedAtTick?: number;
+  completedAtTick?: number;
+  abandonedAtTick?: number;
+  abandonReason?: VenueVisitAbandonReason;
+  lastAnchorId?: string;
+  lastKind?: VenueAnchorKind;
 };
 
 /** Issue #202 (Phase 3): `ObserverJoinerInspection.pendingTransition`の内訳 */
@@ -2346,8 +2364,9 @@ export type StandingPartyMonteCarloSummary = {
  * Issue #212 (standing-party Phase 4 分析): 会話履歴 read model の schema version。
  * Roadmap #61 の Phase 4(`socialExpression`等)とは無関係。
  * `docs/standing-party-analysis-phase4-model.md` §6.2。
+ * Issue #266 で飲食訪問の集計列を足したため 2。history / contact network / statistics が同じ版番号を共有する。
  */
-export const STANDING_PARTY_ANALYSIS_SCHEMA_VERSION = 1 as const;
+export const STANDING_PARTY_ANALYSIS_SCHEMA_VERSION = 2 as const;
 
 /** 完了分布に混ぜないための区間状態(`docs/standing-party-analysis-phase4-model.md` §1冒頭・§4.3) */
 export type AnalysisIntervalStatus = "active" | "completed" | "censored";
@@ -2752,6 +2771,29 @@ export type StandingPartyTimeSeries = {
 };
 
 /**
+ * Issue #266: 飲食訪問のread-only集計。`venue-visit-analysis/1` は列の形、
+ * 親snapshotの `schemaVersion` は分析スキーマ 2。
+ */
+export const VENUE_VISIT_ANALYSIS_SCHEMA_VERSION = "venue-visit-analysis/1" as const;
+
+export type VenueVisitAnalysis = {
+  schemaVersion: typeof VENUE_VISIT_ANALYSIS_SCHEMA_VERSION;
+  /** standingPartyかつ venueAnchors.enabled のときだけ true */
+  enabled: boolean;
+  foodVisitCount: number;
+  drinkVisitCount: number;
+  arrivedCount: number;
+  completedCount: number;
+  abandonedCount: number;
+  /** `venueTravelDistance` が付いた開始eventの件数 */
+  travelDistanceSampleCount: number;
+  /** 開始時の直線距離の平均。サンプルが無ければ undefined */
+  meanTravelDistance?: number;
+  /** 訪問完了のあと、離脱元と異なるclusterへjoinした件数 */
+  newClusterJoinAfterVisitCount: number;
+};
+
+/**
  * Issue #214: standing-party Phase 4 統計集計のversioned snapshot。
  * `StandingPartyRunSummary`(#190)は維持し、本型は横に載せる薄い層。
  */
@@ -2766,4 +2808,6 @@ export type StandingPartyRunStatistics = {
   run: StandingPartyRunLevelStatistics;
   observerJoinerComparison: StandingPartyObserverJoinerComparison;
   series: StandingPartyTimeSeries;
+  /** Issue #266: 飲食訪問のread-only集計。会話履歴のfilterとは独立に、log全体を数える */
+  venueVisits: VenueVisitAnalysis;
 };
