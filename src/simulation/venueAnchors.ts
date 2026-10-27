@@ -120,7 +120,36 @@ export type VenueRuntimeState = {
   visits: Record<string, PendingVenueVisit>;
   /** Inspector用。直近のdecision。シミュレーションの入力にしない */
   lastDecisions?: Record<string, VenueVisitDecision>;
+  /**
+   * Issue #265: 訪問を完了したtickとanchor。`encounterEnabled` のときだけ持つ。
+   * 窓の外では通常の探索だけが働く。接触区間ではない。
+   */
+  encounterWindows?: Record<string, VenueEncounterWindow>;
+  /**
+   * Issue #265: 同じ組・同じphase・同じreasonの機会ログを繰り返さないための印。
+   * シミュレーションの判断には使わない。
+   */
+  encounterSignals?: Record<string, true>;
 };
+
+/** Issue #265: 同じanchorで訪問を終えたあとの機会窓 */
+export type VenueEncounterWindow = {
+  anchorId: string;
+  completedAtTick: number;
+};
+
+/** 機会を評価した時点の行動phase。取得前・取得後・訪問完了後 */
+export type VenueEncounterPhase = "beforeObtain" | "afterObtain" | "postVisit";
+
+/**
+ * 機会ログの構造化理由。表示文言は解析しない。
+ * `postVisitGreeting` だけが既存の会話形成/接近へ進む。
+ */
+export type VenueEncounterReason =
+  | "serviceInProgress"
+  | "postVisitGreeting"
+  | "belowSocialThreshold"
+  | "unavailable";
 
 /**
  * Inspectorが読む、agent 1人分のneedと直近decision。閾値式は再計算しない。
