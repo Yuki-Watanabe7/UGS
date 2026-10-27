@@ -1132,7 +1132,7 @@ UI側(#251)は次を提供します。
 検証範囲・受入条件対応表・スコープ決定の詳細は
 [`docs/standing-party-phase6-verification.md`](docs/standing-party-phase6-verification.md)を参照してください。
 
-### Phase 7の飲食台と目的移動(#261〜#266)
+### Phase 7の飲食台と目的移動(#261〜#267)
 
 料理台とドリンク台、空腹・喉の渇き、台への目的移動の型・寿命・優先順位・tick順は
 [`docs/standing-party-phase7-venue-anchors.md`](docs/standing-party-phase7-venue-anchors.md)
@@ -1155,6 +1155,9 @@ agentインスペクターの「飲食の目的行動」は、会話の輪への
 統計の「飲食の訪問」と JSON / CSV(`standing-party-analysis-export/4`、分析スキーマ 2、
 `venue-visit-analysis/1`)は、料理とドリンクの訪問回数、到着・完了・中断、開始時の移動距離、
 訪問後に別の輪へ入った件数をread-onlyで数えます。
+
+固定seedでの件数、飲食あり/なしの記述比較、既知の限界は
+[`docs/standing-party-phase7-verification.md`](docs/standing-party-phase7-verification.md)を参照してください。
 
 ## シミュレーションルールの概要
 

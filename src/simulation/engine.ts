@@ -2895,6 +2895,15 @@ export function stepSimulation(
     }
     if (Object.keys(plan.signals).length > 0) venueRuntimeState.encounterSignals = plan.signals;
     else delete venueRuntimeState.encounterSignals;
+    // 機会の接近/核形成はこのtickのroaming記録より後なので、undecidedのまま残したheadingを外す。
+    // leaving/left の1tick残存(離脱判定がroamingより後)はPhase 6の契約どおり残す。
+    if (spatialRuntimeState?.roaming) {
+      for (const agent of agents) {
+        if (agent.state === "approaching" || agent.state === "forming" || agent.state === "joined") {
+          delete spatialRuntimeState.roaming[agent.id];
+        }
+      }
+    }
   }
 
   // Issue #156: 締切概念を持つシナリオ(classroomPair系)でのみ、締切判定の直前に

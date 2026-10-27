@@ -1,9 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { gotoStandingParty, setRangeValue } from "./helpers";
+import { gotoStandingParty, observeVenueNeedDrop, setRangeValue } from "./helpers";
 
 /**
  * Issue #266: 飲食presetで台への移動・受け取り・復帰がCanvasとログから追えること、
  * 表示の切り替えがtickを変えないこと、飲食なし比較へ切り替えると台が消えることを確認する。
+ * Issue #267: 同じインスペクターで、既定閾値の受け取り後に需要が下がることを別手順で確認する。
+ * 閾値0.05の手順では補充後の値の方が高くなり得るため、需要低下はその手順に混ぜない。
  */
 
 test.describe("standingParty Phase 7: desktopの飲食動線", () => {
@@ -63,5 +65,11 @@ test.describe("standingParty Phase 7: desktopの飲食動線", () => {
     await page.waitForTimeout(2_000);
     await page.getByRole("button", { name: "Pause", exact: true }).click();
     await expect(page.getByText("取りに移動を始めた")).toHaveCount(0);
+  });
+
+  test("既定の閾値では受け取り後に満たした需要が下がる", async ({ page }) => {
+    test.setTimeout(180_000);
+    await gotoStandingParty(page);
+    await observeVenueNeedDrop(page);
   });
 });
