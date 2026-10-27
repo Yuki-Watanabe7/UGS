@@ -58,6 +58,11 @@ import {
   validateSpatialDynamicsConfig,
   type SpatialDynamicsConfig,
 } from "./spatialDynamics";
+import {
+  DEFAULT_VENUE_ANCHOR_CONFIG,
+  validateVenueAnchorConfig,
+  type VenueAnchorConfig,
+} from "./venueAnchors";
 
 /** 社交的回遊傾向(`Agent.socialCirculationTendency`)を一様分布で生成する範囲 `[0,1]` */
 export type SocialCirculationTendencyRange = {
@@ -99,6 +104,12 @@ export type StandingPartyScenarioConfig = {
    * `engine.ts`がこの設定を一切参照せず、既存のPhase 1〜5 state・event・PRNG系列をbyte-identicalに保つ。
    */
   spatialDynamics: SpatialDynamicsConfig;
+  /**
+   * Issue #263 (Phase 7): 料理台・ドリンク台への飲食欲求decision
+   * (`docs/standing-party-phase7-venue-anchors.md` §9.1)。`enabled: false`(既定)の間は
+   * needもdecisionも作らず、既存state・event・主系列PRNGを変えない。移動・取得は #264。
+   */
+  venueAnchors: VenueAnchorConfig;
 };
 
 export const DEFAULT_CIRCULATION_TENDENCY_RANGE: SocialCirculationTendencyRange = { min: 0, max: 1 };
@@ -113,6 +124,7 @@ export const DEFAULT_STANDING_PARTY_SCENARIO_CONFIG: StandingPartyScenarioConfig
   informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
   topicIntegration: DEFAULT_TOPIC_INTEGRATION_CONFIG,
   spatialDynamics: DEFAULT_SPATIAL_DYNAMICS_CONFIG,
+  venueAnchors: DEFAULT_VENUE_ANCHOR_CONFIG,
 };
 
 function assertRange01(name: string, value: number): void {
@@ -135,6 +147,7 @@ export function validateStandingPartyScenarioConfig(config: StandingPartyScenari
   validateInformationPropagationConfig(config.informationPropagation);
   validateTopicIntegrationConfig(config.topicIntegration);
   validateSpatialDynamicsConfig(config.spatialDynamics);
+  validateVenueAnchorConfig(config.venueAnchors);
   assertRange01("circulationTendencyRange.min", config.circulationTendencyRange.min);
   assertRange01("circulationTendencyRange.max", config.circulationTendencyRange.max);
   if (config.circulationTendencyRange.min > config.circulationTendencyRange.max) {
@@ -174,6 +187,7 @@ export const NETWORKING_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = {
   informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
   topicIntegration: DEFAULT_TOPIC_INTEGRATION_CONFIG,
   spatialDynamics: DEFAULT_SPATIAL_DYNAMICS_CONFIG,
+  venueAnchors: DEFAULT_VENUE_ANCHOR_CONFIG,
 };
 
 /**
@@ -204,6 +218,7 @@ export const INTIMATE_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = {
   informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
   topicIntegration: DEFAULT_TOPIC_INTEGRATION_CONFIG,
   spatialDynamics: DEFAULT_SPATIAL_DYNAMICS_CONFIG,
+  venueAnchors: DEFAULT_VENUE_ANCHOR_CONFIG,
 };
 
 validateStandingPartyScenarioConfig(NETWORKING_STANDING_PARTY_CONFIG);
@@ -256,6 +271,7 @@ export const OUTWARD_INTEREST_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig
   informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
   topicIntegration: DEFAULT_TOPIC_INTEGRATION_CONFIG,
   spatialDynamics: DEFAULT_SPATIAL_DYNAMICS_CONFIG,
+  venueAnchors: DEFAULT_VENUE_ANCHOR_CONFIG,
 };
 
 /**
@@ -290,6 +306,7 @@ export const CURRENT_CIRCLE_ATTACHMENT_STANDING_PARTY_CONFIG: StandingPartyScena
   informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
   topicIntegration: DEFAULT_TOPIC_INTEGRATION_CONFIG,
   spatialDynamics: DEFAULT_SPATIAL_DYNAMICS_CONFIG,
+  venueAnchors: DEFAULT_VENUE_ANCHOR_CONFIG,
 };
 
 validateStandingPartyScenarioConfig(OUTWARD_INTEREST_STANDING_PARTY_CONFIG);

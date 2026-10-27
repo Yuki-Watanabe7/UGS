@@ -97,6 +97,10 @@ import type { AlternativeClusterInterestContext } from "./alternativeClusterInte
 import { DEFAULT_STANDING_PARTY_SCENARIO_CONFIG } from "./standingPartyScenarioConfig";
 import { applyClusterSpatialDynamics, pruneSpatialRuntimeState } from "./spatialDynamics";
 import type { SpatialRuntimeState } from "./spatialDynamics";
+import { createInitialRefreshmentNeeds, stepRefreshmentNeeds } from "./refreshmentNeeds";
+import { recordVenueVisitDecisions } from "./venueVisitDecision";
+import type { VenueAnchor, VenueRuntimeState } from "./venueAnchors";
+import { isVenueAnchorsActive } from "./venueAnchors";
 import { advanceRoamingHeading, applyAgentRoamingStep, roamingIntensity } from "./roaming";
 import type { RoamingRuntimeState } from "./roaming";
 import { computeCrowdingVector } from "./spatialOccupancy";
@@ -211,6 +215,15 @@ export function createInitialState(
   // (受入条件: Phase 5 disabled時に既存Agent、state、event、PRNG系列が変わらない)。
   const informationRuntime = initialStandingPartyConfig.informationPropagation.enabled
     ? createInitialInformationRuntimeState(agents, seed, initialStandingPartyConfig.informationPropagation)
+    : undefined;
+  // Issue #263 (Phase 7): 無効時・standingParty以外では派生stream自体を作らない。
+  // 初期値には増分を足さない(増分は最初の stepSimulation から)。
+  const venueAnchorsActive = isVenueAnchorsActive(formationPolicy.id, initialStandingPartyConfig.venueAnchors);
+  const venueRuntimeState: VenueRuntimeState | undefined = venueAnchorsActive
+    ? { needs: createInitialRefreshmentNeeds(agents, seed, initialStandingPartyConfig.venueAnchors.needs), visits: {} }
+    : undefined;
+  const venueAnchors: VenueAnchor[] | undefined = venueAnchorsActive
+    ? initialStandingPartyConfig.venueAnchors.anchors.map((anchor) => ({ ...anchor }))
     : undefined;
   // Issue #132: 教室ペア形成シナリオの初期ログは、二次会シナリオ向けの文言(「二次会に行くか」)を
   // そのまま使うと文脈が合わないため、formationPolicy.idで出し分ける
@@ -345,6 +358,7 @@ export function createInitialState(
     informationRuntime,
     clusterTopicRuntime: undefined,
     contentUtteranceLog: [],
+    ...(venueRuntimeState ? { venueRuntimeState, venueAnchors } : {}),
   };
 }
 
@@ -1388,6 +1402,10 @@ export function stepSimulation(
   // (ADR §6.2「S2〜S4をstep 1の前に置く」)。cluster movement自体はrngを一切消費しない(ADR §2.5)。
   const spatialDynamicsConfig = standingPartyConfig.spatialDynamics;
   const spatialDynamicsEnabled = formationPolicy.id === "standingParty" && spatialDynamicsConfig.enabled;
+  // Issue #263: 飲食decisionは standingParty かつ venueAnchors.enabled のときだけ。
+  // ここでの判定はフラグの読み取りだけで、無効時は後段のneed更新もdecisionも呼ばない。
+  const venueAnchorConfig = standingPartyConfig.venueAnchors;
+  const venueAnchorsActive = isVenueAnchorsActive(formationPolicy.id, venueAnchorConfig);
   let spatialRuntimeState: SpatialRuntimeState | undefined = state.spatialRuntimeState;
   if (spatialDynamicsEnabled) {
     const { clusterVelocity } = applyClusterSpatialDynamics(
@@ -2171,6 +2189,39 @@ export function stepSimulation(
     }
   }
 
+  // Issue #263 (Phase 7, ADR §8.1 V0–V1): 社会的離脱(step 5b)のあとに飲食needを増分し、
+  // decisionを記録する。座標は動かさない。メンバーシップも pendingClusterTransition も外さない
+  // (訪問の開始・放棄・移動は #264)。無効時はこのブロックに入らず、stateも主系列PRNGも増やさない。
+  let venueRuntimeState: VenueRuntimeState | undefined;
+  let venueAnchors: VenueAnchor[] | undefined;
+  if (venueAnchorsActive) {
+    const previousVenue = state.venueRuntimeState;
+    const needs = stepRefreshmentNeeds(agents, previousVenue?.needs, runSeed, venueAnchorConfig.needs);
+    const visits = previousVenue?.visits ?? {};
+    const lastDecisions = recordVenueVisitDecisions({
+      enabled: true,
+      tick,
+      agents: agents.map((agent) => ({
+        id: agent.id,
+        x: agent.x,
+        y: agent.y,
+        state: agent.state,
+        hasPendingClusterTransition: agent.pendingClusterTransition !== undefined,
+        clusterJoinedAtTick: agent.clusterJoinedAtTick,
+      })),
+      needs,
+      anchors: venueAnchorConfig.anchors,
+      visits,
+      minStayTicks: standingPartyConfig.clusterDeparture.minStayTicks,
+      visitThreshold: venueAnchorConfig.needs.visitThreshold,
+    });
+    const preservedVisits = Object.fromEntries(
+      Object.entries(visits).map(([agentId, visit]) => [agentId, { ...visit }]),
+    );
+    venueRuntimeState = { needs, visits: preservedVisits, lastDecisions };
+    venueAnchors = venueAnchorConfig.anchors.map((anchor) => ({ ...anchor }));
+  }
+
   // 6. undecided な人はゆるく漂う (何もしていないわけではないことを示す)
   // Issue #248 (Phase 6, docs/spatial-dynamics-phase6-model.md §3/§1.4): spatialDynamics有効時は、
   // 毎tick独立ランダムwalkの代わりにpersistent heading roaming + agent側wall avoidanceへ差し替える。
@@ -2646,6 +2697,7 @@ export function stepSimulation(
     standingPartyConfig: resolvedFormation?.standingPartyConfig,
     observationHorizonTick: resolvedObservationHorizonTick,
     spatialRuntimeState,
+    ...(venueRuntimeState ? { venueRuntimeState, venueAnchors } : {}),
     interventionRuntimeState,
     activeInterventionEffects: [...activeInterventionEffects, ...newInterventionEffects],
     speechLog: [],

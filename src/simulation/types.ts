@@ -38,6 +38,7 @@ import type {
 import type { ClaimVariant } from "./informationModel";
 import type { RetellingEvent, RetellingRuntimeState } from "./retelling";
 import type { SpatialRuntimeState } from "./spatialDynamics";
+import type { VenueAgentReadout, VenueAnchor, VenueRuntimeState } from "./venueAnchors";
 
 /**
  * エージェントの行動状態。Phase 4の三層モデル(`socialExpression.ts`)では、この状態遷移・移動
@@ -1061,6 +1062,19 @@ export type SimulationState = {
    * 一切変えない)。
    */
   spatialRuntimeState?: SpatialRuntimeState;
+  /**
+   * Issue #263 (Phase 7): 料理台・ドリンク台。`standingParty` かつ
+   * `venueAnchors.enabled` のときだけ `createInitialState` がconfigからコピーする。
+   * Canvasはここ(または同じconfig)を描き、独自座標を作らない。無効時は undefined。
+   */
+  venueAnchors?: VenueAnchor[];
+  /**
+   * Issue #263 (Phase 7): agentごとの空腹・喉の渇きと、直近の飲食decision。
+   * `spatialRuntimeState` と同じく、呼び出し側がconfigを渡し忘れても直前のruntimeを引き継ぐ。
+   * 機能が無効な間は undefined。`Agent` へフィールドは増やさない。
+   * 訪問の移動・取得・メンバーシップ解除は #264。このIssueはneed更新とdecision記録まで。
+   */
+  venueRuntimeState?: VenueRuntimeState;
 };
 
 /**
@@ -1298,6 +1312,11 @@ export type ObserverJoinerInspection = {
   lastTransitionInvalidation?: ObserverTransitionInvalidationSnapshot;
   /** Issue #251 (Phase 6): 空間diagnostics(standingParty以外は常にundefined) */
   spatial?: ObserverSpatialSnapshot;
+  /**
+   * Issue #263 (Phase 7): 飲食needと直近decisionの読み取り専用スナップショット。
+   * runtimeにneedが無い(機能OFFを含む)ときは undefined。閾値式は再計算しない。
+   */
+  venueVisit?: VenueAgentReadout;
 };
 
 /** Issue #202 (Phase 3): `ObserverJoinerInspection.pendingTransition`の内訳 */
