@@ -101,7 +101,13 @@ import { createInitialRefreshmentNeeds, stepRefreshmentNeeds } from "./refreshme
 import { recordVenueVisitDecisions } from "./venueVisitDecision";
 import type { VenueRuntimeState } from "./venueAnchors";
 import { venueAnchorsForRun } from "./venueAnchors";
-import { advanceRoamingHeading, applyAgentRoamingStep, roamingIntensity } from "./roaming";
+import {
+  abandonIneligibleVenueVisits,
+  advanceVenueVisits,
+  startVenueVisitsFromDecisions,
+  stepVenueVisitMovement,
+} from "./venueVisitRuntime";
+import { advanceRoamingHeading, applyAgentRoamingStep, computeAgentWallAvoidanceForce, roamingIntensity } from "./roaming";
 import type { RoamingRuntimeState } from "./roaming";
 import { computeCrowdingVector } from "./spatialOccupancy";
 import {
@@ -1431,6 +1437,8 @@ export function stepSimulation(
     // stateをundecidedのままにしておけば、直後のstep 2がpendingClusterTransitionを優先して
     // 消費する(targetへの接近、または無効化してnearestCandidateへのfallback)。
     if (agent.pendingClusterTransition) continue;
+    // Issue #264 (ADR §8.1): 前tickから続く飲食訪問中は核を作らない。このtickの開始は step 5b の後。
+    if (state.venueRuntimeState?.visits[agent.id]) continue;
 
     const initiation = formationPolicy.evaluateCandidateInitiation(agent, { agents, params: effectiveParams });
     if (!initiation.eligible) continue;
@@ -1498,6 +1506,8 @@ export function stepSimulation(
   // 誰か1人が軽く声をかける(1エージェントにつき1回限り)
   if (interventionId === "light-observer-invitation") {
     for (const agent of agents) {
+      // Issue #264: 飲食訪問中のagentは声かけ対象にしない。
+      if (state.venueRuntimeState?.visits[agent.id]) continue;
       if (!shouldTriggerLightObserverInvitation(agent, tick)) continue;
 
       const inviter = selectInvitationAgent(agent, agents, rng);
@@ -1536,6 +1546,8 @@ export function stepSimulation(
   // 2. 接近: undecidedな人が近くの forming / confirmed group を観察して動く
   for (const agent of agents) {
     if (agent.state !== "undecided") continue;
+    // Issue #264 (ADR §8.1): 飲食訪問中は候補へ近づかない。社会的な pendingClusterTransition は従来どおり。
+    if (state.venueRuntimeState?.visits[agent.id]) continue;
 
     // Issue #133: 直前に参加失敗した候補は、クールダウン期間中は再探索の選択肢から除外する
     // (「直前の失敗候補を即座に再選択しない」制御。容量が変わらない限り実質恒久的な除外と等価だが、
@@ -2189,14 +2201,19 @@ export function stepSimulation(
     }
   }
 
-  // Issue #263 (Phase 7, ADR §8.1 V0–V1): 社会的離脱(step 5b)のあとに飲食needを増分し、
-  // decisionを記録する。座標は動かさない。メンバーシップも pendingClusterTransition も外さない
-  // (訪問の開始・放棄・移動は #264)。無効時はこのブロックに入らず、stateも主系列PRNGも増やさない。
+  // Issue #263/#264 (Phase 7, ADR §8.1 V0–V1): 社会的離脱(step 5b)のあとに飲食needを増分し、
+  // decisionを記録する。開始が決まったagentはここでmembershipを外して traveling にする。
+  // 座標はまだ動かさない。無効時はこのブロックに入らず、stateも主系列PRNGも増やさない。
+  // 社会的な pendingClusterTransition は飲食側から消さない。
   let venueRuntimeState: VenueRuntimeState | undefined;
+  /** このtickの飲食phaseに入ったagent。完了・放棄でレコードが消えても stress をスキップする */
+  let venueVisitStressSkip: ReadonlySet<string> | undefined;
   if (venueAnchorsActive) {
     const previousVenue = state.venueRuntimeState;
     const needs = stepRefreshmentNeeds(agents, previousVenue?.needs, runSeed, venueAnchorConfig.needs);
-    const visits = previousVenue?.visits ?? {};
+    const visits = Object.fromEntries(
+      Object.entries(previousVenue?.visits ?? {}).map(([agentId, visit]) => [agentId, { ...visit }]),
+    );
     const lastDecisions = recordVenueVisitDecisions({
       enabled: true,
       tick,
@@ -2214,10 +2231,18 @@ export function stepSimulation(
       minStayTicks: standingPartyConfig.clusterDeparture.minStayTicks,
       visitThreshold: venueAnchorConfig.needs.visitThreshold,
     });
-    const preservedVisits = Object.fromEntries(
-      Object.entries(visits).map(([agentId, visit]) => [agentId, { ...visit }]),
-    );
-    venueRuntimeState = { needs, visits: preservedVisits, lastDecisions };
+    for (const event of startVenueVisitsFromDecisions({
+      agents,
+      candidates,
+      visits,
+      decisions: lastDecisions,
+      anchors: venueAnchorConfig.anchors,
+      tick,
+    })) {
+      pushLog(log, tick, event.message, ["venueVisit"], event.eventType, event.metadata);
+    }
+    venueRuntimeState = { needs, visits, lastDecisions };
+    venueVisitStressSkip = new Set(Object.keys(visits));
   }
 
   // 6. undecided な人はゆるく漂う (何もしていないわけではないことを示す)
@@ -2226,6 +2251,17 @@ export function stepSimulation(
   // standingParty以外、`spatialDynamics.enabled === false`、または`roamingEnabled === false`の間は
   // 既存の独立ランダムwalkをそのまま使う(既存state・event・PRNG系列を一切変えない、ADR §9.4)。
   const roamingActive = spatialDynamicsEnabled && spatialDynamicsConfig.roamingEnabled;
+  const venueAnchorsById = new Map((venueAnchors ?? []).map((anchor) => [anchor.id, anchor]));
+  const moveForVenueVisit = (agent: Agent): boolean => {
+    const visit = venueRuntimeState?.visits[agent.id];
+    if (!visit) return false;
+    const anchor = venueAnchorsById.get(visit.anchorId);
+    const wall =
+      anchor && visit.phase === "traveling"
+        ? computeAgentWallAvoidanceForce(agent, spatialDynamicsConfig)
+        : { fx: 0, fy: 0 };
+    return stepVenueVisitMovement(agent, visit, anchor, venueAnchorConfig.visit.approachSpeed, wall);
+  };
   if (roamingActive) {
     const previousRoaming: RoamingRuntimeState = spatialRuntimeState?.roaming ?? {};
     const nextRoaming: RoamingRuntimeState = {};
@@ -2237,6 +2273,9 @@ export function stepSimulation(
     const crowdingSnapshot: Agent[] | undefined = crowdingActive ? agents.map((a) => ({ ...a })) : undefined;
     for (const agent of agents) {
       if (agent.state !== "undecided") continue;
+      // Issue #264 (ADR §7.1): traveling は roaming も crowding も止め、anchorへ直進する。
+      // heading更新は呼ばない(agentごとの派生streamなので、他agentの列はずれない)。
+      if (moveForVenueVisit(agent)) continue;
       const heading = advanceRoamingHeading(previousRoaming[agent.id], agent.id, tick, runSeed, spatialDynamicsConfig);
       nextRoaming[agent.id] = heading;
       // Issue #201 (ADR §3.4): pendingClusterTransitionを持つ間はroaming寄与を0にする(targetへの
@@ -2261,8 +2300,29 @@ export function stepSimulation(
   } else {
     for (const agent of agents) {
       if (agent.state !== "undecided") continue;
+      // Issue #264: 訪問中は wander の乱数を引かない。揃えるためのダミー抽選は足さない。
+      if (moveForVenueVisit(agent)) continue;
       agent.x = clamp(agent.x + rng.range(-WANDER_SPEED, WANDER_SPEED), 5, WORLD_WIDTH - 5);
       agent.y = clamp(agent.y + rng.range(-WANDER_SPEED, WANDER_SPEED), 5, WORLD_HEIGHT - 5);
+    }
+  }
+
+  // Issue #264 (ADR §8.1 V3): 到着・満席・移動時間超過・受け取り・消費完了。
+  // このtickに訪問があったagentは、完了や放棄でレコードが消えても下のstress評価から外す。
+  if (venueRuntimeState) {
+    for (const event of advanceVenueVisits({
+      agents,
+      visits: venueRuntimeState.visits,
+      needs: venueRuntimeState.needs,
+      anchors: venueAnchorConfig.anchors,
+      tick,
+      consumeTicks: venueAnchorConfig.visit.consumeTicks,
+      revisitCooldownTicks: venueAnchorConfig.visit.revisitCooldownTicks,
+      failedVisitCooldownTicks: venueAnchorConfig.visit.failedVisitCooldownTicks,
+      maxTravelTicks: venueAnchorConfig.visit.maxTravelTicks,
+      needAfterRefill: venueAnchorConfig.needs.needAfterRefill,
+    })) {
+      pushLog(log, tick, event.message, ["venueVisit"], event.eventType, event.metadata);
     }
   }
 
@@ -2272,6 +2332,9 @@ export function stepSimulation(
   // 曖昧さによるstressはそれ以上蓄積しない(移動が遅くても離脱扱いにならない)。
   for (const agent of agents) {
     if (agent.state !== "undecided") continue;
+    // Issue #264 (ADR §6.4): 飲食で一時的に undecided になったtickは、会場退出のstressを積まない。
+    // stressの値自体はリセットしない。訪問が無い次tickから通常の増分に戻る。
+    if (venueVisitStressSkip?.has(agent.id)) continue;
 
     // 既にできあがっている輪が、既存の仲良しグループに占められていて
     // 自分には実質入りにくい場合は「行き場がない」ことに変わりないため考慮しない。
@@ -2357,6 +2420,19 @@ export function stepSimulation(
           agentLabel: agent.label,
         });
       }
+    }
+  }
+
+  // Issue #264 (ADR §8.1 step 8): 退場したagentに訪問が残っていれば、cooldownなしで放棄する。
+  if (venueRuntimeState) {
+    for (const event of abandonIneligibleVenueVisits({
+      agents,
+      visits: venueRuntimeState.visits,
+      needs: venueRuntimeState.needs,
+      tick,
+      failedVisitCooldownTicks: venueAnchorConfig.visit.failedVisitCooldownTicks,
+    })) {
+      pushLog(log, tick, event.message, ["venueVisit"], event.eventType, event.metadata);
     }
   }
 

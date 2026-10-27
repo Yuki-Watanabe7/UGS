@@ -16,6 +16,7 @@ export const EPISODE_END_REASON_LABEL: Record<ConversationEpisodeEndReasonV2, st
   membershipLost: "所属喪失",
   targetedTransition: "目的地付き遷移",
   venueExit: "会場退出",
+  venueRefreshmentBreak: "飲食で離席",
   reset: "reset",
 };
 
@@ -25,6 +26,7 @@ export const EPISODE_END_REASON_ICON: Record<ConversationEpisodeEndReasonV2, str
   membershipLost: "✕",
   targetedTransition: "→",
   venueExit: "⌂",
+  venueRefreshmentBreak: "☕",
   reset: "↺",
 };
 

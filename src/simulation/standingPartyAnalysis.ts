@@ -569,6 +569,21 @@ export function buildStandingPartyConversationHistory(
         });
         break;
       }
+      case "venueVisitStarted": {
+        // Issue #264: 飲食のための離脱だけがエピソードを閉じる。自発離脱・強制releaseの件数は増やさない。
+        // 未所属からの訪問(episodeIdなし)は履歴を閉じない。
+        const agentId = metadata.agentId;
+        const episodeId = metadata.episodeId;
+        if (!agentId || !episodeId) break;
+        closeEpisode({
+          episodeId,
+          agentId,
+          clusterId: metadata.groupId,
+          tick,
+          endReason: "venueRefreshmentBreak",
+        });
+        break;
+      }
       case "clusterTransitionTargetSelected": {
         const agentId = metadata.agentId;
         const sourceClusterId = metadata.groupId;

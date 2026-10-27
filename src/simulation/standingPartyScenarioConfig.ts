@@ -106,10 +106,9 @@ export type StandingPartyScenarioConfig = {
    */
   spatialDynamics: SpatialDynamicsConfig;
   /**
-   * Issue #262/#263 (Phase 7): 料理台・ドリンク台の配置と飲食欲求decision
+   * Issue #262/#263/#264 (Phase 7): 料理台・ドリンク台の配置、飲食欲求、目的移動
    * (`docs/standing-party-phase7-venue-anchors.md` §9.1)。`enabled: false`(既定)の間は
-   * catalogもneedもdecisionも作らず、Canvasにも描かない。既存state・event・主系列PRNGを変えない。
-   * 移動・取得は #264。
+   * catalogもneedも訪問も作らず、Canvasにも描かない。既存state・event・主系列PRNGを変えない。
    */
   venueAnchors: VenueAnchorConfig;
 };

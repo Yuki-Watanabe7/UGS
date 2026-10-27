@@ -38,7 +38,13 @@ import type {
 import type { ClaimVariant } from "./informationModel";
 import type { RetellingEvent, RetellingRuntimeState } from "./retelling";
 import type { SpatialRuntimeState } from "./spatialDynamics";
-import type { VenueAgentReadout, VenueAnchor, VenueRuntimeState } from "./venueAnchors";
+import type {
+  VenueAgentReadout,
+  VenueAnchor,
+  VenueAnchorKind,
+  VenueRuntimeState,
+  VenueVisitAbandonReason,
+} from "./venueAnchors";
 
 /**
  * エージェントの行動状態。Phase 4の三層モデル(`socialExpression.ts`)では、この状態遷移・移動
@@ -329,8 +335,14 @@ export type ConversationEpisode = {
  * - "memberReleased": 責務10によるクラスタの成立最小人数割れに伴う強制解放(`clusterMemberReleased`)
  * - "membershipLost": 所属先候補自体がmissing/dissolved/expired等になった際の整合性回復
  *   (Issue #212: 観測用の`clusterMembershipLost`イベントで記録する。意思決定・PRNGには影響しない)
+ * - "venueRefreshmentBreak": 飲食ステーションへ向かうための一時離脱(Issue #264)。
+ *   会場退出(`venueExit`)や自発的な会話離脱(`voluntaryDeparture`)とは別
  */
-export type ConversationEpisodeEndReason = "voluntaryDeparture" | "memberReleased" | "membershipLost";
+export type ConversationEpisodeEndReason =
+  | "voluntaryDeparture"
+  | "memberReleased"
+  | "membershipLost"
+  | "venueRefreshmentBreak";
 
 /**
  * `simulationFinished`イベントに保持する、シナリオ全体の終了理由。
@@ -428,7 +440,12 @@ export type LogTag =
    */
   | "clusterDeparture"
   /** Issue #230 (Phase 5): active clusterでの内容発話(topic/claim付き発言)・話題選択に関するイベント */
-  | "contentUtterance";
+  | "contentUtterance"
+  /**
+   * Issue #264 (Phase 7): 料理台・ドリンク台への目的訪問。会場退出(`leave`)や
+   * 会話離脱(`clusterDeparture`)とは別。移動の毎tickには付けない。
+   */
+  | "venueVisit";
 
 /**
  * 集計(終了サマリー/Monte Carlo)向けのイベント種別。
@@ -598,7 +615,17 @@ export type SimulationEventType =
    * Issue #230 (Phase 5): 発話機会が巡ってきたclusterで、発話可能な話者/claimが見つからず発話が
    * 起きなかった。同一clusterで理由が変わらない間は再記録しない(受入条件: 発話なしを毎tick大量記録しない)。
    */
-  | "contentUtteranceSkipped";
+  | "contentUtteranceSkipped"
+  /** Issue #264: 飲食台への移動を始めた。joinedからの開始時だけエピソードを閉じる */
+  | "venueVisitStarted"
+  /** Issue #264: interaction radius内に着き、受け取り待ちを始めた */
+  | "venueVisitArrived"
+  /** Issue #264: 飲食物を1回受け取った。同じvisitIdでは1件まで */
+  | "refreshmentObtained"
+  /** Issue #264: 短い消費を終え、会場の回遊へ戻った */
+  | "venueVisitCompleted"
+  /** Issue #264: 台の不在・満席・移動時間超過・退場で訪問をやめた */
+  | "venueVisitAbandoned";
 
 /**
  * Issue #156: `schoolInterventionTriggered`の`metadata.outcome`。表示文言の解析に依存しない結果分類。
@@ -795,6 +822,15 @@ export type SimulationEventMetadata = {
   topicTransition?: "started" | "changed" | "continued";
   /** Issue #230: `contentUtteranceSkipped`用。発話が起きなかった理由の構造化コード */
   contentUtteranceSkipReason?: "noEligibleSpeaker" | "noEligibleClaim";
+  /** Issue #264: 飲食訪問の対象anchor */
+  venueAnchorId?: string;
+  venueAnchorKind?: VenueAnchorKind;
+  venueVisitId?: string;
+  /** Issue #264: `venueVisitStarted`時点の増分後need */
+  refreshmentNeedHunger?: number;
+  refreshmentNeedThirst?: number;
+  /** Issue #264: `venueVisitAbandoned`の理由。表示文言には埋め込まない */
+  venueVisitAbandonReason?: VenueVisitAbandonReason;
 };
 
 export type LogEntry = {
@@ -1075,7 +1111,7 @@ export type SimulationState = {
    * Issue #263 (Phase 7): agentごとの空腹・喉の渇きと、直近の飲食decision。
    * `spatialRuntimeState` と同じく、呼び出し側がconfigを渡し忘れても直前のruntimeを引き継ぐ。
    * 機能が無効な間は undefined。`Agent` へフィールドは増やさない。
-   * 訪問の移動・取得・メンバーシップ解除は #264。このIssueはneed更新とdecision記録まで。
+   * Issue #264 が `visits` の移動・受け取り・完了を更新する。機能が無効な間は undefined。
    */
   venueRuntimeState?: VenueRuntimeState;
 };
@@ -2298,8 +2334,9 @@ export type AnalysisIntervalStatus = "active" | "completed" | "censored";
 
 /**
  * Issue #212: 履歴レコード上のepisode終了理由。既存3値に加え、分析層で区別する拡張値を含む。
- * イベントmetadataの`episodeEndReason`は従来どおり`ConversationEpisodeEndReason`のまま
- * (`targetedTransition`は`voluntaryDeparture`+`transitionAction`から導出する)。
+ * イベントmetadataの`episodeEndReason`は`ConversationEpisodeEndReason`を使う。
+ * `targetedTransition`は`voluntaryDeparture`+`transitionAction`から導出する。
+ * `venueRefreshmentBreak`は基底側にあり、飲食離脱の`venueVisitStarted`がエピソードを閉じる。
  */
 export type ConversationEpisodeEndReasonV2 =
   | ConversationEpisodeEndReason

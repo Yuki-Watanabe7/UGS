@@ -216,12 +216,19 @@ export function recordVenueVisitDecisions(input: {
 
 /** Inspector用。`lastDecisions` を読むだけで、decisionを再計算しない */
 export function readVenueAgentReadout(
-  runtime: { needs: Readonly<Record<string, AgentRefreshmentNeed>>; lastDecisions?: Readonly<Record<string, VenueVisitDecision>> } | undefined,
+  runtime:
+    | {
+        needs: Readonly<Record<string, AgentRefreshmentNeed>>;
+        visits?: Readonly<Record<string, PendingVenueVisit>>;
+        lastDecisions?: Readonly<Record<string, VenueVisitDecision>>;
+      }
+    | undefined,
   agentId: string,
 ): VenueAgentReadout | undefined {
   const need = runtime?.needs[agentId];
   if (!need) return undefined;
   const decision = runtime?.lastDecisions?.[agentId];
+  const visit = runtime && "visits" in runtime ? runtime.visits?.[agentId] : undefined;
   return {
     hunger: need.hunger,
     thirst: need.thirst,
@@ -234,6 +241,13 @@ export function readVenueAgentReadout(
           action: decision.action,
           reason: decision.reason,
           ...(decision.anchorId !== undefined ? { anchorId: decision.anchorId } : {}),
+        }
+      : {}),
+    ...(visit
+      ? {
+          phase: visit.phase,
+          visitId: visit.visitId,
+          anchorId: decision?.anchorId ?? visit.anchorId,
         }
       : {}),
   };

@@ -71,6 +71,9 @@ export type AgentRefreshmentNeed = {
 
 export type VenueVisitPhase = "traveling" | "receiving" | "consuming";
 
+/** Issue #264: 訪問を途中でやめた理由。待ち行列は作らず、同じtickで通常探索へ戻す */
+export type VenueVisitAbandonReason = "anchorMissing" | "anchorAtCapacity" | "travelTimedOut" | "agentLeft";
+
 export type PendingVenueVisit = {
   visitId: string;
   anchorId: string;
@@ -133,6 +136,9 @@ export type VenueAgentReadout = {
   action?: VenueVisitDecisionAction;
   reason?: VenueVisitDecisionReason;
   anchorId?: string;
+  /** Issue #264: 進行中訪問のphase。無ければ訪問していない */
+  phase?: VenueVisitPhase;
+  visitId?: string;
 };
 
 /** agentが到達できる会場範囲。`model.ts` の clamp `[5, W-5] × [5, H-5]` と揃える */
