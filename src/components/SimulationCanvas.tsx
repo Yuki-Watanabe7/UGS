@@ -215,15 +215,22 @@ function venueAnchorLabelPlacement(
   width: number,
   height: number,
 ): { x: number; y: number; textAnchor: "start" | "end"; iconX: number } {
-  const inwardX = anchor.x < width / 2 ? 1 : -1;
+  const onLeft = anchor.x < width / 2;
   const inwardY = anchor.y < height / 2 ? 1 : -1;
-  const x = Math.min(width - 16, Math.max(16, anchor.x + inwardX * (anchor.interactionRadius + 12)));
-  const y = Math.min(height - 14, Math.max(VENUE_ANCHOR_LABEL_FONT_SIZE, anchor.y + inwardY * (anchor.interactionRadius + 36)));
+  const y = Math.min(
+    height - 14,
+    Math.max(VENUE_ANCHOR_LABEL_FONT_SIZE, anchor.y + inwardY * (anchor.interactionRadius + 36)),
+  );
+  // 右端の台は文字の終端を会場の右端へ寄せ、長いラベルが会場中央の吹き出し帯へ伸びないようにする。
+  const x = onLeft
+    ? Math.min(width - 16, Math.max(16, anchor.x + anchor.interactionRadius + 12))
+    : width - 16;
+  const estimatedTextWidth = anchor.label.length * VENUE_ANCHOR_LABEL_FONT_SIZE;
   return {
     x,
     y,
-    textAnchor: inwardX > 0 ? "start" : "end",
-    iconX: inwardX > 0 ? -20 : 20,
+    textAnchor: onLeft ? "start" : "end",
+    iconX: onLeft ? -22 : -(estimatedTextWidth + 16),
   };
 }
 
@@ -1011,6 +1018,7 @@ export function SimulationCanvas({
                 isHistorySelected={isStandingParty && selectedAgentId === agent.id}
               />
             ))}
+            <BubbleLayer canvas={simulationBubbles} />
             {visibleVenueAnchors.map((anchor) => (
               <VenueAnchorBadge
                 key={`venue-badge-${anchor.id}`}
@@ -1020,7 +1028,6 @@ export function SimulationCanvas({
                 height={height}
               />
             ))}
-            <BubbleLayer canvas={simulationBubbles} />
           </svg>
         </section>
 

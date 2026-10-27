@@ -749,10 +749,10 @@ describe("SimulationCanvas venue anchors (Issue #262, Phase 7)", () => {
     expect(html).toContain('data-interaction-radius="28"');
     expect(html).toContain('data-label-x="112"');
     expect(html).toContain('data-label-y="396"');
-    expect(html).toContain('data-label-x="688"');
+    expect(html).toContain('data-label-x="784"');
     expect(html).toContain('data-label-y="124"');
     expect(html).toContain('font-size="32"');
-    for (const label of ["112", "688"]) {
+    for (const label of ["112", "784", "396", "124"]) {
       expect(Number(label)).toBeGreaterThanOrEqual(0);
       expect(Number(label)).toBeLessThanOrEqual(800);
     }
@@ -779,16 +779,20 @@ describe("SimulationCanvas venue anchors (Issue #262, Phase 7)", () => {
     expect(leftAtStation).not.toContain("venue-anchor--near");
   });
 
-  it("keeps the label above agents and does not draw stations when the feature is off or the scenario is not standingParty", () => {
+  it("keeps the label above agents and speech bubbles, and does not draw stations when the feature is off or the scenario is not standingParty", () => {
     const html = renderCanvas({
       agents: [makeAgent({ x: 72, y: 460 })],
+      speeches: [{ agentId: "agent-a", text: "輪に加わろう" }],
     });
     const agentAt = html.indexOf('class="agent-dot');
     const rangeAt = html.indexOf("venue-anchor-range");
+    const speechAt = html.indexOf("speech-bubble");
     const badgeAt = html.indexOf('data-testid="venue-anchor-anchor:food-main"');
     expect(rangeAt).toBeGreaterThan(-1);
+    expect(speechAt).toBeGreaterThan(-1);
     expect(agentAt).toBeGreaterThan(rangeAt);
-    expect(badgeAt).toBeGreaterThan(agentAt);
+    expect(speechAt).toBeGreaterThan(agentAt);
+    expect(badgeAt).toBeGreaterThan(speechAt);
 
     const before = JSON.stringify([makeAgent({ x: 72, y: 460 })]);
     const agents = [makeAgent({ x: 72, y: 460 })];
