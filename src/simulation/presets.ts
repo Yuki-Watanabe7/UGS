@@ -12,6 +12,7 @@ import {
   INFO_SEEKING_STANDING_PARTY_CONFIG,
   SPATIAL_ROAMING_STANDING_PARTY_CONFIG,
   SPATIAL_FIXED_BASELINE_STANDING_PARTY_CONFIG,
+  STANDING_PARTY_VENUE_CATALOG_CONFIG,
 } from "./standingPartyScenarioConfig";
 import type { StandingPartyScenarioConfig } from "./standingPartyScenarioConfig";
 
@@ -140,6 +141,7 @@ export const PRESETS: ScenarioPreset[] = [
       existingTieStrength: 0.25,
     },
     formationScenarioId: "standingParty",
+    formationStandingPartyConfig: STANDING_PARTY_VENUE_CATALOG_CONFIG,
   },
   {
     id: "standing-party-networking",

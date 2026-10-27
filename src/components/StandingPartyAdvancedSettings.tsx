@@ -1,5 +1,6 @@
 import type { StandingPartyScenarioConfig } from "../simulation/standingPartyScenarioConfig";
 import type { SpatialDynamicsConfig } from "../simulation/spatialDynamics";
+import { venueAnchorConfigWithEnabled } from "../simulation/venueAnchors";
 
 type Props = {
   config: StandingPartyScenarioConfig;
@@ -433,6 +434,22 @@ function setSpatial(
 ): StandingPartyScenarioConfig {
   return { ...c, spatialDynamics: { ...c.spatialDynamics, ...patch } };
 }
+
+/**
+ * Issue #262 (Phase 7): 料理台・ドリンク台の配置を有効にする。オンにしても需要・移動はまだ走らない。
+ * catalogが空なら初期MVP(料理台1・ドリンク台1)を入れる。オフにしても配置配列は残し、実行時は読まない。
+ */
+const VENUE_ANCHOR_BOOLEAN_FIELDS: BooleanFieldDef[] = [
+  {
+    key: "venueAnchorsEnabled",
+    label: "料理台とドリンク台を置く",
+    description:
+      "オフ(既定)の間は台をstateに載せず、Canvasにも描かない。オンにすると料理台とドリンク台を" +
+      "会場の端へ固定する。需要・移動・受け取りはまだ行わないため、オンとオフでagentの状態・event・乱数系列は変わらない。",
+    get: (c) => c.venueAnchors.enabled,
+    set: (c, enabled) => ({ ...c, venueAnchors: venueAnchorConfigWithEnabled(c.venueAnchors, enabled) }),
+  },
+];
 
 /**
  * Issue #251 (Phase 6): Spatial Dynamics全体・成分別の有効/無効(`enabled`は#247〜#250実装済みの
@@ -1035,6 +1052,14 @@ export function StandingPartyAdvancedSettings({ config, onConfigChange, hasPendi
       <details className="standing-party-advanced-settings-details">
         <summary>候補選択の一般化(Phase 6、{SPATIAL_CANDIDATE_SELECTION_FIELDS.length}項目)</summary>
         {renderNumberFields(SPATIAL_CANDIDATE_SELECTION_FIELDS, config, onConfigChange)}
+      </details>
+      <details className="standing-party-advanced-settings-details">
+        <summary>飲食台(Phase 7、{VENUE_ANCHOR_BOOLEAN_FIELDS.length}項目)</summary>
+        <p className="standing-party-advanced-settings-note">
+          料理台とドリンク台は会話の輪とは別の固定設備です。台の近くに人が集まること自体を、
+          会話の良さや社交性として評価するものではありません。
+        </p>
+        {renderBooleanFields(VENUE_ANCHOR_BOOLEAN_FIELDS, config, onConfigChange)}
       </details>
     </div>
   );

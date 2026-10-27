@@ -60,6 +60,7 @@ import {
 } from "./spatialDynamics";
 import {
   DEFAULT_VENUE_ANCHOR_CONFIG,
+  standingPartyVenueCatalogConfig,
   validateVenueAnchorConfig,
   type VenueAnchorConfig,
 } from "./venueAnchors";
@@ -105,9 +106,10 @@ export type StandingPartyScenarioConfig = {
    */
   spatialDynamics: SpatialDynamicsConfig;
   /**
-   * Issue #263 (Phase 7): 料理台・ドリンク台への飲食欲求decision
+   * Issue #262/#263 (Phase 7): 料理台・ドリンク台の配置と飲食欲求decision
    * (`docs/standing-party-phase7-venue-anchors.md` §9.1)。`enabled: false`(既定)の間は
-   * needもdecisionも作らず、既存state・event・主系列PRNGを変えない。移動・取得は #264。
+   * catalogもneedもdecisionも作らず、Canvasにも描かない。既存state・event・主系列PRNGを変えない。
+   * 移動・取得は #264。
    */
   venueAnchors: VenueAnchorConfig;
 };
@@ -125,6 +127,16 @@ export const DEFAULT_STANDING_PARTY_SCENARIO_CONFIG: StandingPartyScenarioConfig
   topicIntegration: DEFAULT_TOPIC_INTEGRATION_CONFIG,
   spatialDynamics: DEFAULT_SPATIAL_DYNAMICS_CONFIG,
   venueAnchors: DEFAULT_VENUE_ANCHOR_CONFIG,
+};
+
+/**
+ * Issue #262: 既定の立食パーティーに、料理台1・ドリンク台1の配置catalogだけを載せる。
+ * `enabled` は false のままなので、state・event・主系列PRNGは `DEFAULT_STANDING_PARTY_SCENARIO_CONFIG`
+ * と一致する。詳細設定で有効化してResetすると、同じ座標が Canvas に描かれる。
+ */
+export const STANDING_PARTY_VENUE_CATALOG_CONFIG: StandingPartyScenarioConfig = {
+  ...DEFAULT_STANDING_PARTY_SCENARIO_CONFIG,
+  venueAnchors: standingPartyVenueCatalogConfig(),
 };
 
 function assertRange01(name: string, value: number): void {
@@ -158,6 +170,7 @@ export function validateStandingPartyScenarioConfig(config: StandingPartyScenari
 }
 
 validateStandingPartyScenarioConfig(DEFAULT_STANDING_PARTY_SCENARIO_CONFIG);
+validateStandingPartyScenarioConfig(STANDING_PARTY_VENUE_CATALOG_CONFIG);
 
 /**
  * 比較プリセット「幅広く交流するネットワーキング型」(issue #189要件2節)。標準ケース(`DEFAULT_...`)と

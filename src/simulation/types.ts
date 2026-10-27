@@ -1063,9 +1063,12 @@ export type SimulationState = {
    */
   spatialRuntimeState?: SpatialRuntimeState;
   /**
-   * Issue #263 (Phase 7): 料理台・ドリンク台。`standingParty` かつ
-   * `venueAnchors.enabled` のときだけ `createInitialState` がconfigからコピーする。
-   * Canvasはここ(または同じconfig)を描き、独自座標を作らない。無効時は undefined。
+   * Issue #262 (Phase 7): 料理台・ドリンク台の配置catalogのコピー。
+   * `formationScenarioId === "standingParty"` かつ `standingPartyConfig.venueAnchors.enabled`
+   * のときだけ `createInitialState` / `stepSimulation` が config からコピーする。
+   * 無効時・afterParty・classroomPair では undefined。`GroupCandidate` や
+   * `spatialRuntimeState.clusterVelocity` とは別entity。
+   * Canvasはこの配列の座標と `interactionRadius` をそのまま描く。
    */
   venueAnchors?: VenueAnchor[];
   /**

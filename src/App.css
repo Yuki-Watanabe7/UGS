@@ -1010,6 +1010,59 @@
   text-anchor: middle;
 }
 
+.venue-anchor-ground,
+.venue-anchor-badge {
+  pointer-events: none;
+}
+
+.venue-anchor-range {
+  fill: rgba(245, 158, 11, 0.05);
+  stroke: rgba(251, 191, 36, 0.55);
+  stroke-width: 1.5;
+}
+
+.venue-anchor--drink .venue-anchor-range {
+  fill: rgba(34, 211, 238, 0.05);
+  stroke: rgba(103, 232, 249, 0.6);
+}
+
+.venue-anchor--near .venue-anchor-range {
+  fill: rgba(245, 158, 11, 0.16);
+  stroke: rgba(251, 191, 36, 0.95);
+  stroke-width: 2.5;
+}
+
+.venue-anchor--drink.venue-anchor--near .venue-anchor-range {
+  fill: rgba(34, 211, 238, 0.16);
+  stroke: rgba(103, 232, 249, 0.95);
+}
+
+.venue-anchor-pictogram {
+  fill: none;
+  stroke: #fbbf24;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.venue-anchor-pictogram--drink {
+  stroke: #67e8f9;
+}
+
+.venue-anchor--near .venue-anchor-pictogram {
+  stroke-width: 2.25;
+}
+
+.venue-anchor-label {
+  fill: #f8fafc;
+  font-size: 32px;
+  font-weight: 700;
+  stroke: #0b0d12;
+  stroke-width: 5px;
+  paint-order: stroke;
+  stroke-linejoin: round;
+}
+
 .agent-status-label {
   font-size: 9px;
   font-weight: 700;
