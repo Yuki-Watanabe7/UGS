@@ -17,6 +17,7 @@ import {
 } from "./groupVisualLayout";
 import type { SpatialRuntimeState } from "../simulation/spatialDynamics";
 import { SPATIAL_OCCUPANCY_GRID_COLS, SPATIAL_OCCUPANCY_GRID_ROWS } from "../simulation/spatialOccupancy";
+import type { VenueAnchor } from "../simulation/venueAnchors";
 
 /**
  * 表示すべき心の声1件分。文言生成・寿命管理は呼び出し側(表示管理レイヤー)の責務で、ここでは受け取るだけ。
@@ -96,7 +97,16 @@ type Props = {
    */
   showSpatialDiagnostics?: boolean;
   spatialRuntimeState?: SpatialRuntimeState;
+  /**
+   * Issue #262 (Phase 7): 料理台・ドリンク台。simulationがコピーしたcatalogだけを描く。
+   * 未指定・空、またはstandingParty以外では描かない(無効時の装飾表示はしない)。
+   * 座標と `interactionRadius` はここから変えず、当たり判定の位置をCanvas側で作り直さない。
+   */
+  venueAnchors?: VenueAnchor[];
 };
+
+/** ラベルの字面。viewBox 800幅を約320pxへ縮めたときおおよそ13pxになる */
+const VENUE_ANCHOR_LABEL_FONT_SIZE = 32;
 
 /**
  * Issue #251 (Phase 6): diagnostic overlay専用の表示倍率。`maxClusterCenterSpeed`は既定`2`px/tick
@@ -184,6 +194,122 @@ function candidateRingClass(candidate: GroupCandidate, isMutableConfirmed: boole
     default:
       return "candidate-ring";
   }
+}
+
+function isVenueAnchorNearAgent(anchor: VenueAnchor, agents: Agent[]): boolean {
+  const radiusSq = anchor.interactionRadius * anchor.interactionRadius;
+  return agents.some((agent) => {
+    if (agent.state === "left") return false;
+    const dx = agent.x - anchor.x;
+    const dy = agent.y - anchor.y;
+    return dx * dx + dy * dy <= radiusSq;
+  });
+}
+
+/**
+ * ラベルは台の中心ではなく、会場の内側へずらして置く。当たり判定の正本は anchor の x/y のまま。
+ * 端の台でも viewBox 内に収まるよう clamp する。
+ */
+function venueAnchorLabelPlacement(
+  anchor: VenueAnchor,
+  width: number,
+  height: number,
+): { x: number; y: number; textAnchor: "start" | "end"; iconX: number } {
+  const inwardX = anchor.x < width / 2 ? 1 : -1;
+  const inwardY = anchor.y < height / 2 ? 1 : -1;
+  const x = Math.min(width - 16, Math.max(16, anchor.x + inwardX * (anchor.interactionRadius + 12)));
+  const y = Math.min(height - 14, Math.max(VENUE_ANCHOR_LABEL_FONT_SIZE, anchor.y + inwardY * (anchor.interactionRadius + 36)));
+  return {
+    x,
+    y,
+    textAnchor: inwardX > 0 ? "start" : "end",
+    iconX: inwardX > 0 ? -20 : 20,
+  };
+}
+
+function VenueAnchorPictogram({ kind }: { kind: VenueAnchor["kind"] }) {
+  if (kind === "food") {
+    return (
+      <g className="venue-anchor-pictogram venue-anchor-pictogram--food">
+        <ellipse cx={0} cy={6} rx={12} ry={4} />
+        <path d="M-8 4 Q0 -10 8 4" />
+        <path d="M-4 4 Q-2 -2 0 4 Q2 -2 4 4" />
+      </g>
+    );
+  }
+  return (
+    <g className="venue-anchor-pictogram venue-anchor-pictogram--drink">
+      <path d="M-7 -8 H7 L4 6 Q0 11 -4 6 Z" />
+      <line x1={0} y1={-8} x2={3} y2={-14} />
+    </g>
+  );
+}
+
+function VenueAnchorGround({ anchor, near }: { anchor: VenueAnchor; near: boolean }) {
+  return (
+    <g
+      className={`venue-anchor-ground venue-anchor--${anchor.kind}${near ? " venue-anchor--near" : ""}`}
+      aria-hidden="true"
+    >
+      <circle
+        cx={anchor.x}
+        cy={anchor.y}
+        r={anchor.interactionRadius}
+        className="venue-anchor-range"
+        data-testid={`venue-anchor-range-${anchor.id}`}
+        data-anchor-id={anchor.id}
+        data-anchor-kind={anchor.kind}
+        data-anchor-x={anchor.x}
+        data-anchor-y={anchor.y}
+        data-interaction-radius={anchor.interactionRadius}
+      />
+      <g transform={`translate(${anchor.x} ${anchor.y})`}>
+        <VenueAnchorPictogram kind={anchor.kind} />
+      </g>
+    </g>
+  );
+}
+
+function VenueAnchorBadge({
+  anchor,
+  near,
+  width,
+  height,
+}: {
+  anchor: VenueAnchor;
+  near: boolean;
+  width: number;
+  height: number;
+}) {
+  const place = venueAnchorLabelPlacement(anchor, width, height);
+  return (
+    <g
+      className={`venue-anchor-badge venue-anchor--${anchor.kind}${near ? " venue-anchor--near" : ""}`}
+      role="img"
+      aria-label={anchor.label}
+      data-testid={`venue-anchor-${anchor.id}`}
+      data-anchor-id={anchor.id}
+      data-anchor-kind={anchor.kind}
+      data-anchor-x={anchor.x}
+      data-anchor-y={anchor.y}
+      data-interaction-radius={anchor.interactionRadius}
+      data-label-x={place.x}
+      data-label-y={place.y}
+    >
+      <g transform={`translate(${place.x + place.iconX} ${place.y - 6}) scale(0.85)`}>
+        <VenueAnchorPictogram kind={anchor.kind} />
+      </g>
+      <text
+        x={place.x}
+        y={place.y}
+        textAnchor={place.textAnchor}
+        className="venue-anchor-label"
+        fontSize={VENUE_ANCHOR_LABEL_FONT_SIZE}
+      >
+        {anchor.label}
+      </text>
+    </g>
+  );
 }
 
 function candidateLabel(candidate: GroupCandidate, presentation: ScenarioPresentation): string {
@@ -630,6 +756,7 @@ export function SimulationCanvas({
   clusterTopics,
   showSpatialDiagnostics = false,
   spatialRuntimeState,
+  venueAnchors,
 }: Props) {
   const presentation = getScenarioPresentation(formationScenarioId, formationClassroomGroupSize);
   const isClassroomPair = presentation.id === "classroomPair";
@@ -726,6 +853,8 @@ export function SimulationCanvas({
       : undefined;
   const diagnosticRoaming =
     diagnosticAgent && spatialRuntimeState ? spatialRuntimeState.roaming[diagnosticAgent.id] : undefined;
+  const visibleVenueAnchors =
+    isStandingParty && venueAnchors && venueAnchors.length > 0 ? venueAnchors : [];
   const resolvedCanvasHeight = visualLayout.resolvedRegion?.height ?? height;
   const resolvedBubbles = buildBubbleCanvasLayout(
     resolvedAgents,
@@ -840,6 +969,14 @@ export function SimulationCanvas({
               />
             )}
 
+            {visibleVenueAnchors.map((anchor) => (
+              <VenueAnchorGround
+                key={`venue-ground-${anchor.id}`}
+                anchor={anchor}
+                near={isVenueAnchorNearAgent(anchor, simulationAgents)}
+              />
+            ))}
+
             {simulationCandidates.map((candidate) => (
               <CandidateGlyph
                 key={candidate.id}
@@ -872,6 +1009,15 @@ export function SimulationCanvas({
                   selectedPendingTransition !== undefined && selectedPendingTransition.focusAgentId === agent.id
                 }
                 isHistorySelected={isStandingParty && selectedAgentId === agent.id}
+              />
+            ))}
+            {visibleVenueAnchors.map((anchor) => (
+              <VenueAnchorBadge
+                key={`venue-badge-${anchor.id}`}
+                anchor={anchor}
+                near={isVenueAnchorNearAgent(anchor, simulationAgents)}
+                width={width}
+                height={height}
               />
             ))}
             <BubbleLayer canvas={simulationBubbles} />

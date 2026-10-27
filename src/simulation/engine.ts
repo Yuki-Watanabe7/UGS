@@ -97,6 +97,7 @@ import type { AlternativeClusterInterestContext } from "./alternativeClusterInte
 import { DEFAULT_STANDING_PARTY_SCENARIO_CONFIG } from "./standingPartyScenarioConfig";
 import { applyClusterSpatialDynamics, pruneSpatialRuntimeState } from "./spatialDynamics";
 import type { SpatialRuntimeState } from "./spatialDynamics";
+import { venueAnchorsForRun } from "./venueAnchors";
 import { advanceRoamingHeading, applyAgentRoamingStep, roamingIntensity } from "./roaming";
 import type { RoamingRuntimeState } from "./roaming";
 import { computeCrowdingVector } from "./spatialOccupancy";
@@ -212,6 +213,9 @@ export function createInitialState(
   const informationRuntime = initialStandingPartyConfig.informationPropagation.enabled
     ? createInitialInformationRuntimeState(agents, seed, initialStandingPartyConfig.informationPropagation)
     : undefined;
+  // Issue #262: 有効なstandingPartyだけが配置catalogを持つ。無効時は配列自体を作らない
+  // (agent座標・event・主系列PRNGは変えない。需要と移動は後続Issue)。
+  const venueAnchors = venueAnchorsForRun(formationPolicy.id, initialStandingPartyConfig.venueAnchors);
   // Issue #132: 教室ペア形成シナリオの初期ログは、二次会シナリオ向けの文言(「二次会に行くか」)を
   // そのまま使うと文脈が合わないため、formationPolicy.idで出し分ける
   // Issue #174: 立食パーティーでも同様に、二次会固有の文言を避け会場で会話の輪を探す文脈にする
@@ -345,6 +349,7 @@ export function createInitialState(
     informationRuntime,
     clusterTopicRuntime: undefined,
     contentUtteranceLog: [],
+    ...(venueAnchors ? { venueAnchors } : {}),
   };
 }
 
@@ -1388,6 +1393,9 @@ export function stepSimulation(
   // (ADR §6.2「S2〜S4をstep 1の前に置く」)。cluster movement自体はrngを一切消費しない(ADR §2.5)。
   const spatialDynamicsConfig = standingPartyConfig.spatialDynamics;
   const spatialDynamicsEnabled = formationPolicy.id === "standingParty" && spatialDynamicsConfig.enabled;
+  // Issue #262: 配置catalogのコピーだけ。需要・移動・event・主系列PRNGには触れない。
+  // 無効化や他scenarioへ切り替わったtickではキー自体を残さない。
+  const venueAnchors = venueAnchorsForRun(formationPolicy.id, standingPartyConfig.venueAnchors);
   let spatialRuntimeState: SpatialRuntimeState | undefined = state.spatialRuntimeState;
   if (spatialDynamicsEnabled) {
     const { clusterVelocity } = applyClusterSpatialDynamics(
@@ -2646,6 +2654,7 @@ export function stepSimulation(
     standingPartyConfig: resolvedFormation?.standingPartyConfig,
     observationHorizonTick: resolvedObservationHorizonTick,
     spatialRuntimeState,
+    ...(venueAnchors ? { venueAnchors } : {}),
     interventionRuntimeState,
     activeInterventionEffects: [...activeInterventionEffects, ...newInterventionEffects],
     speechLog: [],

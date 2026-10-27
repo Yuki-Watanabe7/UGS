@@ -38,6 +38,7 @@ import type {
 import type { ClaimVariant } from "./informationModel";
 import type { RetellingEvent, RetellingRuntimeState } from "./retelling";
 import type { SpatialRuntimeState } from "./spatialDynamics";
+import type { VenueAnchor } from "./venueAnchors";
 
 /**
  * エージェントの行動状態。Phase 4の三層モデル(`socialExpression.ts`)では、この状態遷移・移動
@@ -1061,6 +1062,15 @@ export type SimulationState = {
    * 一切変えない)。
    */
   spatialRuntimeState?: SpatialRuntimeState;
+  /**
+   * Issue #262 (Phase 7): 料理台・ドリンク台の配置catalogのコピー。
+   * `formationScenarioId === "standingParty"` かつ `standingPartyConfig.venueAnchors.enabled`
+   * のときだけ `createInitialState` / `stepSimulation` が config からコピーする。
+   * 無効時・afterParty・classroomPair では undefined。`GroupCandidate` や
+   * `spatialRuntimeState.clusterVelocity` とは別entity。需要・移動・受け取りはまだ更新しない。
+   * Canvasはこの配列の座標と `interactionRadius` をそのまま描く。
+   */
+  venueAnchors?: VenueAnchor[];
 };
 
 /**

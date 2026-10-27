@@ -692,3 +692,112 @@ describe("SimulationCanvas spatial diagnostics overlay (Issue #251, Phase 6)", (
     expect(html).not.toContain("spatial-diagnostic-roaming-heading");
   });
 });
+
+describe("SimulationCanvas venue anchors (Issue #262, Phase 7)", () => {
+  const anchors = [
+    {
+      id: "anchor:food-main",
+      kind: "food" as const,
+      x: 72,
+      y: 460,
+      interactionRadius: 28,
+      capacity: 3,
+      serviceTicks: 4,
+      label: "料理台",
+    },
+    {
+      id: "anchor:drink-main",
+      kind: "drink" as const,
+      x: 728,
+      y: 60,
+      interactionRadius: 28,
+      capacity: 3,
+      serviceTicks: 4,
+      label: "ドリンク台",
+    },
+  ];
+
+  function renderCanvas(overrides: Partial<Parameters<typeof SimulationCanvas>[0]> = {}) {
+    return renderToStaticMarkup(
+      createElement(SimulationCanvas, {
+        agents: [makeAgent({ id: "agent-a", x: 400, y: 260 })],
+        groupCandidates: [],
+        width: 800,
+        height: 520,
+        formationScenarioId: "standingParty",
+        venueAnchors: anchors,
+        ...overrides,
+      }),
+    );
+  }
+
+  it("draws both stations from the model coordinates and keeps labels inside the viewBox", () => {
+    const html = renderCanvas();
+    expect(html).toContain('aria-label="料理台"');
+    expect(html).toContain('aria-label="ドリンク台"');
+    expect(html).toContain('data-testid="venue-anchor-anchor:food-main"');
+    expect(html).toContain('data-testid="venue-anchor-anchor:drink-main"');
+    expect(html).toContain('cx="72"');
+    expect(html).toContain('cy="460"');
+    expect(html).toContain('cx="728"');
+    expect(html).toContain('cy="60"');
+    expect(html).toContain('r="28"');
+    expect(html).toContain('data-anchor-x="72"');
+    expect(html).toContain('data-anchor-y="460"');
+    expect(html).toContain('data-anchor-x="728"');
+    expect(html).toContain('data-anchor-y="60"');
+    expect(html).toContain('data-interaction-radius="28"');
+    expect(html).toContain('data-label-x="112"');
+    expect(html).toContain('data-label-y="396"');
+    expect(html).toContain('data-label-x="688"');
+    expect(html).toContain('data-label-y="124"');
+    expect(html).toContain('font-size="32"');
+    for (const label of ["112", "688"]) {
+      expect(Number(label)).toBeGreaterThanOrEqual(0);
+      expect(Number(label)).toBeLessThanOrEqual(800);
+    }
+  });
+
+  it("emphasizes a station only when an agent is inside its interaction radius", () => {
+    const far = renderCanvas();
+    expect(far).not.toContain("venue-anchor--near");
+
+    const onFood = renderCanvas({
+      agents: [makeAgent({ x: 100, y: 460 })],
+    });
+    expect(onFood).toContain("venue-anchor--food venue-anchor--near");
+    expect(onFood).not.toContain("venue-anchor--drink venue-anchor--near");
+
+    const justOutside = renderCanvas({
+      agents: [makeAgent({ x: 72 + 28.1, y: 460 })],
+    });
+    expect(justOutside).not.toContain("venue-anchor--near");
+
+    const leftAtStation = renderCanvas({
+      agents: [makeAgent({ x: 72, y: 460, state: "left" })],
+    });
+    expect(leftAtStation).not.toContain("venue-anchor--near");
+  });
+
+  it("keeps the label above agents and does not draw stations when the feature is off or the scenario is not standingParty", () => {
+    const html = renderCanvas({
+      agents: [makeAgent({ x: 72, y: 460 })],
+    });
+    const agentAt = html.indexOf('class="agent-dot');
+    const rangeAt = html.indexOf("venue-anchor-range");
+    const badgeAt = html.indexOf('data-testid="venue-anchor-anchor:food-main"');
+    expect(rangeAt).toBeGreaterThan(-1);
+    expect(agentAt).toBeGreaterThan(rangeAt);
+    expect(badgeAt).toBeGreaterThan(agentAt);
+
+    const before = JSON.stringify([makeAgent({ x: 72, y: 460 })]);
+    const agents = [makeAgent({ x: 72, y: 460 })];
+    renderCanvas({ agents });
+    expect(JSON.stringify(agents)).toBe(before);
+
+    expect(renderCanvas({ venueAnchors: undefined })).not.toContain("venue-anchor");
+    expect(renderCanvas({ venueAnchors: [] })).not.toContain("venue-anchor");
+    expect(renderCanvas({ formationScenarioId: "afterParty" })).not.toContain("venue-anchor");
+    expect(renderCanvas({ formationScenarioId: "classroomPair" })).not.toContain("venue-anchor");
+  });
+});
