@@ -168,6 +168,10 @@ export type VenueAgentReadout = {
   /** Issue #264: 進行中訪問のphase。無ければ訪問していない */
   phase?: VenueVisitPhase;
   visitId?: string;
+  /** Issue #266: 進行中訪問の開始tickと、今のphaseに入ったtick。閾値は再計算しない */
+  startedAtTick?: number;
+  phaseEnteredAtTick?: number;
+  purpose?: VenueAnchorKind;
 };
 
 /** agentが到達できる会場範囲。`model.ts` の clamp `[5, W-5] × [5, H-5]` と揃える */

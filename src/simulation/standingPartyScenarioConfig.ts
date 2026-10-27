@@ -522,3 +522,33 @@ export const SPATIAL_FIXED_BASELINE_STANDING_PARTY_CONFIG: StandingPartyScenario
 
 validateStandingPartyScenarioConfig(SPATIAL_ROAMING_STANDING_PARTY_CONFIG);
 validateStandingPartyScenarioConfig(SPATIAL_FIXED_BASELINE_STANDING_PARTY_CONFIG);
+
+// --- Issue #266 (Phase 7) 飲食比較プリセット ---------------------------------------------------
+
+/**
+ * 「飲食による会場回遊」と「飲食なし比較」の共通設定。
+ * 社会・空間設定は Phase 6 の空間回遊presetと同じで、差は `venueAnchors.enabled` だけ。
+ * `encounterEnabled` は #265 完了後に true。無効presetでは enabled が false のため encounter は走らない。
+ */
+function venueComparisonConfig(enabled: boolean): StandingPartyScenarioConfig {
+  return {
+    ...SPATIAL_ROAMING_STANDING_PARTY_CONFIG,
+    venueAnchors: {
+      ...standingPartyVenueCatalogConfig(),
+      enabled,
+      encounterEnabled: true,
+    },
+  };
+}
+
+/** 料理台・ドリンク台へ向かう移動を観察するpreset。初期選択はこちらへ移す(Issue #266) */
+export const VENUE_REFRESHMENT_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = venueComparisonConfig(true);
+
+/**
+ * 上と同一設定で飲食だけを無効にした比較基準。
+ * `enabled: false` の実行は、同じseedの空間回遊presetと座標・event・主系列PRNGが一致する。
+ */
+export const VENUE_OFF_BASELINE_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = venueComparisonConfig(false);
+
+validateStandingPartyScenarioConfig(VENUE_REFRESHMENT_STANDING_PARTY_CONFIG);
+validateStandingPartyScenarioConfig(VENUE_OFF_BASELINE_STANDING_PARTY_CONFIG);

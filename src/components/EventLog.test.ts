@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { EventLog } from "./EventLog";
+import { STANDING_PARTY_PRESENTATION } from "../presentation/scenarioPresentation";
 import { createSpeechEvent } from "../simulation/speech";
 import type { Agent, LogEntry, SimulationState } from "../simulation/types";
 
@@ -178,5 +179,44 @@ describe("EventLog", () => {
     expect(html).toContain("event-log-entry--speech-effect");
     expect(html).toContain("接近確率");
     expect(html).toContain("持続5tick");
+  });
+
+  it("shows structured venue visit messages and a standing-party filter", () => {
+    const html = renderToStaticMarkup(
+      createElement(EventLog, {
+        state: makeState({
+          formationScenarioId: "standingParty",
+          log: [
+            {
+              tick: 4,
+              message: "Aさんが料理を取りに移動を始めた",
+              tags: ["venueVisit"],
+              eventType: "venueVisitStarted",
+              metadata: { agentId: "a", venueAnchorKind: "food" },
+            },
+            {
+              tick: 8,
+              message: "Aさんがドリンクを受け取った",
+              tags: ["venueVisit"],
+              eventType: "refreshmentObtained",
+            },
+            {
+              tick: 12,
+              message: "Aさんがドリンク台を離れ、会場の回遊に戻った",
+              tags: ["venueVisit"],
+              eventType: "venueVisitCompleted",
+            },
+          ],
+        }),
+        presentation: STANDING_PARTY_PRESENTATION,
+      }),
+    );
+    expect(html).toContain("料理を取りに移動を始めた");
+    expect(html).toContain("ドリンクを受け取った");
+    expect(html).toContain("会場の回遊に戻った");
+    expect(html).toContain('data-event-type="venueVisitStarted"');
+    expect(html).toContain('data-event-type="refreshmentObtained"');
+    expect(html).toContain('data-event-type="venueVisitCompleted"');
+    expect(html).toContain("飲食の移動のみ");
   });
 });

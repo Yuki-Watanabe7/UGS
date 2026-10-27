@@ -45,6 +45,78 @@ function render(state: SimulationState) {
   return renderToStaticMarkup(createElement(ObserverJoinerInspector, { state, params: DEFAULT_PARAMS }));
 }
 
+describe("ObserverJoinerInspector venue visit (Issue #266)", () => {
+  it("shows hunger, phase, and obtain tick apart from the cluster section", () => {
+    const agent = makeAgent({ id: "agent-a", label: "A" });
+    const html = render(
+      makeState({
+        tick: 40,
+        formationScenarioId: "standingParty",
+        agents: [agent],
+        venueAnchors: [
+          {
+            id: "anchor:drink-main",
+            kind: "drink",
+            x: 728,
+            y: 60,
+            interactionRadius: 28,
+            capacity: 3,
+            serviceTicks: 4,
+            label: "ドリンク台",
+          },
+        ],
+        venueRuntimeState: {
+          needs: {
+            "agent-a": { hunger: 0.22, thirst: 0.81, hungerRate: 1, thirstRate: 1.1, drinkCooldownUntilTick: 90 },
+          },
+          visits: {
+            "agent-a": {
+              visitId: "v",
+              anchorId: "anchor:drink-main",
+              purpose: "drink",
+              startedAtTick: 16,
+              phase: "consuming",
+              phaseEnteredAtTick: 30,
+              decisionReason: "selectedDrink",
+            },
+          },
+          lastDecisions: {
+            "agent-a": { action: "keepCurrentVisit", reason: "activeVenueVisit", hunger: 0.22, thirst: 0.15 },
+          },
+        },
+        log: [
+          {
+            tick: 26,
+            message: "Aさんがドリンク台に着いた",
+            tags: ["venueVisit"],
+            eventType: "venueVisitArrived",
+            metadata: { agentId: "agent-a", venueAnchorId: "anchor:drink-main", venueAnchorKind: "drink" },
+          },
+          {
+            tick: 30,
+            message: "Aさんがドリンクを受け取った",
+            tags: ["venueVisit"],
+            eventType: "refreshmentObtained",
+            metadata: { agentId: "agent-a", venueAnchorKind: "drink" },
+          },
+        ],
+      }),
+    );
+    expect(html).toContain("飲食の目的行動(会話への参加とは別)");
+    const venueAt = html.indexOf('data-testid="observer-inspector-venue-visit"');
+    expect(venueAt).toBeGreaterThan(-1);
+    const venueHtml = html.slice(venueAt, venueAt + 1500);
+    expect(venueHtml).toContain("0.22");
+    expect(venueHtml).toContain("0.81");
+    expect(venueHtml).toContain("消費中");
+    expect(venueHtml).toContain("ドリンク台");
+    expect(venueHtml).toContain("26 / 30 / -");
+    expect(venueHtml).toContain("飲食の訪問中");
+    expect(venueHtml).toContain("tick 90 まで");
+    expect(venueHtml).not.toContain("離脱→再探索");
+  });
+});
+
 describe("ObserverJoinerInspector speech history", () => {
   it("shows an empty-state message when the observerJoiner has no related speech yet", () => {
     const observer = makeAgent({ id: "observer", label: "Observer", isObserverJoiner: true });
@@ -422,64 +494,5 @@ describe("ObserverJoinerInspector spatial diagnostics (Issue #251, Phase 6)", ()
 
     expect(html).toContain("所属clusterの空間diagnostics");
     expect(html).toContain("診断: 重複/過密・壁際");
-  });
-});
-
-describe("ObserverJoinerInspector venue visit (Issue #267, Phase 7)", () => {
-  it("renders hunger, thirst, and phase from the existing readout", () => {
-    const agent = makeAgent({ id: "agent-a", label: "A", state: "undecided" });
-    const html = render(
-      makeState({
-        formationScenarioId: "standingParty",
-        agents: [agent],
-        venueRuntimeState: {
-          needs: {
-            "agent-a": {
-              hunger: 0.42,
-              thirst: 0.15,
-              hungerRate: 1,
-              thirstRate: 1,
-              drinkCooldownUntilTick: 80,
-            },
-          },
-          visits: {
-            "agent-a": {
-              visitId: "agent-a:anchor:food-main:10",
-              anchorId: "anchor:food-main",
-              purpose: "food",
-              startedAtTick: 10,
-              phase: "traveling",
-              phaseEnteredAtTick: 10,
-              decisionReason: "selectedFood",
-            },
-          },
-          lastDecisions: {
-            "agent-a": {
-              action: "keepCurrentVisit",
-              reason: "activeVenueVisit",
-              anchorId: "anchor:food-main",
-              hunger: 0.42,
-              thirst: 0.15,
-            },
-          },
-        },
-      }),
-    );
-
-    expect(html).toContain('data-testid="observer-inspector-venue-visit"');
-    expect(html).toContain('data-testid="observer-inspector-venue-hunger"');
-    expect(html).toContain(">0.42<");
-    expect(html).toContain('data-testid="observer-inspector-venue-thirst"');
-    expect(html).toContain(">0.15<");
-    expect(html).toContain("台へ移動中");
-    expect(html).toContain("anchor:food-main");
-    expect(html).toContain("ドリンク 80");
-  });
-
-  it("omits the section when venue runtime is absent", () => {
-    const agent = makeAgent({ id: "agent-a", label: "A", state: "undecided" });
-    const html = render(makeState({ formationScenarioId: "standingParty", agents: [agent] }));
-    expect(html).not.toContain("observer-inspector-venue-visit");
-    expect(html).not.toContain("飲食(Phase 7)");
   });
 });

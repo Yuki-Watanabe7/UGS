@@ -436,7 +436,7 @@ function setSpatial(
 }
 
 /**
- * Issue #262/#263/#264 (Phase 7): 料理台・ドリンク台の配置と、空腹・喉の渇きによる目的移動を有効にする。
+ * Issue #262 / #263 / #264 / #266 (Phase 7): 料理台・ドリンク台の配置と、空腹・喉の渇きによる目的移動を有効にする。
  * catalogが空なら初期MVP(料理台1・ドリンク台1)を入れる。オフにしても配置配列は残し、実行時は読まない。
  */
 const VENUE_ANCHOR_BOOLEAN_FIELDS: BooleanFieldDef[] = [
@@ -444,11 +444,104 @@ const VENUE_ANCHOR_BOOLEAN_FIELDS: BooleanFieldDef[] = [
     key: "venueAnchorsEnabled",
     label: "料理台とドリンク台を置く",
     description:
-      "オフ(既定)の間は台も欲求も訪問も作らず、Phase 6までの座標・所属・event・乱数系列を保つ。" +
+      "オフのあいだは台をstateに載せず、Canvasにも描かない。Phase 6までの座標・所属・event・乱数系列を保つ。" +
       "オンにすると料理台とドリンク台を会場の端へ固定し、空腹・喉の渇きに応じた目的移動と受け取りが始まる。" +
-      "オンとオフの差は飲食行動であり、会話の良し悪しを表さない。",
+      "オンとオフの差は飲食行動であり、会話の良し悪しを表さない。差はReset後に反映される。" +
+      "Canvasの移動表示の切り替えはシミュレーションを変えない。",
     get: (c) => c.venueAnchors.enabled,
     set: (c, enabled) => ({ ...c, venueAnchors: venueAnchorConfigWithEnabled(c.venueAnchors, enabled) }),
+  },
+];
+
+function setVenueNeeds(
+  config: StandingPartyScenarioConfig,
+  patch: Partial<StandingPartyScenarioConfig["venueAnchors"]["needs"]>,
+): StandingPartyScenarioConfig {
+  const needs = { ...config.venueAnchors.needs, ...patch };
+  if (needs.needAfterRefill >= needs.visitThreshold) {
+    needs.needAfterRefill = Math.max(0, Math.round((needs.visitThreshold - 0.01) * 100) / 100);
+  }
+  return { ...config, venueAnchors: { ...config.venueAnchors, needs } };
+}
+
+/**
+ * Issue #266: 詳細設定に出す飲食の主要項目。範囲は `validateVenueAnchorConfig` が受け付ける値に収める。
+ * service時間は配置済みの全anchorへ同じ整数を入れる。
+ */
+const VENUE_ANCHOR_NUMBER_FIELDS: NumberFieldDef[] = [
+  {
+    key: "hungerGainPerTick",
+    label: "空腹の上昇量",
+    description: "1tickあたりの空腹の増分(個体のhungerRateを掛ける前)。0以上。",
+    unit: "/tick",
+    min: 0,
+    max: 0.02,
+    step: 0.0001,
+    decimals: 4,
+    get: (c) => c.venueAnchors.needs.hungerGainPerTick,
+    set: (c, v) => setVenueNeeds(c, { hungerGainPerTick: Math.max(0, v) }),
+  },
+  {
+    key: "thirstGainPerTick",
+    label: "喉の渇きの上昇量",
+    description: "1tickあたりの喉の渇きの増分(個体のthirstRateを掛ける前)。0以上。",
+    unit: "/tick",
+    min: 0,
+    max: 0.02,
+    step: 0.0001,
+    decimals: 4,
+    get: (c) => c.venueAnchors.needs.thirstGainPerTick,
+    set: (c, v) => setVenueNeeds(c, { thirstGainPerTick: Math.max(0, v) }),
+  },
+  {
+    key: "visitThreshold",
+    label: "訪問を始める欲求の閾値",
+    description: "空腹か喉の渇きがこの値以上で、台への移動を検討する。0より大きく1以下。補充後の値より高く保つ。",
+    min: 0.05,
+    max: 1,
+    step: 0.01,
+    decimals: 2,
+    get: (c) => c.venueAnchors.needs.visitThreshold,
+    set: (c, v) => setVenueNeeds(c, { visitThreshold: Math.min(1, Math.max(0.05, v)) }),
+  },
+  {
+    key: "venueServiceTicks",
+    label: "受け取りにかかるtick",
+    description: "台に着いてから飲食物を受け取るまでのtick。配置済みの各台のserviceTicksへ同じ整数(1以上)を入れる。",
+    unit: "tick",
+    min: 1,
+    max: 30,
+    step: 1,
+    decimals: 0,
+    get: (c) => c.venueAnchors.anchors[0]?.serviceTicks ?? 4,
+    set: (c, v) => {
+      const serviceTicks = Math.max(1, Math.round(v));
+      return {
+        ...c,
+        venueAnchors: {
+          ...c.venueAnchors,
+          anchors: c.venueAnchors.anchors.map((anchor) => ({ ...anchor, serviceTicks })),
+        },
+      };
+    },
+  },
+  {
+    key: "revisitCooldownTicks",
+    label: "同じ種類を再訪するまでのtick",
+    description: "受け取ったあと、同じ種類(料理またはドリンク)へ再び向かわないtick数。1以上の整数。",
+    unit: "tick",
+    min: 1,
+    max: 200,
+    step: 1,
+    decimals: 0,
+    get: (c) => c.venueAnchors.visit.revisitCooldownTicks,
+    set: (c, v) => ({
+      ...c,
+      venueAnchors: {
+        ...c.venueAnchors,
+        visit: { ...c.venueAnchors.visit, revisitCooldownTicks: Math.max(1, Math.round(v)) },
+      },
+    }),
   },
 ];
 
@@ -1055,12 +1148,15 @@ export function StandingPartyAdvancedSettings({ config, onConfigChange, hasPendi
         {renderNumberFields(SPATIAL_CANDIDATE_SELECTION_FIELDS, config, onConfigChange)}
       </details>
       <details className="standing-party-advanced-settings-details">
-        <summary>飲食台(Phase 7、{VENUE_ANCHOR_BOOLEAN_FIELDS.length}項目)</summary>
+        <summary>
+          飲食台(Phase 7、{VENUE_ANCHOR_BOOLEAN_FIELDS.length + VENUE_ANCHOR_NUMBER_FIELDS.length}項目)
+        </summary>
         <p className="standing-party-advanced-settings-note">
-          料理台とドリンク台は会話の輪とは別の固定設備です。台の近くに人が集まること自体を、
-          会話の良さや社交性として評価するものではありません。
+          料理台とドリンク台は会話の輪とは別の固定設備です。空腹・喉の渇きは仮説的な内部値で、
+          台の近くに人が集まること自体を、会話の良さや社交性として評価するものではありません。
         </p>
         {renderBooleanFields(VENUE_ANCHOR_BOOLEAN_FIELDS, config, onConfigChange)}
+        {renderNumberFields(VENUE_ANCHOR_NUMBER_FIELDS, config, onConfigChange)}
       </details>
     </div>
   );

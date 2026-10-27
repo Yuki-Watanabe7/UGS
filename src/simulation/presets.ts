@@ -13,6 +13,8 @@ import {
   SPATIAL_ROAMING_STANDING_PARTY_CONFIG,
   SPATIAL_FIXED_BASELINE_STANDING_PARTY_CONFIG,
   STANDING_PARTY_VENUE_CATALOG_CONFIG,
+  VENUE_REFRESHMENT_STANDING_PARTY_CONFIG,
+  VENUE_OFF_BASELINE_STANDING_PARTY_CONFIG,
 } from "./standingPartyScenarioConfig";
 import type { StandingPartyScenarioConfig } from "./standingPartyScenarioConfig";
 
@@ -342,6 +344,46 @@ export const PRESETS: ScenarioPreset[] = [
     },
     formationScenarioId: "standingParty",
     formationStandingPartyConfig: SPATIAL_FIXED_BASELINE_STANDING_PARTY_CONFIG,
+  },
+  {
+    id: "standing-party-venue-refreshment",
+    name: "立食パーティー(飲食による会場回遊)",
+    description:
+      "「空間回遊あり・分散型」と同じ会場規模・既存の関係性・Phase 2〜6の設定のまま、料理台とドリンク台を有効にする。" +
+      "空腹や喉の渇きが閾値を超えると、会話の輪とは別に台へ向かい、受け取ったあと会場の回遊へ戻る。" +
+      "台の近くで別の人と新しい輪が始まることもある。これは食欲や人流を再現した設定ではなく、仮説的なモデルである。" +
+      "飲食の有無だけの比較は「立食パーティー(飲食なし比較)」と同一seedで行う。" +
+      "従来の「立食パーティー」と Phase 6 の比較presetは残しており、そちらでは飲食は無効のまま。",
+    params: {
+      ...DEFAULT_PARAMS,
+      populationSize: 24,
+      groupConfirmSize: 3,
+      numLeaders: 4,
+      overallWillingness: 0.65,
+      lateJoinEase: 0.5,
+      existingTieStrength: 0.25,
+    },
+    formationScenarioId: "standingParty",
+    formationStandingPartyConfig: VENUE_REFRESHMENT_STANDING_PARTY_CONFIG,
+  },
+  {
+    id: "standing-party-venue-off-baseline",
+    name: "立食パーティー(飲食なし比較)",
+    description:
+      "「立食パーティー(飲食による会場回遊)」と同じ人数・seedの使い方・社会と空間の設定で、飲食台だけを無効にした比較基準。" +
+      "無効のあいだは Phase 6 の「空間回遊あり・分散型」と同じ座標・event・乱数系列になる。" +
+      "従来の立食パーティーpresetも残している。飲食なしは性格や社交性の劣りを意味しない。",
+    params: {
+      ...DEFAULT_PARAMS,
+      populationSize: 24,
+      groupConfirmSize: 3,
+      numLeaders: 4,
+      overallWillingness: 0.65,
+      lateJoinEase: 0.5,
+      existingTieStrength: 0.25,
+    },
+    formationScenarioId: "standingParty",
+    formationStandingPartyConfig: VENUE_OFF_BASELINE_STANDING_PARTY_CONFIG,
   },
   {
     id: "classroom-pair",

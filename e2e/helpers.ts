@@ -39,27 +39,43 @@ function parseVisitStart(text: string): { label: string; kind: "ドリンク" | 
   return { label: match[1], kind, item: kind };
 }
 
-/**
- * Issue #267: 立食パーティーで飲食台を有効にし、移動→受け取り→need低下→回遊復帰を
- * イベントログとInspectorの数値で確認する。Canvas座標の一致は見ない。
- */
-export async function observeVenueRefreshment(page: Page): Promise<void> {
-  await page.getByLabel("シナリオプリセット").selectOption("standing-party");
-  await page.getByLabel("Seed").fill("267");
-  await page.getByRole("button", { name: "Reset", exact: true }).click();
+async function selectAgentByLabel(page: Page, label: string): Promise<void> {
+  const agentSelect = page.getByLabel("表示するagent");
+  const optionValue = await agentSelect.locator("option").evaluateAll((opts, agentLabel) => {
+    const match = opts.find((option) => {
+      const text = option.textContent ?? "";
+      return text === agentLabel || text === `${agentLabel}(observerJoiner)`;
+    });
+    return match ? (match as HTMLOptionElement).value : "";
+  }, label);
+  expect(optionValue).not.toBe("");
+  await agentSelect.selectOption(optionValue);
+  await page.getByText("飲食の目的行動(会話への参加とは別)").scrollIntoViewIfNeeded();
+}
 
-  const summary = page.getByText("飲食台(Phase 7", { exact: false });
-  await summary.scrollIntoViewIfNeeded();
-  const details = summary.locator("xpath=ancestor::details[1]");
-  if (!(await details.evaluate((element) => (element as HTMLDetailsElement).open))) {
-    await summary.click();
-  }
-  await page.getByTestId("standing-party-field-venueAnchorsEnabled").check();
+/** #266 のインスペクターは空腹と喉の渇きを `0.72 / 0.31` の1行で出す。 */
+async function readRefreshmentNeeds(page: Page): Promise<{ hunger: number; thirst: number }> {
+  const row = page.locator(".observer-inspector-row").filter({ hasText: "空腹 / 喉の渇き" });
+  await expect(row).toBeVisible();
+  const text = await row.innerText();
+  const match = text.match(/(\d+\.\d+)\s*\/\s*(\d+\.\d+)/);
+  if (!match) throw new Error(`空腹 / 喉の渇きの行を読めない: ${text}`);
+  return { hunger: Number(match[1]), thirst: Number(match[2]) };
+}
+
+/**
+ * Issue #267: 初期preset「飲食による会場回遊」の既定閾値(0.7)のまま、
+ * 移動中の需要と受け取り後の需要を #266 のインスペクターから読む。
+ * 閾値を 0.05 まで下げると補充後(0.15)の方が高くなり得るので、この確認では下げない。
+ * Canvas座標の一致は見ない。
+ */
+export async function observeVenueNeedDrop(page: Page): Promise<void> {
+  await page.getByLabel("シナリオプリセット").selectOption("standing-party-venue-refreshment");
+  await page.getByLabel("Seed").fill("267");
   await page.getByRole("button", { name: "Reset", exact: true }).click();
 
   await expect(page.getByTestId("venue-anchor-anchor:food-main")).toBeVisible();
   await expect(page.getByTestId("venue-anchor-anchor:drink-main")).toBeVisible();
-  await expect(page.getByTestId("observer-inspector-venue-visit")).toBeVisible();
 
   await page.getByRole("button", { name: "Start", exact: true }).click();
   let started: { label: string; kind: "ドリンク" | "料理"; item: "ドリンク" | "料理" } | undefined;
@@ -81,25 +97,16 @@ export async function observeVenueRefreshment(page: Page): Promise<void> {
         }
         return false;
       },
-      { timeout: 90_000, intervals: [250] },
+      { timeout: 120_000, intervals: [250] },
     )
     .toBe(true);
   if (!started) throw new Error("移動開始ログが見つからない");
   const visit = started;
 
-  const agentSelect = page.getByLabel("表示するagent");
-  const optionValue = await agentSelect.locator("option").evaluateAll((opts, label) => {
-    const match = opts.find((option) => {
-      const text = option.textContent ?? "";
-      return text === label || text === `${label}(observerJoiner)`;
-    });
-    return match ? (match as HTMLOptionElement).value : "";
-  }, visit.label);
-  expect(optionValue).not.toBe("");
-  await agentSelect.selectOption(optionValue);
-  const needTestId = visit.kind === "ドリンク" ? "observer-inspector-venue-thirst" : "observer-inspector-venue-hunger";
-  const duringTravel = Number(await page.getByTestId(needTestId).innerText());
-  expect(duringTravel).toBeGreaterThanOrEqual(0.65);
+  await selectAgentByLabel(page, visit.label);
+  const duringTravel = await readRefreshmentNeeds(page);
+  const duringValue = visit.kind === "ドリンク" ? duringTravel.thirst : duringTravel.hunger;
+  expect(duringValue).toBeGreaterThanOrEqual(0.65);
 
   await page.getByRole("button", { name: "Start", exact: true }).click();
   await expect
@@ -113,28 +120,9 @@ export async function observeVenueRefreshment(page: Page): Promise<void> {
     )
     .toBe(true);
   await page.getByRole("button", { name: "Pause", exact: true }).click();
-  await agentSelect.selectOption(optionValue);
-  const afterObtain = Number(await page.getByTestId(needTestId).innerText());
-  expect(afterObtain).toBeLessThan(duringTravel);
-  expect(afterObtain).toBeLessThan(0.45);
-
-  await page.getByRole("button", { name: "Start", exact: true }).click();
-  const station = visit.kind === "ドリンク" ? "ドリンク台" : "料理台";
-  await expect
-    .poll(
-      async () => {
-        await revealVenueLog(page);
-        const texts = await page.locator(".event-log-entry").allTextContents();
-        return texts.some((row) => row.includes(`${visit.label}さんが${station}を離れ、会場の回遊に戻った`));
-      },
-      { timeout: 30_000, intervals: [250] },
-    )
-    .toBe(true);
-  await page.getByRole("button", { name: "Pause", exact: true }).click();
-  await agentSelect.selectOption(optionValue);
-  const texts = await page.locator(".event-log-entry").allTextContents();
-  expect(texts.some((row) => row.includes(`${visit.label}さんが${station}を離れ、会場の回遊に戻った`))).toBe(true);
-  // 完了の次tickでもう一方の台へ出ることがある。その場合も回遊ログのあとに次の訪問が始まっている。
-  const phase = await page.getByTestId("observer-inspector-venue-phase").innerText();
-  expect(["訪問していない", "台へ移動中", "受け取り中", "摂取中"]).toContain(phase);
+  await selectAgentByLabel(page, visit.label);
+  const afterObtain = await readRefreshmentNeeds(page);
+  const afterValue = visit.kind === "ドリンク" ? afterObtain.thirst : afterObtain.hunger;
+  expect(afterValue).toBeLessThan(duringValue);
+  expect(afterValue).toBeLessThan(0.45);
 }

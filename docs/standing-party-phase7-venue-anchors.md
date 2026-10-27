@@ -761,9 +761,11 @@ venueAnchorsActive =
 
 ### 9.4 分析スキーマ
 
-#264 は `STANDING_PARTY_ANALYSIS_SCHEMA_VERSION`(現状 1)を上げない。
+#264 は `STANDING_PARTY_ANALYSIS_SCHEMA_VERSION`(当時 1)を上げない。
 終了理由の追加と、未知のeventを無視していた経路で `venueVisitStarted` を閉じる変更だけを行う。
 訪問回数などの新しい集計列をJSON/CSVへ足すのは #266 であり、そのとき version を 2 にする。
+#266 では分析スキーマを 2、export bundle を `standing-party-analysis-export/4`、
+飲食集計を `venue-visit-analysis/1` にした。
 
 ---
 
@@ -775,11 +777,11 @@ venueAnchorsActive =
 
 | preset id | 表示名の意図 | config |
 | --- | --- | --- |
-| `standing-party-venue-refreshment` | 飲食で会場を回遊する | Phase 6 の空間回遊presetと同じ社会・空間設定に、`enabled: true`、`encounterEnabled` は #265 完了までは false、`anchors: MVP_VENUE_ANCHORS`、§9.1 の既定need |
-| `standing-party-venue-off-baseline` | 飲食なしの比較 | 上と同一で `enabled: false` だけが違う |
+| `standing-party-venue-refreshment` | 飲食で会場を回遊する | Phase 6 の空間回遊presetと同じ社会・空間設定に、`enabled: true`、`encounterEnabled: true`(#265完了後)、`anchors: MVP_VENUE_ANCHORS`、§9.1 の既定need |
+| `standing-party-venue-off-baseline` | 飲食なしの比較 | 上と同一で `enabled: false` だけが違う。`encounterEnabled` は true のまま残し、無効時は実行しない |
 
-既存presetのidと既定選択は #266 まで変えない。#266 が初期選択を飲食presetへ移す場合は、
-その切り替えだけの変更として行い、古いpreset idは残す。
+#266 は立食パーティーの初期選択を `standing-party-venue-refreshment` へ移した。
+古いpreset id(`standing-party` と Phase 6 の比較presetを含む)は残し、それらの飲食は無効のままである。
 `enabled: false` に切り替えた実行は、飲食presetと同じseedでも Phase 6 の座標・event・主系列PRNGと
 一致する。これが #267 の互換テストの期待値である。
 
