@@ -1127,9 +1127,17 @@ UI側(#251)は次を提供します。
   累積roaming距離・訪問zone数・cluster center path lengthのような「run全体を通じた累積」指標は本Issueの
   スコープ外です。表示される瞬間的な移動量(`instantRoamingSpeed`等)は累積値ではありません。
 
-指標は空間の広がりの記述統計であり、社交性・人気・良し悪しを表すものではありません。ドリンク・料理・
-入口等の会場anchor、物理衝突、経路探索は対象外です。検証範囲・受入条件対応表・スコープ決定の詳細は
+指標は空間の広がりの記述統計であり、社交性・人気・良し悪しを表すものではありません。物理衝突と
+経路探索は対象外です。ドリンク・料理の台はPhase 6では置かず、契約だけをPhase 7で固定しています。
+検証範囲・受入条件対応表・スコープ決定の詳細は
 [`docs/standing-party-phase6-verification.md`](docs/standing-party-phase6-verification.md)を参照してください。
+
+### Phase 7の飲食台契約(#261、設計のみ)
+
+料理台とドリンク台、空腹・喉の渇き、台への目的移動の型・寿命・優先順位・tick順は
+[`docs/standing-party-phase7-venue-anchors.md`](docs/standing-party-phase7-venue-anchors.md)
+に固定しています。台は会話clusterとは別のentityで、近くに立っただけでは接触や内容発話になりません。
+実装は #262 以降です。この節の時点ではシミュレーションの状態・イベント・座標・乱数は変わっていません。
 
 ## シミュレーションルールの概要
 
