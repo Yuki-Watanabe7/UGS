@@ -39,6 +39,8 @@ describe("StandingPartyAdvancedSettings", () => {
     const html = render(DEFAULT_STANDING_PARTY_SCENARIO_CONFIG);
     expect(html).toContain("飲食台(Phase 7");
     expect(html).toContain("料理台とドリンク台を置く");
+    expect(html).toContain("空腹・喉の渇きに応じた目的移動");
+    expect(html).not.toContain("需要・移動・受け取りはまだ行わない");
     expect(html).toContain("会話の良さや社交性として評価するものではありません");
     const testidIndex = html.indexOf('data-testid="standing-party-field-venueAnchorsEnabled"');
     const tagStart = html.lastIndexOf("<input", testidIndex);

@@ -478,6 +478,59 @@ function TieSummaryList({
   );
 }
 
+const VENUE_PHASE_LABEL = {
+  traveling: "台へ移動中",
+  receiving: "受け取り中",
+  consuming: "摂取中",
+} as const;
+
+/**
+ * Issue #267 (Phase 7): 既存の `venueVisit` readout をそのまま見せる。表示だけで need や訪問は変えない。
+ */
+function VenueVisitSection({ visit }: { visit: NonNullable<ObserverJoinerInspection["venueVisit"]> }) {
+  const phase = visit.phase ? VENUE_PHASE_LABEL[visit.phase] : "訪問していない";
+  return (
+    <>
+      <div className="observer-inspector-divider" />
+      <div className="observer-inspector-row observer-inspector-row--header">
+        <span>飲食(Phase 7)</span>
+      </div>
+      <div data-testid="observer-inspector-venue-visit">
+        <div className="observer-inspector-row">
+          <span>空腹</span>
+          <span data-testid="observer-inspector-venue-hunger">{visit.hunger.toFixed(2)}</span>
+        </div>
+        <div className="observer-inspector-row">
+          <span>喉の渇き</span>
+          <span data-testid="observer-inspector-venue-thirst">{visit.thirst.toFixed(2)}</span>
+        </div>
+        <div className="observer-inspector-row">
+          <span>訪問</span>
+          <span data-testid="observer-inspector-venue-phase">{phase}</span>
+        </div>
+        {visit.anchorId && (
+          <div className="observer-inspector-row">
+            <span>対象の台</span>
+            <span>{visit.anchorId}</span>
+          </div>
+        )}
+        {visit.reason && (
+          <div className="observer-inspector-row">
+            <span>直近の判断</span>
+            <span>{visit.reason}</span>
+          </div>
+        )}
+        <div className="observer-inspector-row">
+          <span>再訪できるtick</span>
+          <span>
+            料理 {visit.foodCooldownUntilTick ?? "制限なし"} / ドリンク {visit.drinkCooldownUntilTick ?? "制限なし"}
+          </span>
+        </div>
+      </div>
+    </>
+  );
+}
+
 /**
  * Issue #251 (Phase 6): roaming/crowding/候補選択/所属clusterの空間diagnostics。read-only表示のみで、
  * simulation state・RNGへは一切介入しない。raw vector数値を大量表示せず、候補score内訳は
@@ -980,6 +1033,10 @@ function InspectionCard({
             <SpatialDiagnosticsSection spatial={inspection.spatial} labelById={labelById} />
           ) : (
             <p className="observer-inspector-speech-empty">この場面ではSpatial Dynamicsは対象外です。</p>
+          )}
+
+          {inspection.venueVisit && (
+            <VenueVisitSection visit={inspection.venueVisit} />
           )}
         </>
       )}

@@ -436,7 +436,7 @@ function setSpatial(
 }
 
 /**
- * Issue #262 (Phase 7): 料理台・ドリンク台の配置を有効にする。オンにしても需要・移動はまだ走らない。
+ * Issue #262/#263/#264 (Phase 7): 料理台・ドリンク台の配置と、空腹・喉の渇きによる目的移動を有効にする。
  * catalogが空なら初期MVP(料理台1・ドリンク台1)を入れる。オフにしても配置配列は残し、実行時は読まない。
  */
 const VENUE_ANCHOR_BOOLEAN_FIELDS: BooleanFieldDef[] = [
@@ -444,8 +444,9 @@ const VENUE_ANCHOR_BOOLEAN_FIELDS: BooleanFieldDef[] = [
     key: "venueAnchorsEnabled",
     label: "料理台とドリンク台を置く",
     description:
-      "オフ(既定)の間は台をstateに載せず、Canvasにも描かない。オンにすると料理台とドリンク台を" +
-      "会場の端へ固定する。需要・移動・受け取りはまだ行わないため、オンとオフでagentの状態・event・乱数系列は変わらない。",
+      "オフ(既定)の間は台も欲求も訪問も作らず、Phase 6までの座標・所属・event・乱数系列を保つ。" +
+      "オンにすると料理台とドリンク台を会場の端へ固定し、空腹・喉の渇きに応じた目的移動と受け取りが始まる。" +
+      "オンとオフの差は飲食行動であり、会話の良し悪しを表さない。",
     get: (c) => c.venueAnchors.enabled,
     set: (c, enabled) => ({ ...c, venueAnchors: venueAnchorConfigWithEnabled(c.venueAnchors, enabled) }),
   },

@@ -424,3 +424,62 @@ describe("ObserverJoinerInspector spatial diagnostics (Issue #251, Phase 6)", ()
     expect(html).toContain("診断: 重複/過密・壁際");
   });
 });
+
+describe("ObserverJoinerInspector venue visit (Issue #267, Phase 7)", () => {
+  it("renders hunger, thirst, and phase from the existing readout", () => {
+    const agent = makeAgent({ id: "agent-a", label: "A", state: "undecided" });
+    const html = render(
+      makeState({
+        formationScenarioId: "standingParty",
+        agents: [agent],
+        venueRuntimeState: {
+          needs: {
+            "agent-a": {
+              hunger: 0.42,
+              thirst: 0.15,
+              hungerRate: 1,
+              thirstRate: 1,
+              drinkCooldownUntilTick: 80,
+            },
+          },
+          visits: {
+            "agent-a": {
+              visitId: "agent-a:anchor:food-main:10",
+              anchorId: "anchor:food-main",
+              purpose: "food",
+              startedAtTick: 10,
+              phase: "traveling",
+              phaseEnteredAtTick: 10,
+              decisionReason: "selectedFood",
+            },
+          },
+          lastDecisions: {
+            "agent-a": {
+              action: "keepCurrentVisit",
+              reason: "activeVenueVisit",
+              anchorId: "anchor:food-main",
+              hunger: 0.42,
+              thirst: 0.15,
+            },
+          },
+        },
+      }),
+    );
+
+    expect(html).toContain('data-testid="observer-inspector-venue-visit"');
+    expect(html).toContain('data-testid="observer-inspector-venue-hunger"');
+    expect(html).toContain(">0.42<");
+    expect(html).toContain('data-testid="observer-inspector-venue-thirst"');
+    expect(html).toContain(">0.15<");
+    expect(html).toContain("台へ移動中");
+    expect(html).toContain("anchor:food-main");
+    expect(html).toContain("ドリンク 80");
+  });
+
+  it("omits the section when venue runtime is absent", () => {
+    const agent = makeAgent({ id: "agent-a", label: "A", state: "undecided" });
+    const html = render(makeState({ formationScenarioId: "standingParty", agents: [agent] }));
+    expect(html).not.toContain("observer-inspector-venue-visit");
+    expect(html).not.toContain("飲食(Phase 7)");
+  });
+});

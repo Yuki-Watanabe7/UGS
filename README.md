@@ -1132,12 +1132,18 @@ UI側(#251)は次を提供します。
 検証範囲・受入条件対応表・スコープ決定の詳細は
 [`docs/standing-party-phase6-verification.md`](docs/standing-party-phase6-verification.md)を参照してください。
 
-### Phase 7の飲食台契約(#261、設計のみ)
+### Phase 7の飲食台(#261〜#267)
 
 料理台とドリンク台、空腹・喉の渇き、台への目的移動の型・寿命・優先順位・tick順は
 [`docs/standing-party-phase7-venue-anchors.md`](docs/standing-party-phase7-venue-anchors.md)
 に固定しています。台は会話clusterとは別のentityで、近くに立っただけでは接触や内容発話になりません。
-実装は #262 以降です。この節の時点ではシミュレーションの状態・イベント・座標・乱数は変わっていません。
+既定のプリセットでは飲食台はオフで、Phase 6までの座標・所属・event・乱数を変えません。
+
+画面で見る最短手順は、プリセット「立食パーティー」(`standing-party`)、seed `267`、詳細設定の
+「料理台とドリンク台を置く」をオンにしてResetし、Startすることです。料理台とドリンク台、
+イベントログの「取りに移動を始めた」「受け取った」「回遊に戻った」、agentインスペクターの
+「飲食(Phase 7)」にある空腹・喉の渇きが観察点です。再現手順・固定seedの件数・既知の限界は
+[`docs/standing-party-phase7-verification.md`](docs/standing-party-phase7-verification.md)を参照してください。
 
 ## シミュレーションルールの概要
 
