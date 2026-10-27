@@ -58,6 +58,12 @@ import {
   validateSpatialDynamicsConfig,
   type SpatialDynamicsConfig,
 } from "./spatialDynamics";
+import {
+  DEFAULT_VENUE_ANCHOR_CONFIG,
+  standingPartyVenueCatalogConfig,
+  validateVenueAnchorConfig,
+  type VenueAnchorConfig,
+} from "./venueAnchors";
 
 /** 社交的回遊傾向(`Agent.socialCirculationTendency`)を一様分布で生成する範囲 `[0,1]` */
 export type SocialCirculationTendencyRange = {
@@ -99,6 +105,11 @@ export type StandingPartyScenarioConfig = {
    * `engine.ts`がこの設定を一切参照せず、既存のPhase 1〜5 state・event・PRNG系列をbyte-identicalに保つ。
    */
   spatialDynamics: SpatialDynamicsConfig;
+  /**
+   * Issue #262 (Phase 7): 料理台・ドリンク台の配置catalog。`enabled: false`(既定)の間は
+   * `SimulationState.venueAnchors` を作らず、Canvasにも描かない。需要・移動・受け取りはまだ行わない。
+   */
+  venueAnchors: VenueAnchorConfig;
 };
 
 export const DEFAULT_CIRCULATION_TENDENCY_RANGE: SocialCirculationTendencyRange = { min: 0, max: 1 };
@@ -113,6 +124,17 @@ export const DEFAULT_STANDING_PARTY_SCENARIO_CONFIG: StandingPartyScenarioConfig
   informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
   topicIntegration: DEFAULT_TOPIC_INTEGRATION_CONFIG,
   spatialDynamics: DEFAULT_SPATIAL_DYNAMICS_CONFIG,
+  venueAnchors: DEFAULT_VENUE_ANCHOR_CONFIG,
+};
+
+/**
+ * Issue #262: 既定の立食パーティーに、料理台1・ドリンク台1の配置catalogだけを載せる。
+ * `enabled` は false のままなので、state・event・主系列PRNGは `DEFAULT_STANDING_PARTY_SCENARIO_CONFIG`
+ * と一致する。詳細設定で有効化してResetすると、同じ座標が Canvas に描かれる。
+ */
+export const STANDING_PARTY_VENUE_CATALOG_CONFIG: StandingPartyScenarioConfig = {
+  ...DEFAULT_STANDING_PARTY_SCENARIO_CONFIG,
+  venueAnchors: standingPartyVenueCatalogConfig(),
 };
 
 function assertRange01(name: string, value: number): void {
@@ -135,6 +157,7 @@ export function validateStandingPartyScenarioConfig(config: StandingPartyScenari
   validateInformationPropagationConfig(config.informationPropagation);
   validateTopicIntegrationConfig(config.topicIntegration);
   validateSpatialDynamicsConfig(config.spatialDynamics);
+  validateVenueAnchorConfig(config.venueAnchors);
   assertRange01("circulationTendencyRange.min", config.circulationTendencyRange.min);
   assertRange01("circulationTendencyRange.max", config.circulationTendencyRange.max);
   if (config.circulationTendencyRange.min > config.circulationTendencyRange.max) {
@@ -145,6 +168,7 @@ export function validateStandingPartyScenarioConfig(config: StandingPartyScenari
 }
 
 validateStandingPartyScenarioConfig(DEFAULT_STANDING_PARTY_SCENARIO_CONFIG);
+validateStandingPartyScenarioConfig(STANDING_PARTY_VENUE_CATALOG_CONFIG);
 
 /**
  * 比較プリセット「幅広く交流するネットワーキング型」(issue #189要件2節)。標準ケース(`DEFAULT_...`)と
@@ -174,6 +198,7 @@ export const NETWORKING_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = {
   informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
   topicIntegration: DEFAULT_TOPIC_INTEGRATION_CONFIG,
   spatialDynamics: DEFAULT_SPATIAL_DYNAMICS_CONFIG,
+  venueAnchors: DEFAULT_VENUE_ANCHOR_CONFIG,
 };
 
 /**
@@ -204,6 +229,7 @@ export const INTIMATE_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig = {
   informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
   topicIntegration: DEFAULT_TOPIC_INTEGRATION_CONFIG,
   spatialDynamics: DEFAULT_SPATIAL_DYNAMICS_CONFIG,
+  venueAnchors: DEFAULT_VENUE_ANCHOR_CONFIG,
 };
 
 validateStandingPartyScenarioConfig(NETWORKING_STANDING_PARTY_CONFIG);
@@ -256,6 +282,7 @@ export const OUTWARD_INTEREST_STANDING_PARTY_CONFIG: StandingPartyScenarioConfig
   informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
   topicIntegration: DEFAULT_TOPIC_INTEGRATION_CONFIG,
   spatialDynamics: DEFAULT_SPATIAL_DYNAMICS_CONFIG,
+  venueAnchors: DEFAULT_VENUE_ANCHOR_CONFIG,
 };
 
 /**
@@ -290,6 +317,7 @@ export const CURRENT_CIRCLE_ATTACHMENT_STANDING_PARTY_CONFIG: StandingPartyScena
   informationPropagation: DEFAULT_INFORMATION_PROPAGATION_CONFIG,
   topicIntegration: DEFAULT_TOPIC_INTEGRATION_CONFIG,
   spatialDynamics: DEFAULT_SPATIAL_DYNAMICS_CONFIG,
+  venueAnchors: DEFAULT_VENUE_ANCHOR_CONFIG,
 };
 
 validateStandingPartyScenarioConfig(OUTWARD_INTEREST_STANDING_PARTY_CONFIG);

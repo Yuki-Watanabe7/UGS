@@ -463,6 +463,7 @@ function SimulationApp({ scenario }: Props) {
             clusterTopics={canvasClusterTopics}
             showSpatialDiagnostics={presentation.id === "standingParty" && showSpatialDiagnostics}
             spatialRuntimeState={simState.spatialRuntimeState}
+            venueAnchors={presentation.id === "standingParty" ? simState.venueAnchors : undefined}
           />
         </section>
 
