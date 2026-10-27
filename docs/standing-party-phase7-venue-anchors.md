@@ -886,3 +886,32 @@ Inspectorが読むのは `venueRuntimeState` のneed、最後のdecision、訪�
 | 設計のみで既存挙動を変えない | 変更は本契約、Phase 6契約からの参照、READMEの案内だけである |
 
 本Issueでは `src/simulation` と `src/components` を変更しない。
+
+---
+
+## 13. Issue #265 ステーション付近の再形成
+
+§7.5 の境界を、次の操作に固定する。`encounterEnabled === false` のあいだは、この節の関数を呼ばない。
+位置・cluster中心・crowding・event・主系列PRNGは #264 のままである。
+
+1. **滞在位置**。`receiving` / `consuming` のagentを、anchor中心から半径18以内の決定的オフセット
+   （`venueStayOffset(agentId)`）へ置く。同じidは常に同じ位置で、interaction radius の外には出さない。
+   traveling と、訪問が無いagentは動かさない。
+2. **機会**。`evaluateEncounterOpportunity` は二人の距離、phase、topicの一致、同cliqueの
+   `existingTieStrength`、initiative、willingness / conformity / influenceAvoidance から score を決める。
+   rngは使わない。`isObserverJoiner` は式に入れない。scoreが `0.45` 未満なら理由は
+   `belowSocialThreshold` で、近くにいても輪を作らない。
+3. **サービス中**。phaseが `beforeObtain` または `afterObtain` のあいだは理由 `serviceInProgress`。
+   状態は `undecided` のまま、forming cluster へ移さない。
+4. **訪問完了後**。同じanchorの完了tickから `windowTicks` 以内、相互距離が `radius` 以内、
+   両方が `undecided` で社会的移動意図が無いときだけ `postVisitGreeting`。
+   台の円の外に既存の参加可能な輪があり、開始者から `candidateMergeRadius` 以内なら、その輪へ
+   既存の approaching として向かう。無ければ新しい `GroupCandidate` を、中心が
+   `interactionRadius + clusterClearance` 以上離れた位置に作る。開始者は forming、相手は approaching。
+   発言は既存の `initiativeFormedCore` と、状態遷移から導出する `approachWelcome` / `joinGreeting`。
+5. **接触と内容発話**。Phase 4 の contact は、その後の正式な membership 区間からのみ導出する。
+   Phase 5 の内容発話は、これまでどおり confirmed cluster の membership からのみ導出する。
+   機会自体は `venueEncounterOpportunity` / `venueEncounterFormed` に残し、表示文言は解析しない。
+6. **台への定着を避ける**。形成中・成立中のcluster中心がクリアランス円の中にあれば、1tickあたり
+   最大4だけ外へずらす。`encounterEnabled` のときだけ、crowding の密度sourceにanchor中心を足す。
+   物理衝突は作らない。

@@ -107,6 +107,15 @@ import {
   startVenueVisitsFromDecisions,
   stepVenueVisitMovement,
 } from "./venueVisitRuntime";
+import {
+  applyVenueStayPositions,
+  nudgeClusterFromAnchors,
+  planVenueEncounters,
+  primaryTopicId,
+  pruneEncounterSignals,
+  updateEncounterWindows,
+  type VenueEncounterPresence,
+} from "./venueEncounter";
 import { advanceRoamingHeading, applyAgentRoamingStep, computeAgentWallAvoidanceForce, roamingIntensity } from "./roaming";
 import type { RoamingRuntimeState } from "./roaming";
 import { computeCrowdingVector } from "./spatialOccupancy";
@@ -142,6 +151,7 @@ import {
   deriveTieObservations,
   registerTieCommitments,
   resolveRelationshipTieConfig,
+  tiePairKey,
 } from "./relationshipTie";
 
 const APPROACH_SPEED = 14;
@@ -1422,6 +1432,16 @@ export function stepSimulation(
     );
     spatialRuntimeState = { clusterVelocity, roaming: spatialRuntimeState?.roaming ?? {} };
   }
+  // Issue #265: 会話の中心が飲食台の円に沈まないよう、形成中・成立中の中心だけを外へずらす。
+  // encounter無効、またはstandingParty以外では動かさない。rngは消費しない。
+  if (venueAnchorsActive && venueAnchorConfig.encounterEnabled && venueAnchors) {
+    for (const candidate of candidates) {
+      if (candidate.status !== "forming" && candidate.status !== "confirmed") continue;
+      const nudged = nudgeClusterFromAnchors(candidate, venueAnchors, venueAnchorConfig.encounter.clusterClearance);
+      candidate.x = nudged.x;
+      candidate.y = nudged.y;
+    }
+  }
 
   // 1. 核形成: undecidedな人が forming になるかどうか
   // 核を作れるのは主導性が十分高い人、または既存の仲良しグループが
@@ -2242,6 +2262,14 @@ export function stepSimulation(
       pushLog(log, tick, event.message, ["venueVisit"], event.eventType, event.metadata);
     }
     venueRuntimeState = { needs, visits, lastDecisions };
+    if (venueAnchorConfig.encounterEnabled) {
+      if (previousVenue?.encounterWindows) {
+        venueRuntimeState.encounterWindows = { ...previousVenue.encounterWindows };
+      }
+      if (previousVenue?.encounterSignals) {
+        venueRuntimeState.encounterSignals = { ...previousVenue.encounterSignals };
+      }
+    }
     venueVisitStressSkip = new Set(Object.keys(visits));
   }
 
@@ -2271,6 +2299,12 @@ export function stepSimulation(
     // (this tick最終座標)であり、追加のスナップショットは不要(candidatesをそのまま参照する)。
     const crowdingActive = spatialDynamicsConfig.crowdingEnabled;
     const crowdingSnapshot: Agent[] | undefined = crowdingActive ? agents.map((a) => ({ ...a })) : undefined;
+    // Issue #265: 飲食台の中心を密度sourceに足し、会話の輪が台の上へ定着しないようにする。
+    // encounter無効時は引数を渡さず、従来のcrowdingと同一。
+    const encounterDensitySources =
+      venueAnchorsActive && venueAnchorConfig.encounterEnabled && venueAnchors
+        ? venueAnchors.map((anchor) => ({ x: anchor.x, y: anchor.y, weight: 1 }))
+        : undefined;
     for (const agent of agents) {
       if (agent.state !== "undecided") continue;
       // Issue #264 (ADR §7.1): traveling は roaming も crowding も止め、anchorへ直進する。
@@ -2284,7 +2318,7 @@ export function stepSimulation(
       // Issue #249 (ADR §4): crowding avoidanceはundecided(roaming)にのみ適用する
       // (approaching/forming/joined/leavingへは適用外、issue実装範囲5節)。
       const crowd = crowdingSnapshot
-        ? computeCrowdingVector(agent, crowdingSnapshot, candidates, spatialDynamicsConfig)
+        ? computeCrowdingVector(agent, crowdingSnapshot, candidates, spatialDynamicsConfig, encounterDensitySources)
         : undefined;
       applyAgentRoamingStep(
         agent,
@@ -2310,7 +2344,7 @@ export function stepSimulation(
   // Issue #264 (ADR §8.1 V3): 到着・満席・移動時間超過・受け取り・消費完了。
   // このtickに訪問があったagentは、完了や放棄でレコードが消えても下のstress評価から外す。
   if (venueRuntimeState) {
-    for (const event of advanceVenueVisits({
+    const visitEvents = advanceVenueVisits({
       agents,
       visits: venueRuntimeState.visits,
       needs: venueRuntimeState.needs,
@@ -2321,8 +2355,29 @@ export function stepSimulation(
       failedVisitCooldownTicks: venueAnchorConfig.visit.failedVisitCooldownTicks,
       maxTravelTicks: venueAnchorConfig.visit.maxTravelTicks,
       needAfterRefill: venueAnchorConfig.needs.needAfterRefill,
-    })) {
+    });
+    for (const event of visitEvents) {
       pushLog(log, tick, event.message, ["venueVisit"], event.eventType, event.metadata);
+    }
+    // Issue #265: 受け取り中の立ち位置をずらし、完了した訪問の機会窓を残す。
+    // encounter無効のあいだは位置も窓も作らない。
+    if (venueAnchorConfig.encounterEnabled && venueAnchors) {
+      applyVenueStayPositions(agents, venueRuntimeState.visits, venueAnchors);
+      const restarted = visitEvents
+        .filter((event) => event.eventType === "venueVisitStarted" && event.metadata.agentId)
+        .map((event) => event.metadata.agentId!);
+      const signals = pruneEncounterSignals(venueRuntimeState.encounterSignals ?? {}, restarted);
+      const windows = updateEncounterWindows(
+        venueRuntimeState.encounterWindows ?? {},
+        visitEvents,
+        tick,
+        venueAnchorConfig.encounter.windowTicks,
+        new Set(Object.keys(venueRuntimeState.visits)),
+      );
+      if (Object.keys(windows).length > 0) venueRuntimeState.encounterWindows = windows;
+      else delete venueRuntimeState.encounterWindows;
+      if (Object.keys(signals).length > 0) venueRuntimeState.encounterSignals = signals;
+      else delete venueRuntimeState.encounterSignals;
     }
   }
 
@@ -2678,6 +2733,168 @@ export function stepSimulation(
   // clusterのvelocity entryを孤児化させない(cleanup時にspatial runtime stateを必ず削除する)。
   if (spatialDynamicsEnabled && spatialRuntimeState) {
     spatialRuntimeState = pruneSpatialRuntimeState(spatialRuntimeState, candidates);
+  }
+
+  // Issue #265: 訪問が消えたあとの機会を、既存の会話cluster作成/接近へつなぐ。
+  // step 9 のあとなので、このtickの成立判定には混ぜない。サービス中のagentは対象外。
+  // encounter無効のあいだはこのブロックに入らず、stateも主系列PRNGも増やさない。
+  if (venueRuntimeState && venueAnchorConfig.encounterEnabled && venueAnchors) {
+    const windows = venueRuntimeState.encounterWindows ?? {};
+    const presences: Record<string, VenueEncounterPresence> = {};
+    for (const agent of agents) {
+      const visit = venueRuntimeState.visits[agent.id];
+      const window = windows[agent.id];
+      if (visit && (visit.phase === "receiving" || visit.phase === "consuming")) {
+        presences[agent.id] = { kind: "service", anchorId: visit.anchorId, obtained: visit.phase === "consuming" };
+      } else if (window) {
+        presences[agent.id] = {
+          kind: "postVisit",
+          anchorId: window.anchorId,
+          completedAtTick: window.completedAtTick,
+        };
+      } else {
+        presences[agent.id] = { kind: "none" };
+      }
+    }
+    const blockedIds = (agent: Agent): string[] => {
+      const ids: string[] = [];
+      if (
+        agent.lastFailedCandidateId !== undefined &&
+        agent.lastFailedCandidateAtTick !== undefined &&
+        tick - agent.lastFailedCandidateAtTick < REAPPROACH_COOLDOWN_TICKS
+      ) {
+        ids.push(agent.lastFailedCandidateId);
+      }
+      if (
+        agent.lastDepartedClusterId !== undefined &&
+        agent.lastDepartedClusterAtTick !== undefined &&
+        tick - agent.lastDepartedClusterAtTick < CLUSTER_REJOIN_COOLDOWN_TICKS
+      ) {
+        ids.push(agent.lastDepartedClusterId);
+      }
+      return ids;
+    };
+    const plan = planVenueEncounters({
+      agents: agents.map((agent) => ({
+        id: agent.id,
+        label: agent.label,
+        x: agent.x,
+        y: agent.y,
+        state: agent.state,
+        initiative: agent.initiative,
+        willingness: agent.willingness,
+        conformity: agent.conformity,
+        influenceAvoidance: agent.influenceAvoidance,
+        isObserverJoiner: agent.isObserverJoiner,
+        cliqueId: agent.cliqueId,
+        pendingSocialTransition: agent.pendingClusterTransition !== undefined,
+        topicId: primaryTopicId(state.informationRuntime?.[agent.id]?.topics),
+        blockedCandidateIds: blockedIds(agent),
+      })),
+      presences,
+      candidates: candidates.map((candidate) => ({
+        id: candidate.id,
+        x: candidate.x,
+        y: candidate.y,
+        status: candidate.status,
+        joinable: isJoinable(candidate, formationPolicy.resolveGroupCapacity(candidate, effectiveParams)),
+      })),
+      anchors: venueAnchors,
+      tick,
+      radius: venueAnchorConfig.encounter.radius,
+      windowTicks: venueAnchorConfig.encounter.windowTicks,
+      clusterClearance: venueAnchorConfig.encounter.clusterClearance,
+      mergeRadius: formationPolicy.candidateMergeRadius,
+      existingTieStrength: effectiveParams.existingTieStrength,
+      tieCorrectionBetween: (idA, idB) => {
+        if (!relationshipTieConfig.enabled) return 0;
+        const forward = incomingTieCorrections[tiePairKey(idA, idB)] ?? 0;
+        const back = incomingTieCorrections[tiePairKey(idB, idA)] ?? 0;
+        return (forward + back) / 2;
+      },
+      signals: venueRuntimeState.encounterSignals ?? {},
+    });
+    const createdGroupId = (initiatorId: string) => `group-${tick}-${initiatorId}`;
+    for (const action of plan.actions) {
+      const initiator = agents.find((agent) => agent.id === action.initiatorId);
+      const joiner = agents.find((agent) => agent.id === action.joinerId);
+      if (!initiator || !joiner || initiator.state !== "undecided" || joiner.state !== "undecided") continue;
+      if (action.kind === "approach") {
+        const target = candidates.find((candidate) => candidate.id === action.candidateId);
+        if (!target || !isJoinable(target, formationPolicy.resolveGroupCapacity(target, effectiveParams))) continue;
+        initiator.state = "approaching";
+        initiator.joinedGroupId = target.id;
+        joiner.state = "approaching";
+        joiner.joinedGroupId = target.id;
+        continue;
+      }
+      const groupId = createdGroupId(action.initiatorId);
+      const candidate: GroupCandidate = {
+        id: groupId,
+        x: action.center.x,
+        y: action.center.y,
+        memberIds: [],
+        status: "forming",
+        age: 0,
+      };
+      addMemberToCandidate(candidate, initiator.id, formationPolicy.resolveGroupCapacity(candidate, effectiveParams));
+      candidates.push(candidate);
+      initiator.state = "forming";
+      initiator.joinedGroupId = undefined;
+      joiner.state = "approaching";
+      joiner.joinedGroupId = groupId;
+      pushLog(
+        log,
+        tick,
+        `${initiator.label}さんが「ちょっと話さない?」と声をかけ、会話の輪を作り始めた`,
+        ["nucleus", "venueVisit"],
+        "nucleusCreated",
+        { agentId: initiator.id, agentLabel: initiator.label, groupId },
+      );
+      pushLog(
+        log,
+        tick,
+        `${initiator.label}さんが${joiner.label}さんに挨拶し、新しい会話の輪を作り始めた`,
+        ["venueVisit"],
+        "venueEncounterFormed",
+        {
+          agentId: initiator.id,
+          agentLabel: initiator.label,
+          counterpartAgentId: joiner.id,
+          counterpartAgentLabel: joiner.label,
+          groupId,
+          venueAnchorId: action.anchorId,
+          venueEncounterPhase: "postVisit",
+          venueEncounterReason: "postVisitGreeting",
+          venueEncounterScore: action.score,
+        },
+      );
+      speechEvents.push(
+        createSpeechEvent({
+          tick,
+          speakerId: initiator.id,
+          intent: "invite",
+          reason: "initiativeFormedCore",
+          audience: "nearby",
+          idSuffix: joiner.id,
+          originX: initiator.x,
+          originY: initiator.y,
+        }),
+      );
+    }
+    for (const event of plan.events) {
+      if (
+        event.metadata.venueEncounterReason === "postVisitGreeting" &&
+        event.metadata.groupId === undefined &&
+        event.metadata.agentId &&
+        candidates.some((candidate) => candidate.id === createdGroupId(event.metadata.agentId!))
+      ) {
+        event.metadata.groupId = createdGroupId(event.metadata.agentId);
+      }
+      pushLog(log, tick, event.message, ["venueVisit"], event.eventType, event.metadata);
+    }
+    if (Object.keys(plan.signals).length > 0) venueRuntimeState.encounterSignals = plan.signals;
+    else delete venueRuntimeState.encounterSignals;
   }
 
   // Issue #156: 締切概念を持つシナリオ(classroomPair系)でのみ、締切判定の直前に

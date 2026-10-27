@@ -42,6 +42,8 @@ import type {
   VenueAgentReadout,
   VenueAnchor,
   VenueAnchorKind,
+  VenueEncounterPhase,
+  VenueEncounterReason,
   VenueRuntimeState,
   VenueVisitAbandonReason,
 } from "./venueAnchors";
@@ -625,7 +627,16 @@ export type SimulationEventType =
   /** Issue #264: 短い消費を終え、会場の回遊へ戻った */
   | "venueVisitCompleted"
   /** Issue #264: 台の不在・満席・移動時間超過・退場で訪問をやめた */
-  | "venueVisitAbandoned";
+  | "venueVisitAbandoned"
+  /**
+   * Issue #265: 同じ飲食台の近くにいる二人の機会を評価した。
+   * 近接そのものであって、接触でも内容発話でもない。
+   */
+  | "venueEncounterOpportunity"
+  /**
+   * Issue #265: 訪問完了後の機会から、新しい会話の輪を既存のGroupCandidateとして作り始めた。
+   */
+  | "venueEncounterFormed";
 
 /**
  * Issue #156: `schoolInterventionTriggered`の`metadata.outcome`。表示文言の解析に依存しない結果分類。
@@ -831,6 +842,15 @@ export type SimulationEventMetadata = {
   refreshmentNeedThirst?: number;
   /** Issue #264: `venueVisitAbandoned`の理由。表示文言には埋め込まない */
   venueVisitAbandonReason?: VenueVisitAbandonReason;
+  /** Issue #265: 飲食台付近の機会。取得前 / 取得後 / 訪問完了後 */
+  venueEncounterPhase?: VenueEncounterPhase;
+  /** Issue #265: 機会の構造化理由。表示文言は解析しない */
+  venueEncounterReason?: VenueEncounterReason;
+  /** Issue #265: 機会score `[0,1]` */
+  venueEncounterScore?: number;
+  /** Issue #265: 機会の相手 */
+  counterpartAgentId?: string;
+  counterpartAgentLabel?: string;
 };
 
 export type LogEntry = {

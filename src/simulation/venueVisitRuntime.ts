@@ -4,7 +4,8 @@
  * `docs/standing-party-phase7-venue-anchors.md` §4・§6・§7・§8。
  * `departFromCluster` は使わない(主系列RNG・中心からの押し出し・clusterDepartureCountを避ける)。
  * 直進・停止・補充・capacity順はrngを消費しない。
- * 近接だけでは会話参加も接触も作らない。`encounterEnabled` は #265 まで形成へ影響しない。
+ * 近接だけでは会話参加も接触も作らない。形成への接続は `encounterEnabled` のときだけ
+ * `venueEncounter.ts`（Issue #265）が、訪問レコードが消えたあとに行う。
  */
 import { clamp, distance, WORLD_HEIGHT, WORLD_WIDTH } from "./model";
 import { applyRefreshmentRefill, applyVisitCooldown } from "./refreshmentNeeds";

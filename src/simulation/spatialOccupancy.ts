@@ -87,6 +87,11 @@ export function computeCrowdingVector(
   agents: readonly Agent[],
   candidates: readonly GroupCandidate[],
   config: SpatialDynamicsConfig,
+  /**
+   * Issue #265: 飲食台の中心など、agentではない密度source。
+   * 省略時は従来どおりagentとconfirmed cluster中心だけを数える。
+   */
+  extraDensitySources?: readonly { x: number; y: number; weight: number }[],
 ): CrowdingAvoidanceResult {
   if (!config.crowdingEnabled) return ZERO_CROWDING_RESULT;
 
@@ -116,6 +121,11 @@ export function computeCrowdingVector(
     if (cluster.status !== "confirmed") continue;
     if (agent.joinedGroupId !== undefined && cluster.id === agent.joinedGroupId) continue;
     accumulate(cluster.x - agent.x, cluster.y - agent.y, config.crowdClusterCenterWeight);
+  }
+  if (extraDensitySources) {
+    for (const source of extraDensitySources) {
+      accumulate(source.x - agent.x, source.y - agent.y, source.weight);
+    }
   }
 
   let localDensity = 0;
