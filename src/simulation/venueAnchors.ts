@@ -3,8 +3,8 @@
  * 契約は `docs/standing-party-phase7-venue-anchors.md` §2・§9.1。
  *
  * `VenueAnchor` は会話clusterでも `GroupCandidate` でもない。`spatialRuntimeState` にも載せない。
- * 需要・目的移動・受け取りは #263 以降。ここは型・検証・初期MVP配置と、有効なrunへ
- * 同じ座標をコピーする関数だけを持つ。`enabled: false` のときは runtime 配列を作らない。
+ * 配置catalogとCanvas用コピーは #262。空腹・喉の渇きと訪問decisionの型は #263。
+ * 目的移動・受け取りは #264。`enabled: false` のときは runtime 配列を作らない。
  */
 import { distance, WORLD_HEIGHT, WORLD_WIDTH } from "./model";
 
@@ -53,6 +53,86 @@ export type VenueAnchorConfig = {
     radius: number;
     clusterClearance: number;
   };
+};
+
+/** #263: `VenueAnchorConfig.needs` の別名 */
+export type VenueRefreshmentNeedConfig = VenueAnchorConfig["needs"];
+
+export type AgentRefreshmentNeed = {
+  hunger: number;
+  thirst: number;
+  hungerRate: number;
+  thirstRate: number;
+  /** このtick以上で、foodの新しい訪問を開始してよい */
+  foodCooldownUntilTick?: number;
+  /** このtick以上で、drinkの新しい訪問を開始してよい */
+  drinkCooldownUntilTick?: number;
+};
+
+export type VenueVisitPhase = "traveling" | "receiving" | "consuming";
+
+export type PendingVenueVisit = {
+  visitId: string;
+  anchorId: string;
+  purpose: VenueAnchorKind;
+  startedAtTick: number;
+  phase: VenueVisitPhase;
+  phaseEnteredAtTick: number;
+  decisionReason: "selectedFood" | "selectedDrink";
+};
+
+export type VenueVisitDecisionAction =
+  | "continueSocialActivity"
+  | "continueExploration"
+  | "startFoodVisit"
+  | "startDrinkVisit"
+  | "keepCurrentVisit";
+
+export type VenueVisitDecisionReason =
+  | "featureDisabled"
+  | "notEligibleState"
+  | "pendingSocialTransition"
+  | "activeVenueVisit"
+  | "minimumDwell"
+  | "belowThreshold"
+  | "revisitCooldown"
+  | "noAnchor"
+  | "anchorsAtCapacity"
+  | "selectedFood"
+  | "selectedDrink";
+
+export type VenueVisitDecision = {
+  action: VenueVisitDecisionAction;
+  reason: VenueVisitDecisionReason;
+  anchorId?: string;
+  hunger: number;
+  thirst: number;
+  dwellTicks?: number;
+  distance?: number;
+};
+
+export type VenueRuntimeState = {
+  needs: Record<string, AgentRefreshmentNeed>;
+  /** 進行中の訪問。無ければキーを置かない。`done` は保存しない */
+  visits: Record<string, PendingVenueVisit>;
+  /** Inspector用。直近のdecision。シミュレーションの入力にしない */
+  lastDecisions?: Record<string, VenueVisitDecision>;
+};
+
+/**
+ * Inspectorが読む、agent 1人分のneedと直近decision。閾値式は再計算しない。
+ * runtimeにneedが無いagentでは undefined(0で埋めない)。
+ */
+export type VenueAgentReadout = {
+  hunger: number;
+  thirst: number;
+  hungerRate: number;
+  thirstRate: number;
+  foodCooldownUntilTick?: number;
+  drinkCooldownUntilTick?: number;
+  action?: VenueVisitDecisionAction;
+  reason?: VenueVisitDecisionReason;
+  anchorId?: string;
 };
 
 /** agentが到達できる会場範囲。`model.ts` の clamp `[5, W-5] × [5, H-5]` と揃える */

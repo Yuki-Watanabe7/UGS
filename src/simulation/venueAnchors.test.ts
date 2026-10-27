@@ -63,8 +63,11 @@ function runStandingParty(venueAnchors: VenueAnchorConfig, seed: number, ticks: 
   return { state, probe: [rng.next(), rng.next(), rng.next()] };
 }
 
-function withoutVenueCatalog(state: SimulationState): Omit<SimulationState, "venueAnchors" | "standingPartyConfig"> {
-  const { venueAnchors: _anchors, standingPartyConfig: _config, ...rest } = state;
+function withoutVenueCatalog(
+  state: SimulationState,
+): Omit<SimulationState, "venueAnchors" | "venueRuntimeState" | "standingPartyConfig"> {
+  // #263 の need / decision は catalog 表示の有無で増える。agent・event・主系列乱数の比較からは外す。
+  const { venueAnchors: _anchors, venueRuntimeState: _runtime, standingPartyConfig: _config, ...rest } = state;
   return rest;
 }
 
@@ -211,6 +214,7 @@ describe("venueAnchors: runtime copy does not change simulation", () => {
     const formation = { scenarioId: "standingParty" as const, standingPartyConfig: standingConfig(enabled) };
     const state = createInitialState(3, STANDING_PARTY_PARAMS, undefined, undefined, undefined, undefined, undefined, formation);
     expect(state.venueAnchors?.map((item) => ({ ...item }))).toEqual(enabled.anchors.map((item) => ({ ...item })));
+    expect(state.venueRuntimeState?.needs).toBeDefined();
     expect(state.venueAnchors).not.toBe(enabled.anchors);
     state.venueAnchors![0].x = 9;
     expect(enabled.anchors[0].x).toBe(72);
@@ -220,12 +224,14 @@ describe("venueAnchors: runtime copy does not change simulation", () => {
       standingPartyConfig: STANDING_PARTY_VENUE_CATALOG_CONFIG,
     });
     expect(inactive.venueAnchors).toBeUndefined();
+    expect(inactive.venueRuntimeState).toBeUndefined();
 
     const afterParty = createInitialState(3, DEFAULT_PARAMS, undefined, undefined, undefined, undefined, undefined, {
       scenarioId: "afterParty",
       standingPartyConfig: standingConfig(enabled),
     });
     expect(afterParty.venueAnchors).toBeUndefined();
+    expect(afterParty.venueRuntimeState).toBeUndefined();
     expect(afterParty.formationScenarioId).toBe("afterParty");
 
     const classroom = createInitialState(3, DEFAULT_PARAMS, undefined, undefined, undefined, undefined, undefined, {
@@ -233,6 +239,7 @@ describe("venueAnchors: runtime copy does not change simulation", () => {
       standingPartyConfig: standingConfig(enabled),
     });
     expect(classroom.venueAnchors).toBeUndefined();
+    expect(classroom.venueRuntimeState).toBeUndefined();
     expect(classroom.formationScenarioId).toBe("classroomPair");
   });
 
@@ -261,6 +268,7 @@ describe("venueAnchors: runtime copy does not change simulation", () => {
       scenarioId: "afterParty",
     });
     expect(state.venueAnchors).toBeUndefined();
+    expect(state.venueRuntimeState).toBeUndefined();
     expect(state.formationScenarioId).toBe("afterParty");
   });
 });

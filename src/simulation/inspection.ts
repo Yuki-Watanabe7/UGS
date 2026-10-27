@@ -36,6 +36,7 @@ import { computeClusterTransitionDecision } from "./clusterTransitionDecision";
 import type { ClusterTransitionDecision } from "./clusterTransitionDecision";
 import { buildStandingPartySpatialAnalysis } from "./spatialAnalysis";
 import type { StandingPartySpatialAnalysis } from "./spatialAnalysis";
+import { readVenueAgentReadout } from "./venueVisitDecision";
 import {
   computeClusterSearchCandidateScore,
   enumerateClusterSearchCandidates,
@@ -620,6 +621,7 @@ function buildInspection(
   const lastClusterExit = buildLastClusterExitSnapshot(agent, state);
   const transitionDecision = buildClusterTransitionDecisionSnapshot(agent, state, params, currentGroup, currentGroupPolicy);
   const spatial = buildSpatialSnapshot(agent, state, params, spatialAnalysis, formationPolicy, currentGroupId);
+  const venueVisit = readVenueAgentReadout(state.venueRuntimeState, agent.id);
 
   return {
     agentId: agent.id,
@@ -702,6 +704,7 @@ function buildInspection(
     pendingTransition: buildPendingTransitionSnapshot(agent, state),
     lastTransitionInvalidation: buildLastTransitionInvalidationSnapshot(agent, state),
     spatial,
+    ...(venueVisit ? { venueVisit } : {}),
   };
 }
 
