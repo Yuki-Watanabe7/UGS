@@ -2,6 +2,9 @@ import { expect } from "vitest";
 import { distance, WORLD_HEIGHT, WORLD_WIDTH } from "./model";
 import type { SpatialDynamicsConfig } from "./spatialDynamics";
 import type { SimulationState } from "./types";
+import { DEFAULT_VENUE_ANCHOR_CONFIG, VENUE_ANCHOR_EDGE_MARGIN } from "./venueAnchors";
+
+const VENUE_EPISODE_END = "venueRefreshmentBreak";
 
 /**
  * Issue #203 (Phase 3, 検証): standingParty向けのグローバル不変条件を1箇所へ集約する。
@@ -138,6 +141,111 @@ export function assertStandingPartyInvariants(state: SimulationState, ctx: Stand
         }
       }
     }
+  }
+
+  assertVenueVisitInvariants(state, label);
+}
+
+/**
+ * Issue #264 (ADR §9.3 VA-1〜VA-7, VA-9)。飲食runtimeが無いtickでは何もしない。
+ * VA-8(無効runに飲食eventが無いこと)は、機能を一度も有効にしていない互換テスト側で見る。
+ * ログは累積なので、途中から無効化したstateの過去eventまではここでは否定しない。
+ */
+function assertVenueVisitInvariants(state: SimulationState, label: string): void {
+  const runtime = state.venueRuntimeState;
+  if (!runtime) return;
+
+  const anchors = state.venueAnchors ?? [];
+  const anchorsById = new Map(anchors.map((anchor) => [anchor.id, anchor]));
+  const seenAnchorIds = new Set<string>();
+  for (const anchor of anchors) {
+    expect(seenAnchorIds.has(anchor.id), `${label}: anchor id ${anchor.id} が重複している`).toBe(false);
+    seenAnchorIds.add(anchor.id);
+    expect(Number.isFinite(anchor.x) && Number.isFinite(anchor.y), `${label}: anchor ${anchor.id} の座標がfiniteでない`).toBe(
+      true,
+    );
+    expect(anchor.x).toBeGreaterThanOrEqual(VENUE_ANCHOR_EDGE_MARGIN);
+    expect(anchor.x).toBeLessThanOrEqual(WORLD_WIDTH - VENUE_ANCHOR_EDGE_MARGIN);
+    expect(anchor.y).toBeGreaterThanOrEqual(VENUE_ANCHOR_EDGE_MARGIN);
+    expect(anchor.y).toBeLessThanOrEqual(WORLD_HEIGHT - VENUE_ANCHOR_EDGE_MARGIN);
+  }
+
+  const visitLimits = state.standingPartyConfig?.venueAnchors.visit ?? DEFAULT_VENUE_ANCHOR_CONFIG.visit;
+  const agentsById = new Map(state.agents.map((agent) => [agent.id, agent]));
+  const obtainedByVisit = new Map<string, number>();
+  const venueReleaseKeys = new Set<string>();
+  const socialDepartureKeys = new Set<string>();
+  for (const entry of state.log) {
+    const visitId = entry.metadata?.venueVisitId;
+    if (entry.eventType === "refreshmentObtained" && visitId) {
+      obtainedByVisit.set(visitId, (obtainedByVisit.get(visitId) ?? 0) + 1);
+    }
+    const agentId = entry.metadata?.agentId;
+    if (!agentId) continue;
+    const key = `${agentId}:${entry.tick}`;
+    if (entry.eventType === "clusterDepartureStarted") socialDepartureKeys.add(key);
+    if (entry.eventType === "venueVisitStarted" && entry.metadata?.episodeEndReason === VENUE_EPISODE_END) {
+      venueReleaseKeys.add(key);
+    }
+  }
+  for (const [visitId, count] of obtainedByVisit) {
+    expect(count, `${label}: visit ${visitId} の refreshmentObtained が ${count} 件`).toBeLessThanOrEqual(1);
+  }
+  for (const key of venueReleaseKeys) {
+    expect(socialDepartureKeys.has(key), `${label}: 飲食離脱と clusterDepartureStarted が同じtickに重なっている (${key})`).toBe(
+      false,
+    );
+  }
+
+  for (const [agentId, need] of Object.entries(runtime.needs)) {
+    expect(Number.isFinite(need.hunger), `${label}: ${agentId} の hunger がfiniteでない`).toBe(true);
+    expect(Number.isFinite(need.thirst), `${label}: ${agentId} の thirst がfiniteでない`).toBe(true);
+    expect(need.hunger).toBeGreaterThanOrEqual(0);
+    expect(need.hunger).toBeLessThanOrEqual(1);
+    expect(need.thirst).toBeGreaterThanOrEqual(0);
+    expect(need.thirst).toBeLessThanOrEqual(1);
+  }
+
+  for (const [agentId, visit] of Object.entries(runtime.visits)) {
+    const agent = agentsById.get(agentId);
+    expect(agent, `${label}: 存在しない agent ${agentId} の飲食訪問が残っている`).toBeDefined();
+    expect(agent?.pendingClusterTransition, `${label}: ${agentId} が飲食訪問と社会的移動意図を同時に持っている`).toBeUndefined();
+    expect(agent?.state, `${label}: ${agentId} の訪問中stateが undecided でない`).toBe("undecided");
+    expect(agent?.joinedGroupId, `${label}: ${agentId} が訪問中なのに joinedGroupId を持っている`).toBeUndefined();
+    expect(agent?.currentEpisode, `${label}: ${agentId} が訪問中なのに currentEpisode を持っている`).toBeUndefined();
+    for (const candidate of state.groupCandidates) {
+      if (candidate.status !== "forming" && candidate.status !== "confirmed" && candidate.status !== "dissolving") {
+        continue;
+      }
+      expect(candidate.memberIds, `${label}: ${agentId} が訪問中なのに ${candidate.id} のmemberである`).not.toContain(agentId);
+    }
+
+    const anchor = anchorsById.get(visit.anchorId);
+    expect(anchor, `${label}: ${agentId} の訪問先 ${visit.anchorId} がcatalogに無い`).toBeDefined();
+    if (agent && anchor && (visit.phase === "receiving" || visit.phase === "consuming")) {
+      const gap = distance(agent.x, agent.y, anchor.x, anchor.y);
+      expect(gap, `${label}: ${agentId} が受け取り中なのに台から ${gap} 離れている`).toBeLessThanOrEqual(
+        anchor.interactionRadius + 0.5,
+      );
+    }
+    if (anchor) {
+      const cap = visitLimits.maxTravelTicks + anchor.serviceTicks + visitLimits.consumeTicks;
+      const age = state.tick - visit.startedAtTick + 1;
+      expect(age, `${label}: ${agentId} の訪問が寿命 ${cap} を超えている`).toBeLessThanOrEqual(cap);
+    }
+  }
+
+  const occupied = new Map<string, number>();
+  for (const visit of Object.values(runtime.visits)) {
+    if (visit.phase !== "receiving" && visit.phase !== "consuming") continue;
+    occupied.set(visit.anchorId, (occupied.get(visit.anchorId) ?? 0) + 1);
+  }
+  for (const [anchorId, count] of occupied) {
+    const capacity = anchorsById.get(anchorId)?.capacity;
+    if (capacity === undefined) continue;
+    expect(count, `${label}: anchor ${anchorId} の同時受け取り人数が capacity ${capacity} を超えている`).toBeLessThanOrEqual(
+      capacity,
+    );
   }
 }
 

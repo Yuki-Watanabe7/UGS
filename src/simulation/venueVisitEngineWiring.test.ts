@@ -161,7 +161,7 @@ describe("venue need/decision engine wiring (Issue #263)", () => {
     expect(steppedA.venueRuntimeState?.needs).toEqual(steppedB.venueRuntimeState?.needs);
   });
 
-  it("閾値を超えた未所属agentの意図を記録するが、所属も座標規則も変えない", () => {
+  it("閾値を超えた未所属agentはドリンク台への訪問を始め、所属は持たない", () => {
     const person = makeAgent({ id: "agent-a", x: 400, y: 260 });
     const formation = enabled;
     const state = makeState({
@@ -173,10 +173,7 @@ describe("venue need/decision engine wiring (Issue #263)", () => {
         visits: {},
       },
     });
-    const rngOn = new SeededRandom(4);
-    const rngOff = new SeededRandom(4);
-    const on = step(state, formation, rngOn);
-    const off = step({ ...state, venueRuntimeState: undefined }, disabled, rngOff);
+    const on = step(state, formation);
 
     const decision = on.venueRuntimeState?.lastDecisions?.["agent-a"];
     expect(decision?.reason).toBe("selectedDrink");
@@ -184,15 +181,22 @@ describe("venue need/decision engine wiring (Issue #263)", () => {
     expect(decision?.action).toBe("startDrinkVisit");
     expect(on.venueRuntimeState?.needs["agent-a"].thirst).toBeCloseTo(0.8 + 0.004, 10);
     expect(on.venueRuntimeState?.needs["agent-a"].hunger).toBeCloseTo(0.2 + 0.0032, 10);
-    expect(on.venueRuntimeState?.visits["agent-a"]).toBeUndefined();
+    expect(on.venueRuntimeState?.visits["agent-a"]).toMatchObject({
+      anchorId: MVP_DRINK_ANCHOR.id,
+      purpose: "drink",
+      phase: "traveling",
+    });
     expect(on.agents[0].state).toBe("undecided");
+    expect(on.agents[0].joinedGroupId).toBeUndefined();
+    expect(on.agents[0].currentEpisode).toBeUndefined();
     expect(on.agents[0].pendingClusterTransition).toBeUndefined();
-    expect(on.log.some((entry) => String(entry.eventType).startsWith("venue"))).toBe(false);
-    expect(withoutVenue(on)).toEqual(withoutVenue(off));
-    expect(rngOn.next()).toBe(rngOff.next());
+    const started = on.log.find((entry) => entry.eventType === "venueVisitStarted");
+    expect(started?.metadata?.episodeId).toBeUndefined();
+    expect(started?.metadata?.venueAnchorKind).toBe("drink");
+    expect(Math.hypot(on.agents[0].x - 400, on.agents[0].y - 260)).toBeGreaterThan(0);
   });
 
-  it("会話中の最低滞在では離脱せず、滞在後も愛着が高くても席は外さず意図だけを記録する", () => {
+  it("会話中の最低滞在では離脱せず、滞在後は愛着が高くても飲食のために席を外す", () => {
     const joined = makeAgent({
       state: "joined",
       joinedGroupId: "group-a",
@@ -243,16 +247,16 @@ describe("venue need/decision engine wiring (Issue #263)", () => {
     const decision = later.venueRuntimeState?.lastDecisions?.["agent-a"];
     expect(decision?.reason).toBe("selectedDrink");
     expect(decision?.action).toBe("startDrinkVisit");
-    expect(later.agents[0].state).toBe("joined");
-    expect(later.agents[0].joinedGroupId).toBe("group-a");
-    expect(later.groupCandidates[0].memberIds).toContain("agent-a");
+    expect(later.agents[0].state).toBe("undecided");
+    expect(later.agents[0].joinedGroupId).toBeUndefined();
+    expect(later.agents[0].currentEpisode).toBeUndefined();
+    expect(later.groupCandidates[0].memberIds).not.toContain("agent-a");
     expect(later.agents[0].clusterDepartureCount ?? 0).toBe(0);
     expect(later.log.some((entry) => entry.eventType === "clusterDepartureStarted")).toBe(false);
-    expect(later.venueRuntimeState?.visits["agent-a"]).toBeUndefined();
-
-    const off = step({ ...laterBase, venueRuntimeState: undefined }, disabled, new SeededRandom(1));
-    const onAgain = step(laterBase, enabled, new SeededRandom(1));
-    expect(withoutVenue(onAgain)).toEqual(withoutVenue(off));
+    expect(later.venueRuntimeState?.visits["agent-a"]?.phase).toBe("traveling");
+    expect(later.log.find((entry) => entry.eventType === "venueVisitStarted")?.metadata?.episodeEndReason).toBe(
+      "venueRefreshmentBreak",
+    );
   });
 
   it("社会的移動意図を飲食needで消さず、進行中訪問は選び直さない", () => {
@@ -377,7 +381,9 @@ describe("venue need/decision engine wiring (Issue #263)", () => {
       }
     }
     expect(starters.size).toBeGreaterThanOrEqual(2);
-    expect(state.venueRuntimeState?.visits).toEqual({});
-    expect(state.log.some((entry) => String(entry.eventType).startsWith("venue"))).toBe(false);
+    expect(state.log.some((entry) => entry.eventType === "venueVisitStarted")).toBe(true);
+    expect(state.log.some((entry) => entry.eventType === "clusterDepartureStarted" && entry.tags.includes("venueVisit"))).toBe(
+      false,
+    );
   });
 });
