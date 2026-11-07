@@ -44,6 +44,7 @@ const observerJoiner = {
 
 - `main` ブランチへのpushをトリガーに、GitHub Actions(`.github/workflows/pages.yml`)が lint / test / build を実行して自動デプロイします
 - 公開版は**利用向け**です。コードを変更しながら動作を確かめたい場合は、後述のローカル開発起動(`npm run dev`)や実機確認(`npm run dev:host`)を使ってください
+- このリポジトリとPages版は誰でも閲覧できます。公開している範囲、画像の出どころ、秘密情報の確認結果、公開の止め方は [`docs/public-repository.md`](docs/public-repository.md) を参照してください。第三者の素材を入れる前に、この記録を見直してください
 
 ### iPhoneのホーム画面に追加する(PWA)
 
